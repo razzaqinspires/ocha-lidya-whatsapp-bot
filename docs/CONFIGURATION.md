@@ -25,13 +25,14 @@ The developer runners are persisted under `security` and `limits`; they are not 
 ```text
 .master status
 .master eval on
-.master exec on
 .master cli on
 .master python on
 .master golang on
 ```
 
-All are off by default. Turning on a runner changes a persistent configuration event. A restart does not reset the switch.
+All are off by default and independent: `cli` controls `$` directly, `eval` controls `>`/`=>`, `python` controls `>>`, and `golang` controls `>>>`. There is no global `exec` prerequisite. `.master exec on/off` is temporarily retained as an alias to the CLI switch. Turning on a runner changes a persistent configuration event. A restart does not reset the switch.
+
+The global group interaction setting is `features.groupsMuted`, defaulting to `true`. `.mute on/off/status` is owner-only and private-chat-only. It gates only group dispatch/replies; it does not disable `messages.upsert`, group metadata events, or verified contact indexing. Private-chat operation continues in either mode.
 
 
 ## WhatsApp connection settings
@@ -86,7 +87,7 @@ ai: {
 }
 ```
 
-`ui.buttonsEnabled` controls the default native-flow button wrapper for command replies. Owners can switch it with `.buttons on/off/status`. `groupMetadata.initialSync` allows the one-time `groupFetchAllParticipating()` cache bootstrap. `groupMetadata.fetchCooldownMs` prevents repeated single-group fetches for an uncached group. These settings do not contain secrets and are persisted in the JSONL config journal. Schema v10 removes Qwen and the key-attempt cap. The AI provider manager attempts all eligible keys before moving to the next provider; see `AI_ENGINE.md`.
+`ui.buttonsEnabled` is retained as a legacy preference and remains readable/writable through `.buttons on/off/status`. For compatibility and copyability, it does not replace ordinary command replies with native-flow messages. All command responses remain text-first until native-flow payloads are validated against the exact WhatsApp clients in use. `groupMetadata.initialSync` allows the one-time `groupFetchAllParticipating()` cache bootstrap. `groupMetadata.fetchCooldownMs` prevents repeated single-group fetches for an uncached group. These settings do not contain secrets and are persisted in the JSONL config journal. Schema v10 removes Qwen and the key-attempt cap. The AI provider manager attempts all eligible keys before moving to the next provider; see `AI_ENGINE.md`.
 
 See [`CONTACTS_AND_GROUP_CACHE.md`](CONTACTS_AND_GROUP_CACHE.md) for the dedicated `contact.jsonl` and group metadata JSONL data design.
 

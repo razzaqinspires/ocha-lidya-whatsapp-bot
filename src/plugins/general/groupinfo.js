@@ -1,17 +1,7 @@
 import { getCachedGroupInfo, getCachedGroups, hydrateParticipatingGroupsOnce } from '../../core/group-runtime.js';
 import { getPrefixes } from '../../core/prefix.js';
-import { getConfig } from '../../core/config.js';
 
 const PAGE_SIZE = 10;
-
-function groupRow(group, prefix) {
-  const count = group.participants?.length || group.size || 0;
-  return {
-    title: String(group.subject || 'Grup tanpa nama').slice(0, 24),
-    description: `${count} anggota · ${group.id}`.slice(0, 72),
-    id: `${prefix}groupinfo ${group.id}`
-  };
-}
 
 function renderInfo(meta) {
   const participants = meta.participants || [];
@@ -52,19 +42,20 @@ export default {
     const page = Number.isInteger(requestedPage) && requestedPage > 0 ? Math.min(requestedPage, pageCount) : 1;
     const start = (page - 1) * PAGE_SIZE;
     const visible = groups.slice(start, start + PAGE_SIZE);
-    const rows = visible.map(group => groupRow(group, prefix));
     const body = `Tersimpan ${groups.length} grup dalam database metadata. Halaman ${page}/${pageCount}. Pilih grup untuk melihat detail.\n\n${visible.map((group, index) => `${start + index + 1}. ${group.subject || group.id} · ${group.participants?.length || 0} anggota`).join('\n')}`;
-    const buttons = [];
-    if (page > 1) buttons.push({ type: 'quick_reply', title: 'Sebelumnya', id: `${prefix}groupinfo page ${page - 1}` });
-    if (page < pageCount) buttons.push({ type: 'quick_reply', title: 'Berikutnya', id: `${prefix}groupinfo page ${page + 1}` });
-    if (getConfig().ui?.buttonsEnabled && sock.sendInteractive) {
-      return sock.sendInteractive(m.chat, {
-        title: 'GROUP METADATA CACHE',
-        body,
-        footer: 'Cache lokal · metadata grup tersimpan tidak di-fetch ulang',
-        buttons: [...buttons, { type: 'single_select', title: 'Pilih grup', sections: [{ title: `Grup ${page}`, rows }] }]
-      }, m);
-    }
-    return m.reply(body);
+    // Text-first pagination avoids unsupported native-flow payloads.
+    const navigation = [
+      page > 1 ? `${prefix}groupinfo page ${page - 1} · sebelumnya` : null,
+      page < pageCount ? `${prefix}groupinfo page ${page + 1} · berikutnya` : null
+    ].filter(Boolean);
+    const selectable = visible.map((group, index) => `${prefix}groupinfo ${group.id} · ${group.subject || 'Grup ' + (start + index + 1)}`);
+    return m.reply([
+      '*GROUP METADATA CACHE*',
+      body,
+      '',
+      '*Buka detail grup:*',
+      ...selectable,
+      ...(navigation.length ? ['', '*Navigasi:*', ...navigation] : [])
+    ].join('\n'));
   }
 };

@@ -70,4 +70,4 @@ After the socket reaches `open`, the runtime calls `groupFetchAllParticipating()
 
 ## Interactive command responses
 
-The dispatcher wraps plugin `m.reply()` by default. The native-flow controls use quick replies for Menu/Ping/Group shortcuts. Menu and group list commands use `single_select`; owner contact uses `cta_copy`. The owner-only `.buttons off` command disables all automatic reply wrapping, while `.buttons on` re-enables it. The state is saved at `ui.buttonsEnabled` and survives restarts. Plugins that intentionally need a plain text response can request `options.plain: true` when calling `m.reply()`.
+The dispatcher no longer wraps plugin `m.reply()` calls. All command replies use the serializer text transport, which is readable and copyable on standard WhatsApp clients. `.menu`, `.owner`, and private-chat `.groupinfo` use text output and show command syntax explicitly. The legacy `ui.buttonsEnabled` state and `.buttons on/off/status` command remain persisted for compatibility, but neither setting can force native-flow transport globally. Native-flow helper APIs remain opt-in and must be validated against the target clients before use.

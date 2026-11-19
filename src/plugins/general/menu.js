@@ -25,12 +25,14 @@ export default {
       `${prefix}dbsearch · cari arsip`,
       `${prefix}aistatus / ${prefix}aiset · pengaturan AI`,
       `${prefix}buttons on/off · mode tombol`,
-      `${prefix}master status · developer runner`,
+      `${prefix}master status · status console runner`,
+      `${prefix}mute on/off/status · mute interaksi grup (owner)`,
       '',
       '*MASTER CONSOLE · OWNER ONLY*',
       '> JavaScript eval',
       '=> JavaScript return',
       '$ CLI · >> Python · >>> Go',
+      '.master cli on/off · mengaktifkan CLI langsung (tanpa exec)',
       '',
       `Prefix: ${config.prefix.mode} · Bot mode: ${config.mode}`
     ].join('\n');
@@ -47,7 +49,8 @@ export default {
         { title: 'Database', description: 'Status database JSONL', id: `${prefix}dbstatus` },
         { title: 'Plugins', description: 'Daftar plugin', id: `${prefix}plugins` },
         { title: 'Master status', description: 'Status runner developer', id: `${prefix}master status` },
-        { title: 'Button mode', description: 'Status tombol interaktif', id: `${prefix}buttons status` }
+        { title: 'Button mode', description: 'Status tombol interaktif', id: `${prefix}buttons status` },
+        { title: 'Group mute', description: 'Mute/unmute seluruh interaksi grup (owner)', id: `${prefix}mute status` }
       ]}
     ];
     return sendCommandList(sock, m, { title: config.bot.name, body, sections });

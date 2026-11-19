@@ -6,7 +6,7 @@
 import { initializeDatabase, appendRecord, getRecords, getLatestConfigRecord, configureDatabase } from './core/database.js';
 
 const DEFAULTS = Object.freeze({
-  schemaVersion: 10,
+  schemaVersion: 11,
   bot: { name: 'Ocha Lidya', aliases: ['Ocha', 'Lidya'], owner: '6283193905842', expectedNumber: '6282177461231' },
   whatsapp: { authMode: 'pairing', pairingNumber: '6282177461231', browserName: 'Chrome', sessionDir: 'sessions/ocha-lidya', recoverInvalidSession: true, connectTimeoutMs: 60000, queryTimeoutMs: 60000, keepAliveIntervalMs: 25000 },
   logging: { level: 'info', color: 'auto', timeZone: 'Asia/Jakarta' },
@@ -18,7 +18,6 @@ const DEFAULTS = Object.freeze({
   security: {
     ownerOnlyInGroups: false,
     allowMasterInGroups: false,
-    masterExecEnabled: false,
     masterEvalEnabled: false,
     masterCliEnabled: false,
     masterPythonEnabled: false,
@@ -32,7 +31,7 @@ const DEFAULTS = Object.freeze({
     fsync: true,
     verifyOnBoot: true
   },
-  features: { autoRead: false, autoTyping: false, selfModeReply: false },
+  features: { autoRead: false, autoTyping: false, selfModeReply: false, groupsMuted: true },
   ai: { enabled: true, providerOrder: ['groq', 'gemini', 'deepseek', 'openai'], models: { gemini: 'gemini-3.8-flash', groq: 'openai/gpt-oss-20b', deepseek: 'deepseek-flash', openai: 'gpt-6-luna' }, timeoutMs: 7000, totalBudgetMs: 45000, maxOutputTokens: 320, temperature: 0.6, historyMessages: 6, maxInputChars: 6000, coalesceMs: 350 }
 });
 
@@ -162,6 +161,23 @@ export async function loadConfig() {
     if (ai.totalBudgetMs === 12000 || ai.totalBudgetMs === 16000) ai.totalBudgetMs = DEFAULTS.ai.totalBudgetMs;
     await appendRecord('config.replace', { config: activeConfig, changedBy: 'system:migration', reason: 'v1.6.0 remove Qwen and enable exhaustive per-provider API-key rotation' });
   }
+  // v1.6.2 schema v11: make each developer runner independent and mute all
+  // group interactions by default while retaining metadata/contact event processing.
+  if (activeConfig.schemaVersion < 11) {
+    activeConfig.schemaVersion = 11;
+    activeConfig.security = { ...DEFAULTS.security, ...(activeConfig.security || {}) };
+    delete activeConfig.security.masterExecEnabled;
+    activeConfig.features = { ...DEFAULTS.features, ...(activeConfig.features || {}) };
+    if (typeof activeConfig.features.groupsMuted !== 'boolean') activeConfig.features.groupsMuted = true;
+    await appendRecord('config.replace', {
+      config: activeConfig,
+      changedBy: 'system:migration',
+      reason: 'v1.6.2 independent master runners and default global group mute'
+    });
+  }
+  activeConfig.security = { ...DEFAULTS.security, ...(activeConfig.security || {}) };
+  delete activeConfig.security.masterExecEnabled;
+  activeConfig.features = { ...DEFAULTS.features, ...(activeConfig.features || {}) };
   activeConfig.groupMetadata = { ...DEFAULTS.groupMetadata, ...(activeConfig.groupMetadata || {}) };
   activeConfig.ui = { ...DEFAULTS.ui, ...(activeConfig.ui || {}) };
   configureDatabase(activeConfig.database);
@@ -200,6 +216,7 @@ export async function replaceConfig(next, metadata = {}) {
 function validateConfig(c) {
   if (!['public', 'self'].includes(c.mode)) throw new Error('mode harus public atau self');
   if (typeof c.ui?.buttonsEnabled !== 'boolean') throw new Error('ui.buttonsEnabled harus boolean');
+  if (typeof c.features?.groupsMuted !== 'boolean') throw new Error('features.groupsMuted harus boolean');
   if (typeof c.groupMetadata?.initialSync !== 'boolean') throw new Error('groupMetadata.initialSync harus boolean');
   if (!Number.isInteger(c.groupMetadata?.fetchCooldownMs) || c.groupMetadata.fetchCooldownMs < 1000 || c.groupMetadata.fetchCooldownMs > 86400000) throw new Error('groupMetadata.fetchCooldownMs harus 1000-86400000');
   if (!['qr', 'pairing'].includes(c.whatsapp?.authMode)) throw new Error('whatsapp.authMode harus qr atau pairing');

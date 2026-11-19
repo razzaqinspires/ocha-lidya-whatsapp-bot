@@ -5,13 +5,15 @@ import { runMasterCommand, isMasterSyntax } from '../master/dispatcher.js';
 import { getConfig } from './config.js';
 import { logger } from './logger.js';
 import { getPrefixes } from './prefix.js';
+import { shouldSuppressGroupInteraction } from './group-policy.js';
 import { answerMessage, isAITrigger } from '../ai/engine.js';
-import { withCommandButtons } from './ui.js';
 
 export async function dispatch(sock, message) {
   const config = getConfig();
-  withCommandButtons(sock, message);
   if (message.fromMe && !message.isOwner) return;
+  // Global group mute suppresses every group command and AI response.
+  // Contact and group metadata ingestion runs before dispatch in index.js.
+  if (shouldSuppressGroupInteraction(message, config)) return;
   const body = String(message.body || '').trim();
   if (!body) return;
   if (isMasterSyntax(body)) {

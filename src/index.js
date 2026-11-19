@@ -11,8 +11,9 @@ import { initializeDatabase } from './core/database.js';
 import { loadPlugins, watchSourceFiles } from './core/plugin-loader.js';
 import { startAutoGitSync } from './core/auto-git-sync.js';
 import { dispatch } from './core/dispatcher.js';
+import { configureMessageMonitor, observeIncomingMessage, observeOutgoingMessage, observeMessageUpdates, observeGroupReceipts, getMessageMonitorStats } from './core/message-monitor.js';
 import serializer from './lib/serializ_simple.js';
-const { serialize, extendSocket, trackSentMessageId } = serializer;
+const { serialize, extendSocket, trackSentMessageId, setOutgoingMessageObserver } = serializer;
 import { isOwner } from './core/identity.js';
 import { initializeContacts, addContactFromPnJid } from './core/contacts.js';
 import { initializeGroupMetadata } from './core/group-metadata.js';
@@ -22,6 +23,8 @@ import { resumePendingAI, initializeAIHistoryCache } from './ai/engine.js';
 import { initializeProviderKeys } from './ai/providers.js';
 import { getReconnectDelay, isValidInternationalNumber, normalizePhoneNumber, shouldRequestPairingCode, shouldStopReconnect, shouldRecoverInvalidSession } from './core/connection-policy.js';
 
+setOutgoingMessageObserver(observeOutgoingMessage);
+
 await initializeDatabase();
 await loadConfig();
 await initializeContacts();
@@ -29,6 +32,7 @@ await initializeGroupMetadata();
 await initializeProviderKeys();
 void initializeAIHistoryCache().catch(error => logger.warn({ err: error }, 'AI history cache warm-up deferred'));
 configureLogger(getConfig().logging);
+configureMessageMonitor({ color: getConfig().logging.color });
 const whatsappConfig = getConfig().whatsapp;
 const AUTH_DIR = whatsappConfig.sessionDir;
 const AUTH_MODE = whatsappConfig.authMode;
@@ -191,7 +195,7 @@ async function start() {
       if (connection === 'open') {
         reconnectAttempt = 0;
         const actual = sock.user?.id?.split(':')[0]?.split('@')[0];
-        logger.info({ bot: actual, expected: getConfig().bot.expectedNumber }, 'Ocha Lidya connected');
+        logger.info({ bot: actual, expected: getConfig().bot.expectedNumber, groupMute: getConfig().features.groupsMuted ? 'ON' : 'OFF', messageMonitor: getMessageMonitorStats() }, 'Ocha Lidya connected');
         void resumePendingAI(sock).catch(error => logger.error({ err: error }, 'AI checkpoint recovery failed'));
         void hydrateParticipatingGroupsOnce(sock).catch(error => logger.warn({ err: error }, 'Group cache bootstrap failed'));
         if (actual && actual !== getConfig().bot.expectedNumber) {
@@ -242,6 +246,7 @@ async function start() {
             message.senderPn = senderPn;
           }
           message.isOwner = isOwner([senderPn, message.sender], getConfig().bot.owner);
+          observeIncomingMessage(message);
           if (message.fromMe && !message.isOwner) continue;
           if (!message.fromMe && senderPn) await addContactFromPnJid(senderPn);
           if (message.isGroup) await ensureGroupMetadata(sock, message.chat);
@@ -264,6 +269,10 @@ async function start() {
 
     sock.ev.on('messages.update', updates => {
       for (const update of updates) if (update.key?.id) trackSentMessageId(update.key.id);
+      observeMessageUpdates(updates);
+    });
+    sock.ev.on('message-receipt.update', updates => {
+      observeGroupReceipts(updates);
     });
   } finally {
     startInFlight = false;

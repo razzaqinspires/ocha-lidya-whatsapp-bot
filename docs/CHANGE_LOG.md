@@ -1,5 +1,33 @@
 # Changelog
 
+## [1.6.2] - 2026-11-19
+
+- Simplified developer runner permissions: `.master cli on/off` directly controls `$`; `eval`, `python`, and `golang` are independent. Removed the confusing global `masterExecEnabled` gate and retained `.master exec` only as a compatibility alias for CLI.
+- Added a formatted Ocha Master Console response with runtime, command, exit code, stdout, and stderr sections, plus local start/completion audit logs.
+- Added owner-only private-chat `.mute on/off/status`; all group interactions are muted by default while group metadata events and verified PN contact indexing continue normally.
+- Added bounded message-flow telemetry for private chats and groups, including sent/delivered/read/played states, group participant receipt counts, and a distinct colored bot-replied marker.
+- Connected Baileys `messages.update` and `message-receipt.update` event streams. The console distinguishes a bot reply marker from actual WhatsApp delivery/read ticks; no client-side WhatsApp tick UI is modified.
+- Added `docs/MASTER_CONSOLE.md` and `docs/GROUP_MUTE_AND_MESSAGE_FLOW.md`; updated README/menu and migrated configuration to schema v11.
+
+### Validation
+- Unit tests cover independent CLI authorization, legacy `.master exec` compatibility, muted group dispatch, always-on metadata/contact ingestion, and receipt-state aggregation.
+- WhatsApp's real message status still requires a live linked-device session to verify; sandbox tests use event fixtures.
+
+
+## [1.6.1] - 2026-11-19
+
+### Fixed
+- Removed the global monkey-patch that replaced every serializer `m.reply()` with a native-flow interactive message. All command replies now retain the serializer's ordinary `{ text }` sendMessage path, so they remain readable, selectable, and copyable in standard WhatsApp clients.
+- Reworked `.menu` and private-chat `.groupinfo` output to text-first command lists with explicit copyable command syntax.
+- Updated `.buttons` status/help text: the setting is retained for backwards compatibility, but cannot force an interactive transport that has caused unreadable messages.
+- Updated README, configuration, and group-cache documentation to describe the text-first policy and avoid claiming that native-flow controls are sent by default.
+- Added regression tests asserting command replies are never redirected to `sock.sendInteractive` when the compatibility preference is ON.
+
+### Compatibility note
+- Native-flow messages remain available only through explicit low-level APIs and are not used for ordinary command responses. A successful relay/ACK is not treated as proof that every WhatsApp client can render the interactive payload.
+- Live WhatsApp client validation was not available in the build environment.
+
+
 ## [1.6.0] - 2026-11-19
 
 - Removed Qwen from the provider registry, defaults, routing, `.env.example`, and owner configuration choices.

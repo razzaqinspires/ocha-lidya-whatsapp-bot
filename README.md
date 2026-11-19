@@ -223,7 +223,7 @@ Default settings are declared in `src/config.js`; runtime changes are persisted 
 | `logging.color` | `auto` | Enable terminal colors when attached to a TTY |
 | `logging.timeZone` | `Asia/Jakarta` | Timestamp timezone for application logs |
 | `mode` | `public` | `public` or `self` |
-| `ui.buttonsEnabled` | `true` | Use interactive quick-reply/list/copy controls on replies |
+| `ui.buttonsEnabled` | `true` | Legacy preference only; command responses remain text-first for compatibility |
 | `groupMetadata.initialSync` | `true` | Perform a single initial batch load of participating group metadata |
 | `groupMetadata.fetchCooldownMs` | 600,000 ms | Cooldown for a one-time lazy fetch of a group missing from cache |
 | `ai.timeoutMs` | 7,000 ms | Per-key request timeout in the fast profile |
@@ -232,11 +232,11 @@ Default settings are declared in `src/config.js`; runtime changes are persisted 
 | `prefix.mode` | `multi` | `single`, `multi`, or `none` |
 | `prefix.single` | `.` | Single prefix |
 | `prefix.list` | `. ! / #` | Multi-prefix list |
-| `security.masterExecEnabled` | `false` | Process runner master switch |
 | `security.masterEvalEnabled` | `false` | JavaScript evaluator switch |
-| `security.masterCliEnabled` | `false` | Shell runner switch |
-| `security.masterPythonEnabled` | `false` | Python runner switch |
-| `security.masterGolangEnabled` | `false` | Go runner switch |
+| `security.masterCliEnabled` | `false` | CLI shell (`$`) switch; independent of other runners |
+| `security.masterPythonEnabled` | `false` | Python runner (`>>`) switch |
+| `security.masterGolangEnabled` | `false` | Go runner (`>>>`) switch |
+| `features.groupsMuted` | `true` | Silence all group commands and group AI; metadata/contact ingestion stays active |
 | `database.segmentMaxBytes` | 8 MiB | Journal archive threshold |
 | `database.archiveMaxCount` | 120 | Maximum retained ZIP archives |
 | `database.mirrorEnabled` | `true` | Maintain local replica |
@@ -288,10 +288,10 @@ Default multi-prefix values are `.`, `!`, `/`, and `#`.
 | `.buttons on/off/status` | `.buttonmode` | Owner control for interactive replies |
 | `.master status` | `.masterconfig` | Show master runner switches |
 | `.master eval on/off` | — | Enable/disable JavaScript evaluation |
-| `.master exec on/off` | — | Enable/disable process runners |
-| `.master cli on/off` | — | Enable/disable shell runner |
+| `.master cli on/off` | — | Enable/disable shell CLI directly; no global `exec` prerequisite |
 | `.master python on/off` | — | Enable/disable Python runner |
 | `.master golang on/off` | — | Enable/disable Go runner |
+| `.mute on/off/status` | `.groupmute` | Owner-only, private-chat-only mute for all group interactions; group metadata/contact indexing remains active |
 
 All owner plugins use `ownerOnly: true`. `.groupinfo` is intentionally available in private chat: it lists only the local cached group index and does not request fresh metadata for already-cached groups.
 
@@ -329,7 +329,7 @@ Master syntax is reserved outside the normal prefix parser and is owner-only:
 | `>> <Python>` | Python |
 | `>>> <Go>` | Go |
 
-All runners are disabled by default. Use `.master eval on` for `>`/`=>`. The shell command `$` requires both `.master exec on` and `.master cli on`; Python and Go similarly require the process switch plus their own switch. These switches are persistent database settings, not environment variables.
+All developer runners are disabled by default. Each runner is independent: `.master eval on` enables `>`/`=>`, `.master cli on` immediately enables `$`, `.master python on` enables `>>`, and `.master golang on` enables `>>>`. `.master exec on/off` remains only as a temporary legacy alias for `.master cli on/off`; it is not a separate global gate. Group interaction is muted by default; use `.mute off` in a private chat to enable it for all groups, and `.mute on` to silence all groups again. These settings are persistent database settings, not environment variables.
 
 **Security warning:** Node.js `vm` is not a security boundary. Shell, Python, and Go commands can affect the host. Do not enable them on a production host containing secrets or user data. Use a dedicated unprivileged container/VM, read-only mounts, no host secrets, CPU/memory/PID limits, and restricted networking. The bot should never run as root.
 
@@ -530,4 +530,13 @@ The first connection performs one `groupFetchAllParticipating()` batch and persi
 
 `.groupinfo` in a private chat lists groups already in the metadata cache; selecting a row shows the stored detail. `.groupinfo` inside a group shows that group's cache. It does not force repeated metadata requests. See [`docs/CONTACTS_AND_GROUP_CACHE.md`](docs/CONTACTS_AND_GROUP_CACHE.md) for event semantics, file formats, PN/LID resolution order, and recovery behavior.
 
-All plugin command responses that use `m.reply()` are wrapped into native-flow quick replies when `ui.buttonsEnabled` is true. `.menu` and `.groupinfo` use list selections; `.owner` provides a copy action. Owner command `.buttons off` disables button wrapping globally and `.buttons on` re-enables it. The mode is persisted under `ui.buttonsEnabled`.
+Command responses use the serializer's ordinary text transport by default. This keeps every response readable, searchable, selectable, and copyable in standard WhatsApp clients. `.menu` and `.groupinfo` show explicit command syntax as text. The legacy `ui.buttonsEnabled` setting and `.buttons on/off/status` command remain for configuration compatibility, but ON no longer wraps all command replies in native-flow payloads. Interactive APIs are available only to explicit feature implementations after client compatibility testing; a successful relay/ACK does not guarantee that a WhatsApp client can render the message.
+
+
+## 21. Ocha Master Console, group mute, and message-flow telemetry
+
+Master runners are independent in schema v11. `$` is controlled directly by `.master cli on/off`; JavaScript eval (`>` and `=>`), Python (`>>`), and Go (`>>>`) each have their own independent switches. There is no longer a global `exec` gate. `.master exec on/off` is only a temporary compatibility alias for `.master cli on/off`; use `cli` in new commands and documentation. `.master status` displays the owner-only console control panel. See [`docs/MASTER_CONSOLE.md`](docs/MASTER_CONSOLE.md).
+
+All group interaction is muted by default through `features.groupsMuted: true`. `.mute on/off/status` is owner-only and private-chat-only. While muted, group commands and group AI are not dispatched, but incoming event processing still indexes verified contacts and maintains group metadata. Private-chat commands and AI are unaffected. See [`docs/GROUP_MUTE_AND_MESSAGE_FLOW.md`](docs/GROUP_MUTE_AND_MESSAGE_FLOW.md).
+
+The message-flow monitor labels private/group destinations and consumes Baileys `messages.update` and `message-receipt.update` events. Its local terminal legend is `✓ SENT`, `✓✓ DELIVERED`, `✓✓ READ`, `✓✓ PLAYED`, and a separately colored `BOT REPLIED` marker. It does not modify WhatsApp's own tick UI or create a third WhatsApp checkmark. The monitor stores only bounded metadata, not message bodies.

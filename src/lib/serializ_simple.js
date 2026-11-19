@@ -27,6 +27,11 @@ const jidPairs = new Map();
 const sentMessageIds = new Set();
 const messageStore = new Map();
 const MAX_MESSAGE_STORE = 5000;
+let outgoingMessageObserver = null;
+
+export function setOutgoingMessageObserver(observer) {
+  outgoingMessageObserver = typeof observer === 'function' ? observer : null;
+}
 
 function storeMessage(rawMsg) {
   if (!rawMsg || !rawMsg.key || !rawMsg.key.id) return;
@@ -733,7 +738,10 @@ function extendSocket(sock) {
     if (options?.messageId) trackSentMessageId(options.messageId);
     if (!originalSendMessage) return null;
     const res = await originalSendMessage(jid, content, options);
-    if (res?.key?.id) trackSentMessageId(res.key.id);
+    if (res?.key?.id) {
+      trackSentMessageId(res.key.id);
+      try { outgoingMessageObserver?.(res.key, options?.quoted?.key || null); } catch {}
+    }
     return res;
   };
 
@@ -742,8 +750,14 @@ function extendSocket(sock) {
     if (options?.messageId) trackSentMessageId(options.messageId);
     if (!originalRelayMessage) return null;
     const res = await originalRelayMessage(jid, message, options);
-    if (typeof res === 'string') trackSentMessageId(res);
-    if (res?.key?.id) trackSentMessageId(res.key.id);
+    if (typeof res === 'string') {
+      trackSentMessageId(res);
+      try { outgoingMessageObserver?.({ remoteJid: jid, id: res, fromMe: true }, options?.quoted?.key || null); } catch {}
+    }
+    if (res?.key?.id) {
+      trackSentMessageId(res.key.id);
+      try { outgoingMessageObserver?.(res.key, options?.quoted?.key || null); } catch {}
+    }
     return res;
   };
 
@@ -1566,6 +1580,7 @@ const __exports = {
   syncBotJidPairs,
   getBotIdentifiers,
   trackSentMessageId,
+  setOutgoingMessageObserver,
   isBotSentMessage,
   freply,
   createFakeReply: freply.createFakeReply,
