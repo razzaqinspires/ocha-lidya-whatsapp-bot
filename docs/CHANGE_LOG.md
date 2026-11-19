@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.7.1] - 2026-11-19
+
+### Changed
+- Reduced the default AI coalescing window to 80 ms, output budget to 180 tokens, conversation history to 3 turns, input budget to 3,500 characters, and per-provider timeout to 3.5 seconds.
+- Added `.aiset speed boost` with Groq-first routing, one eligible key attempt per provider, a 14-second total fallback deadline, 180 output tokens, and 80 ms coalescing. `fast` and `balanced` profiles remain available.
+- Removed response-path waits for queued/generated/delivered checkpoints, AI turn journaling, provider hit/success telemetry, and reply-anchor persistence. Hot history and quote anchors are updated immediately; append-only durability writes continue asynchronously with error logging.
+- Added an overall provider fallback deadline so slow providers cannot consume unbounded cumulative time. Boost/fast profiles use bounded per-provider key attempts; balanced mode permits more retries.
+- Migrated schema v11 installations to v12, applying Boost values only when the stored setting still equals a known shipped default; owner-customized values are preserved.
+
+### Validation
+- Regression suite covers AI message coalescing, provider routing, config migration, reply-chain behavior, and command reply-session priority.
+- Offline validation is recorded with the release archive; live provider latency and WhatsApp response timing still require measurement on the user's host and API keys.
+
+
 ## [1.7.0] - 2026-11-19
 
 ### Added

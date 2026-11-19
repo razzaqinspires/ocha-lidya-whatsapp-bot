@@ -26,26 +26,30 @@ export default {
     }
     if (action === 'speed') {
       const [level] = rest;
-      if (!['fast', 'balanced'].includes(String(level).toLowerCase())) return m.reply('Gunakan: .aiset speed fast | balanced');
+      const profile = String(level || '').toLowerCase();
+      if (!['boost', 'fast', 'balanced'].includes(profile)) return m.reply('Gunakan: .aiset speed boost | fast | balanced');
       await updateConfig(config => {
-        if (level === 'fast') {
+        if (profile === 'boost') {
           config.ai.providerOrder = ['groq', 'gemini', 'deepseek', 'openai'];
-          config.ai.timeoutMs = 7000; config.ai.totalBudgetMs = 45000; config.ai.historyMessages = 6; config.ai.maxOutputTokens = 320; config.ai.coalesceMs = 350;
+          config.ai.timeoutMs = 3500; config.ai.totalBudgetMs = 14000; config.ai.historyMessages = 3; config.ai.maxOutputTokens = 180; config.ai.temperature = 0.5; config.ai.maxInputChars = 3500; config.ai.coalesceMs = 80; config.ai.maxKeyAttempts = 1;
+        } else if (profile === 'fast') {
+          config.ai.providerOrder = ['groq', 'gemini', 'deepseek', 'openai'];
+          config.ai.timeoutMs = 4500; config.ai.totalBudgetMs = 20000; config.ai.historyMessages = 4; config.ai.maxOutputTokens = 220; config.ai.temperature = 0.55; config.ai.maxInputChars = 4500; config.ai.coalesceMs = 120; config.ai.maxKeyAttempts = 1;
         } else {
           config.ai.providerOrder = ['gemini', 'groq', 'deepseek', 'openai'];
-          config.ai.timeoutMs = 12000; config.ai.totalBudgetMs = 90000; config.ai.historyMessages = 12; config.ai.maxOutputTokens = 850; config.ai.coalesceMs = 400;
+          config.ai.timeoutMs = 12000; config.ai.totalBudgetMs = 90000; config.ai.historyMessages = 12; config.ai.maxOutputTokens = 850; config.ai.coalesceMs = 400; config.ai.maxKeyAttempts = 4;
         }
-      }, { actor: m.sender, reason: `AI speed profile ${level}` });
-      return m.reply(`Profil AI ${level} diterapkan.`);
+      }, { actor: m.sender, reason: `AI speed profile ${profile}` });
+      return m.reply(`Profil AI ${profile} diterapkan.`);
     }
     const current = getConfig().ai;
     return m.reply([
       'Pengaturan AI:',
       '.aiset on/off',
-      '.aiset speed fast/balanced',
+      '.aiset speed boost/fast/balanced',
       '.aiset order groq,gemini,deepseek,openai',
       '.aiset model groq openai/gpt-oss-20b',
-      `.aiset saat ini: ${current.timeoutMs}ms/key · target budget ${current.totalBudgetMs}ms`
+      `.aiset saat ini: ${current.timeoutMs}ms/key · target budget ${current.totalBudgetMs}ms · output ${current.maxOutputTokens} token · coalesce ${current.coalesceMs}ms`
     ].join('\n'));
   }
 };

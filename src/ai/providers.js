@@ -206,13 +206,19 @@ export async function generateWithProvider(name, messages, options = {}) {
   if (!PROVIDERS[name]) throw new Error(`Provider tidak dikenal: ${name}`);
   const items = allKeys(name);
   if (!items.length) throw Object.assign(new Error(`No API key for ${name}`), { provider: name, code: 'NO_API_KEY' });
-  const eligible = items.filter(item => isEligible(statsFor(item.value)));
+  const eligibleAll = items.filter(item => isEligible(statsFor(item.value)));
+  const eligible = Number.isInteger(options.maxKeyAttempts) && options.maxKeyAttempts > 0 ? eligibleAll.slice(0, options.maxKeyAttempts) : eligibleAll;
   if (!eligible.length) throw Object.assign(new Error(`All keys for ${name} are cooling down or exhausted`), { provider: name, code: 'ALL_KEYS_UNAVAILABLE', retryable: true });
   let lastError;
   for (const item of eligible) {
     const stat = statsFor(item.value); stat.source = item.source;
     stat.hits++; stat.lastHitAt = new Date().toISOString();
-    await persistKeyEvent(name, item.value, 'hit', { hit: stat.hits });
+    const recordEvent = (event, details) => {
+      const write = persistKeyEvent(name, item.value, event, details);
+      if (options.deferTelemetry) write.catch(error => logger.warn({ err: error, provider: name, event }, 'Deferred AI telemetry write failed'));
+      return options.deferTelemetry ? undefined : write;
+    };
+    await recordEvent('hit', { hit: stat.hits });
     const started = Date.now();
     try {
       const result = await requestWithKey(name, item.value, options.models?.[name] || PROVIDERS[name].model, messages, options);
@@ -220,7 +226,7 @@ export async function generateWithProvider(name, messages, options = {}) {
       stat.tokens += Number(result.usage?.total_tokens || result.usage?.totalTokenCount || 0);
       const pm = providerMetrics.get(name) || { successes: 0, failures: 0, averageLatencyMs: null };
       pm.successes++; pm.lastLatencyMs = elapsed; pm.averageLatencyMs = pm.averageLatencyMs == null ? elapsed : Math.round(pm.averageLatencyMs * .75 + elapsed * .25); pm.lastStatus = 'ok'; providerMetrics.set(name, pm);
-      await persistKeyEvent(name, item.value, 'success', { latencyMs: elapsed, tokens: Number(result.usage?.total_tokens || result.usage?.totalTokenCount || 0) });
+      await recordEvent('success', { latencyMs: elapsed, tokens: Number(result.usage?.total_tokens || result.usage?.totalTokenCount || 0) });
       providerCircuit.set(name, { failures: 0, openUntil: 0 });
       return { ...result, provider: name, model: options.publicModel || 'Nexora-2.0-Flash', keyFingerprint: stat.fingerprint, latencyMs: elapsed };
     } catch (error) {
@@ -228,7 +234,7 @@ export async function generateWithProvider(name, messages, options = {}) {
       stat.failures++; stat.status = classified.status; stat.reason = classified.reason; stat.retryAt = classified.retryAt; stat.lastErrorAt = new Date().toISOString(); stat.lastHttpStatus = error.status || null;
       const pm = providerMetrics.get(name) || { successes: 0, failures: 0, averageLatencyMs: null };
       pm.failures++; pm.lastLatencyMs = Date.now() - started; pm.lastStatus = classified.status; providerMetrics.set(name, pm);
-      await persistKeyEvent(name, item.value, 'failure', { status: classified.status, httpStatus: error.status || null, reason: classified.reason, retryAt: new Date(classified.retryAt).toISOString() });
+      await recordEvent('failure', { status: classified.status, httpStatus: error.status || null, reason: classified.reason, retryAt: new Date(classified.retryAt).toISOString() });
       logger.warn({ provider: name, fingerprint: stat.fingerprint, status: classified.status, httpStatus: error.status, reason: classified.reason }, 'Provider key failed; trying next key');
       // A bad model/request is not evidence that the key is invalid; avoid burning all keys on identical malformed payloads.
       if (classified.status === 'request_or_model_error') break;

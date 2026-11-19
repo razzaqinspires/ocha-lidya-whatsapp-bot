@@ -1,4 +1,4 @@
-# Ocha Lidya AI Engine — v1.7.0
+# Ocha Lidya AI Engine — v1.7.1
 
 ## Public identity
 
@@ -34,7 +34,7 @@ Managed keys are stored in `data/secrets/provider-keys.json`, with directory/fil
 
 ## Key validation and classification
 
-For each provider, the engine iterates through every key eligible for a probe, in order, before moving to the next provider. A successful request proves that the key worked for that request, not that it has unlimited quota. Every attempt increments the hit counter before the network request and writes an append-only `ai.key.event` event. Counters are reconstructed from the JSONL event history after restart.
+The balanced profile can probe multiple eligible keys per provider. The boost/fast profiles intentionally cap each provider to one eligible key attempt to avoid spending the full timeout on several keys before fallback. A successful request proves that the key worked for that request, not that it has unlimited quota. Every attempt increments the hit counter before the network request and writes an append-only `ai.key.event` event. Counters are reconstructed from the JSONL event history after restart.
 
 | Observed response | Classification | Retry policy |
 |---|---|---|
@@ -56,9 +56,9 @@ The key counters include total hits, successes, failures, and reported token usa
 ## Fallback and maintenance
 
 1. The engine obtains the configured provider order and its key inventory.
-2. It attempts each eligible key for the first provider, including moving to the next key after a failed response.
-3. Only after the current provider's eligible keys have been exhausted does it move to the next provider.
-4. It continues through all configured providers. A per-provider key-attempt cap is intentionally not used. The configured total budget is advisory and never truncates the fallback chain; with many keys, the request can take longer than that target.
+2. Boost/fast profiles attempt one eligible key for each provider before moving to the next provider.
+3. Balanced mode permits up to four eligible key attempts per provider.
+4. The configured total deadline stops later fallback attempts once its budget is exhausted, preventing cumulative provider timeouts from growing without bound.
 5. If every configured provider/key is unavailable, the AI subsystem enters persisted maintenance mode.
 6. While maintenance is active, incoming AI messages receive no reply. No “busy” or fallback message is sent to the user.
 7. The owner receives one private report with per-provider/per-key masked identity, fingerprint, hit/success/failure counters, status, reason, last HTTP status, and retry time.
@@ -74,7 +74,9 @@ This is response-driven validation, not a guaranteed external expiry detector. A
 - `.apikey get <provider> <fingerprint>` — detailed status for one key.
 - `.apikey delete <provider> <fingerprint>` — delete a managed key.
 - `.aiset on` / `.aiset off` — enable/disable AI.
-- `.aiset speed fast` / `.aiset speed balanced` — adjust timeout/output/history profile.
+- `.aiset speed boost` — lowest-latency profile: 3.5 s per provider, 14 s overall deadline, one key attempt/provider, 180 output tokens, 3 history turns, and 80 ms coalescing.
+- `.aiset speed fast` — balanced low-latency profile: 4.5 s/provider, 20 s deadline, 220 output tokens, 4 history turns, and 120 ms coalescing.
+- `.aiset speed balanced` — longer generation and wider key retry allowance.
 - `.aiset order groq,gemini,deepseek,openai` — set provider order.
 - `.aiset model <provider> <model-id>` — override an upstream model ID.
 
@@ -82,6 +84,8 @@ This is response-driven validation, not a guaranteed external expiry detector. A
 
 - Requests use Node's built-in `fetch`; no provider SDK is required.
 - Provider adapters currently use non-streaming chat requests.
+- The response-critical path no longer waits for AI job checkpoints, conversation-turn journaling, or provider hit/success telemetry writes. Those records are queued to the append-only journal in the background; in-memory conversation history and reply anchors are updated immediately. Disk failures are logged and do not delay the current user response.
+- The default profile is Boost after schema v12 migration. Only known shipped defaults are migrated; custom owner timeout/output values are preserved. The migration sets one key attempt per provider to reduce key-rotation delay.
 - A provider may reject a model ID even when the API key itself is valid; that is recorded as a request/model issue, not an invalid key.
 - The engine can only count calls made through this bot. It cannot report API-key hits made by other applications or direct dashboard/API calls.
 - Total token counts are based on usage fields returned by the provider. Missing usage metadata is not fabricated.

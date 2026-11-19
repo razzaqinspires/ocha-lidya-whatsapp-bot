@@ -2,6 +2,10 @@
 
 Ocha Lidya is a modular WhatsApp automation framework built with native Node.js ESM and `@whiskeysockets/baileys`. The project separates WhatsApp transport, message serialization, command dispatch, plugin execution, persistent configuration, and durable JSONL storage.
 
+## AI response performance (v1.7.1)
+
+The default AI profile is Boost after the schema v12 migration. It uses an 80 ms message-coalescing window, 3 history turns, a 180-token output budget, one eligible API key attempt per provider, a 3.5-second per-provider timeout, and a 14-second total fallback deadline. Use `.aiset speed boost`, `.aiset speed fast`, or `.aiset speed balanced` to switch profiles. Provider telemetry, job checkpoints, and conversation journal writes are queued asynchronously so they do not block the response-critical path; hot conversation history and quoted-reply anchors are updated immediately. See `docs/AI_ENGINE.md` for trade-offs and operational details.
+
 ## 1. Project identity
 
 | Property | Value |
@@ -50,7 +54,7 @@ whatsapp: {
 },
 ```
 
-For an existing installation, v1.5.0/v1.6.0 perform one-time configuration migrations through schema v10, preserving owner-defined provider/model overrides while enabling low-latency AI defaults, button responses, group-cache settings, and contact indexing. Then restart `npm start`. The bot waits for Baileys' initial pairing-readiness event (without displaying the QR) before requesting the eight-character phone-number pairing code in the terminal. On the target phone, open WhatsApp → Linked devices → Link a device → Link with phone number, then enter the code. Use the full international number without `+`, spaces, or punctuation. Set `c.whatsapp.authMode = 'qr'` in `src/config.js` to return to QR login. Session folder, accepted browser identity, and connection timeouts are also application settings under `whatsapp`; `browserName` must be `Chrome`, `Firefox`, `IE`, `Opera`, `Safari`, or `Edge`—never set it to `Ocha Lidya`. See `docs/WHATSAPP_CONNECTION.md`. If WhatsApp rejects a previously saved registered session with `401` while pairing mode is enabled, v1.4.4 moves that session directory to a timestamped `.invalid-*` backup (it does not delete it) and makes one fresh pairing attempt. Set `whatsapp.recoverInvalidSession: false` to disable this behavior.
+For an existing installation, v1.5.0 through v1.7.1 perform one-time configuration migrations through schema v12, preserving owner-defined provider/model overrides while enabling low-latency AI defaults, button responses, group-cache settings, and contact indexing. Then restart `npm start`. The bot waits for Baileys' initial pairing-readiness event (without displaying the QR) before requesting the eight-character phone-number pairing code in the terminal. On the target phone, open WhatsApp → Linked devices → Link a device → Link with phone number, then enter the code. Use the full international number without `+`, spaces, or punctuation. Set `c.whatsapp.authMode = 'qr'` in `src/config.js` to return to QR login. Session folder, accepted browser identity, and connection timeouts are also application settings under `whatsapp`; `browserName` must be `Chrome`, `Firefox`, `IE`, `Opera`, `Safari`, or `Edge`—never set it to `Ocha Lidya`. See `docs/WHATSAPP_CONNECTION.md`. If WhatsApp rejects a previously saved registered session with `401` while pairing mode is enabled, v1.4.4 moves that session directory to a timestamped `.invalid-*` backup (it does not delete it) and makes one fresh pairing attempt. Set `whatsapp.recoverInvalidSession: false` to disable this behavior.
 
 ### Requirements
 
@@ -282,7 +286,7 @@ Default multi-prefix values are `.`, `!`, `/`, and `#`.
 | `.dbsearch keyword` | `.archivefind` | Search ZIP archives |
 | `.aistatus` | `.aihealth` | Show AI provider readiness, model, key counts, average latency, health counters, timeout, and speed profile |
 | `.aiset on/off` | `.aiconfig` | Enable or disable AI |
-| `.aiset speed fast/balanced` | — | Switch between low-latency and more retry-tolerant profiles |
+| `.aiset speed boost/fast/balanced` | — | Switch between Boost, fast, and retry-tolerant balanced profiles |
 | `.aiset order <providers>` | — | Set provider fallback order |
 | `.aiset model <provider> <model>` | — | Override one provider's model ID |
 | `.buttons on/off/status` | `.buttonmode` | Owner control for interactive replies |
@@ -518,7 +522,7 @@ OPENAI_API_KEY=
 
 The engine warms a bounded in-memory history cache once at startup, attempts every eligible key within each provider before moving to the next provider, records per-key hits and response classifications, coalesces messages arriving within 350 ms from the same sender, and falls back across providers. If all keys are unavailable, AI enters silent maintenance and privately reports the inventory to the owner. Public model identity: Nexora-2.0-Flash. Delivery recovery is at-least-once if the process crashes during WhatsApp send. AI conversation turns are isolated by chat and sender.
 
-Owner commands: `.aistatus`, `.aiset on`, `.aiset off`, `.aiset speed fast`, `.aiset speed balanced`, `.aiset order groq,gemini,deepseek,openai`, `.aiset model <provider> <model>`, `.buttons on`, `.buttons off`, and `.buttons status`. Interactive replies are enabled by default; `.buttons off` switches all `m.reply()` command responses to plain text.
+Owner commands: `.aistatus`, `.aiset on`, `.aiset off`, `.aiset speed boost`, `.aiset speed fast`, `.aiset speed balanced`, `.aiset order groq,gemini,deepseek,openai`, `.aiset model <provider> <model>`, `.buttons on`, `.buttons off`, and `.buttons status`. Interactive replies are enabled by default; `.buttons off` switches all `m.reply()` command responses to plain text.
 
 See [docs/AI_ENGINE.md](docs/AI_ENGINE.md) for provider model defaults, API details, recovery semantics, and operational guidance. Free tiers are not unlimited and depend on provider account, region, and quota; OpenAI and DeepSeek API usage should be treated as paid unless the account explicitly shows credits.
 

@@ -10,9 +10,9 @@ const DEFAULTS = Object.freeze({
   enabled: true,
   providerOrder: ['groq', 'gemini', 'deepseek', 'openai'],
   models: { gemini: 'gemini-3.8-flash', groq: 'openai/gpt-oss-20b', deepseek: 'deepseek-flash', openai: 'gpt-6-luna' },
-  timeoutMs: 7000, totalBudgetMs: 45000,
-  maxOutputTokens: 320, temperature: 0.6, historyMessages: 6,
-  maxInputChars: 6000, coalesceMs: 350
+  timeoutMs: 3500, totalBudgetMs: 14000,
+  maxOutputTokens: 220, temperature: 0.55, historyMessages: 4,
+  maxInputChars: 3500, coalesceMs: 80, maxKeyAttempts: 1
 });
 
 function aiConfig() {
@@ -96,22 +96,33 @@ export async function initializeAIHistoryCache() {
   return historyWarmPromise;
 }
 
-async function persistTurn(job, role, content, response = {}) {
+async function persistTurn(job, role, content, response = {}, { defer = false } = {}) {
   const marker = `${job.id}:${role}`;
   if (persistedRoles.has(marker)) return;
-  await appendRecord('ai.turn', {
+  // Update hot caches before disk I/O so the next quoted reply can resolve immediately.
+  persistedRoles.add(marker);
+  cacheTurn(job.key, { role, content });
+  aiReplyChain.addTurn(job.id, role, content);
+  const write = appendRecord('ai.turn', {
     key: job.key, chat: job.chat, sender: job.sender, role, content,
     ...(response.provider ? { provider: response.provider } : {}),
     ...(response.model ? { model: response.model } : {}),
     jobId: job.id
   });
-  persistedRoles.add(marker);
-  cacheTurn(job.key, { role, content });
-  aiReplyChain.addTurn(job.id, role, content);
+  if (defer) {
+    write.catch(error => { persistedRoles.delete(marker); logger.warn({ err: error, jobId: job.id, role }, 'Deferred AI turn persistence failed'); });
+    return;
+  }
+  await write;
 }
 
-async function checkpoint(jobId, status, payload = {}) {
-  await appendRecord('ai.job.checkpoint', { jobId, status, ...payload }, { source: 'ai-engine' });
+async function checkpoint(jobId, status, payload = {}, { defer = false } = {}) {
+  const write = appendRecord('ai.job.checkpoint', { jobId, status, ...payload }, { source: 'ai-engine' });
+  if (defer) {
+    write.catch(error => logger.warn({ err: error, jobId, status }, 'Deferred AI checkpoint persistence failed'));
+    return;
+  }
+  await write;
 }
 async function executeWithFallback(job) {
   await initializeProviderKeys();
@@ -125,15 +136,19 @@ async function executeWithFallback(job) {
 
   const startedAt = Date.now();
   const errors = [];
+  const deadline = startedAt + Math.max(3500, Number(config.totalBudgetMs) || 14000);
   for (const provider of order) {
-    // Exhaust every eligible key/provider. totalBudgetMs is advisory only; it never truncates the fallback chain.
-    const providerTimeout = config.timeoutMs;
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) break;
+    const providerTimeout = Math.max(1000, Math.min(Number(config.timeoutMs) || 3500, remainingMs));
     try {
       const result = await generateWithProvider(provider, job.messages, {
         models: config.models,
         timeoutMs: providerTimeout,
         maxOutputTokens: config.maxOutputTokens,
         temperature: config.temperature,
+        deferTelemetry: true,
+        maxKeyAttempts: Math.max(1, Number(config.maxKeyAttempts) || 1),
         publicModel: 'Nexora-2.0-Flash'
       });
       if (getAIMaintenance().active) await setAIMaintenance(false);
@@ -198,6 +213,7 @@ export function resolveAIReplyContext(chat, quotedMessageId) {
 }
 
 async function answerMessageUnlocked(sock, message) {
+  const responseStartedAt = Date.now();
   const config = aiConfig();
   if (!config.enabled) return message.reply('Layanan AI sedang dinonaktifkan.');
   const userText = stripBotMention(message.body).slice(0, config.maxInputChars);
@@ -232,20 +248,21 @@ async function answerMessageUnlocked(sock, message) {
     depth: canContinueParent ? parentContext.anchor.depth + 1 : 0,
     createdAt: new Date().toISOString()
   };
-  await checkpoint(id, 'queued', { job, createdAt: job.createdAt });
-  await persistTurn(job, 'user', userText);
+  // Disk writes are queued in the background; they must not delay the first provider request.
+  void checkpoint(id, 'queued', { job, createdAt: job.createdAt }, { defer: true });
+  await persistTurn(job, 'user', userText, {}, { defer: true });
 
-  await setComposing(sock, message.chat, 'composing');
+  void setComposing(sock, message.chat, 'composing');
   try {
     const result = await executeWithFallback(job);
-    await persistTurn(job, 'assistant', result.text, result);
-    await checkpoint(id, 'generated', { provider: result.provider, model: result.model, response: result.text, latencyMs: result.latencyMs });
-    await setComposing(sock, message.chat, 'paused');
+    await persistTurn(job, 'assistant', result.text, result, { defer: true });
+    void checkpoint(id, 'generated', { provider: result.provider, model: result.model, response: result.text, latencyMs: result.latencyMs }, { defer: true });
+    void setComposing(sock, message.chat, 'paused');
     const sentMessage = await message.reply(result.text);
     const sentMessageId = sentMessage?.key?.id;
     if (sentMessageId) {
       try {
-        await persistAIReplyAnchor({
+        const anchor = {
           chat: message.chat,
           messageId: sentMessageId,
           sender: message.sender,
@@ -254,6 +271,11 @@ async function answerMessageUnlocked(sock, message) {
           threadId: job.threadId,
           depth: job.depth,
           createdAt: new Date().toISOString()
+        };
+        // Register in memory before asynchronous durable persistence to avoid a reply race.
+        aiReplyChain.addAnchor(anchor);
+        void appendRecord('ai.reply.anchor', anchor, { source: 'ai-engine' }).catch(anchorError => {
+          logger.warn({ err: anchorError, jobId: id, messageId: sentMessageId }, 'AI reply anchor persistence failed');
         });
       } catch (anchorError) {
         logger.warn({ err: anchorError, jobId: id, messageId: sentMessageId }, 'AI reply anchor was sent but could not be persisted');
@@ -261,8 +283,8 @@ async function answerMessageUnlocked(sock, message) {
     } else {
       logger.warn({ jobId: id }, 'AI answer was sent without a message ID; quoted chain anchor unavailable for this turn');
     }
-    await checkpoint(id, 'delivered', { deliveredAt: new Date().toISOString(), provider: result.provider, model: result.model, latencyMs: result.latencyMs, replyMessageId: sentMessageId || null });
-    logger.info({ jobId: id, provider: result.provider, model: result.model, latencyMs: result.latencyMs, chat: message.chat }, 'AI response delivered');
+    void checkpoint(id, 'delivered', { deliveredAt: new Date().toISOString(), provider: result.provider, model: result.model, latencyMs: result.latencyMs, replyMessageId: sentMessageId || null }, { defer: true });
+    logger.info({ jobId: id, provider: result.provider, model: result.model, providerLatencyMs: result.latencyMs, totalLatencyMs: Date.now() - responseStartedAt, chat: message.chat }, 'AI response delivered');
     return result;
   } catch (error) {
     await setComposing(sock, message.chat, 'paused');
@@ -285,7 +307,7 @@ const pendingTurns = new Map();
 /** Coalesce adjacent short messages from the same sender for one quick answer. */
 export function answerMessage(sock, message) {
   const key = conversationKey(message.chat, message.sender);
-  const waitMs = Math.max(0, Math.min(2000, Number(aiConfig().coalesceMs ?? 350)));
+  const waitMs = Math.max(0, Math.min(1000, Number(aiConfig().coalesceMs ?? 120)));
   return new Promise((resolve, reject) => {
     let pending = pendingTurns.get(key);
     if (!pending) {

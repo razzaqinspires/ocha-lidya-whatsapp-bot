@@ -16,13 +16,13 @@ test('config facade replays persistent config.replace events from JSONL', async 
     await first.loadConfig();
     assert.equal(first.getConfig().whatsapp.authMode, 'pairing');
     assert.equal(first.getConfig().whatsapp.browserName, 'Chrome');
-    assert.equal(first.getConfig().schemaVersion, 11);
+    assert.equal(first.getConfig().schemaVersion, 12);
     assert.equal(first.getConfig().whatsapp.recoverInvalidSession, true);
     assert.equal(first.getConfig().logging.level, 'info');
     assert.equal(first.getConfig().logging.color, 'auto');
-    assert.equal(first.getConfig().ai.timeoutMs, 7000);
-    assert.equal(first.getConfig().ai.totalBudgetMs, 45000);
-    assert.equal(first.getConfig().ai.maxOutputTokens, 320);
+    assert.equal(first.getConfig().ai.timeoutMs, 3500);
+    assert.equal(first.getConfig().ai.totalBudgetMs, 14000);
+    assert.equal(first.getConfig().ai.maxOutputTokens, 180);
     await first.updateConfig(c => { c.mode = 'self'; c.prefix.single = '!'; c.prefix.mode = 'single'; c.whatsapp.authMode = 'pairing'; c.whatsapp.pairingNumber = '6282177461231'; }, { actor: 'test', reason: 'persistence test' });
     assert.equal(first.getConfig().mode, 'self');
     const db = await import(pathToFileURL(path.resolve(original, 'src/core/database.js')).href);
@@ -76,7 +76,7 @@ test('legacy config migrates to canonical browser, session recovery, logger, UI,
     assert.equal(result.status, 0, result.stderr || result.stdout);
     const resultLine = result.stdout.split(/\r?\n/).find(line => line.startsWith('MIGRATION_RESULT:'));
     assert.ok(resultLine, result.stdout);
-    assert.deepEqual(JSON.parse(resultLine.slice('MIGRATION_RESULT:'.length)), { schemaVersion: 11, browserName: 'Chrome' });
+    assert.deepEqual(JSON.parse(resultLine.slice('MIGRATION_RESULT:'.length)), { schemaVersion: 12, browserName: 'Chrome' });
   } finally {
     await fs.rm(temp, { recursive: true, force: true });
   }
@@ -106,11 +106,43 @@ test('schema v9 migration removes Qwen and legacy maxKeyAttempts', async () => {
     const line = result.stdout.split(/\r?\n/).find(value => value.startsWith('V10_RESULT:'));
     assert.ok(line, result.stdout);
     const output = JSON.parse(line.slice('V10_RESULT:'.length));
-    assert.equal(output.schemaVersion, 11);
+    assert.equal(output.schemaVersion, 12);
     assert.deepEqual(output.ai.providerOrder, ['groq']);
     assert.equal(output.ai.models.qwen, undefined);
-    assert.equal(output.ai.maxKeyAttempts, undefined);
+    assert.equal(output.ai.maxKeyAttempts, 1);
   } finally {
+    await fs.rm(temp, { recursive: true, force: true });
+  }
+});
+
+test('schema v11 applies AI Boost only to shipped defaults and preserves owner custom settings', async () => {
+  const original = process.cwd();
+  const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'ocha-config-v12-boost-test-'));
+  try {
+    const databaseUrl = pathToFileURL(path.resolve(original, 'src/core/database.js')).href;
+    const configUrl = pathToFileURL(path.resolve(original, 'src/config.js')).href;
+    const source = `
+      const database = await import(${JSON.stringify(databaseUrl)});
+      await database.initializeDatabase();
+      await database.appendRecord('config.replace', { config: {
+        schemaVersion: 11,
+        ai: { timeoutMs: 7000, totalBudgetMs: 45000, maxOutputTokens: 320, temperature: 0.6, historyMessages: 6, maxInputChars: 6000, coalesceMs: 350, models: { groq: 'owner-custom-model' } }
+      } });
+      const config = await import(${JSON.stringify(configUrl)});
+      await config.loadConfig();
+      const ai = config.getConfig().ai;
+      console.log('BOOST_MIGRATION:' + JSON.stringify({ schemaVersion: config.getConfig().schemaVersion, timeoutMs: ai.timeoutMs, totalBudgetMs: ai.totalBudgetMs, maxOutputTokens: ai.maxOutputTokens, historyMessages: ai.historyMessages, coalesceMs: ai.coalesceMs, maxKeyAttempts: ai.maxKeyAttempts, groqModel: ai.models.groq }));
+    `;
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', source], { cwd: temp, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const line = result.stdout.split(/\r?\n/).find(value => value.startsWith('BOOST_MIGRATION:'));
+    assert.ok(line, result.stdout);
+    assert.deepEqual(JSON.parse(line.slice('BOOST_MIGRATION:'.length)), {
+      schemaVersion: 12, timeoutMs: 3500, totalBudgetMs: 14000, maxOutputTokens: 180,
+      historyMessages: 3, coalesceMs: 80, maxKeyAttempts: 1, groqModel: 'owner-custom-model'
+    });
+  } finally {
+    process.chdir(original);
     await fs.rm(temp, { recursive: true, force: true });
   }
 });

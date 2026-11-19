@@ -68,7 +68,7 @@ The main application logger formats timestamps, severity, component scope, and s
 `whatsapp.recoverInvalidSession` defaults to `true`. When pairing mode has a registered/authenticated local session and WhatsApp rejects that login with disconnect code `401`, the app waits for pending credential writes, moves the existing auth directory to a timestamped sibling ending in `.invalid-<timestamp>-<pid>`, and makes one fresh connection attempt using a new auth directory. The old data is preserved for diagnostics or manual restoration. Recovery is limited to once per process to avoid infinite re-pair loops. Set the flag to `false` to retain the old stop-on-401 behavior.
 
 
-## UI response settings, group metadata policy, and AI speed profile (schema v10)
+## UI response settings, group metadata policy, and AI speed profile (schema v12)
 
 ```js
 ui: {
@@ -79,15 +79,17 @@ groupMetadata: {
   fetchCooldownMs: 600000
 },
 ai: {
-  timeoutMs: 7000,
-  totalBudgetMs: 45000,
-  maxOutputTokens: 320,
-  historyMessages: 6,
-  coalesceMs: 350
+  timeoutMs: 3500,
+  totalBudgetMs: 14000,
+  maxOutputTokens: 180,
+  historyMessages: 3,
+  maxInputChars: 3500,
+  coalesceMs: 80,
+  maxKeyAttempts: 1
 }
 ```
 
-`ui.buttonsEnabled` is retained as a legacy preference and remains readable/writable through `.buttons on/off/status`. For compatibility and copyability, it does not replace ordinary command replies with native-flow messages. All command responses remain text-first until native-flow payloads are validated against the exact WhatsApp clients in use. `groupMetadata.initialSync` allows the one-time `groupFetchAllParticipating()` cache bootstrap. `groupMetadata.fetchCooldownMs` prevents repeated single-group fetches for an uncached group. These settings do not contain secrets and are persisted in the JSONL config journal. Schema v10 removes Qwen and the key-attempt cap. The AI provider manager attempts all eligible keys before moving to the next provider; see `AI_ENGINE.md`.
+`ui.buttonsEnabled` is retained as a legacy preference and remains readable/writable through `.buttons on/off/status`. For compatibility and copyability, it does not replace ordinary command replies with native-flow messages. All command responses remain text-first until native-flow payloads are validated against the exact WhatsApp clients in use. `groupMetadata.initialSync` allows the one-time `groupFetchAllParticipating()` cache bootstrap. `groupMetadata.fetchCooldownMs` prevents repeated single-group fetches for an uncached group. These settings do not contain secrets and are persisted in the JSONL config journal. Schema v12 applies the low-latency AI Boost profile to known shipped defaults while preserving owner-customized settings. Boost/fast modes cap key attempts and enforce a total deadline; balanced mode allows more retries. See `AI_ENGINE.md`.
 
 See [`CONTACTS_AND_GROUP_CACHE.md`](CONTACTS_AND_GROUP_CACHE.md) for the dedicated `contact.jsonl` and group metadata JSONL data design.
 

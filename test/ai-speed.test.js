@@ -44,6 +44,7 @@ test('AI batches rapid adjacent messages and answers once through the fast provi
     assert.equal(calls, 1, 'rapid messages are sent as one provider request');
     assert.equal(replies, 1, 'one combined turn produces one WhatsApp reply');
     assert.equal(requestBody.messages.at(-1).content, 'Halo\nBisa bantu?');
+    assert.equal(requestBody.max_tokens, 180, 'default AI profile uses a bounded low-latency output budget');
     assert.equal(a.provider, 'groq');
     assert.equal(b.provider, 'groq');
 
