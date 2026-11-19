@@ -48,7 +48,7 @@ await updateConfig(c => {
 ```
 
 
-## Logging (v1.4.4)
+## Logging (v1.5.0)
 
 Terminal logging is controlled by `src/config.js`:
 
@@ -62,6 +62,31 @@ logging: {
 
 The main application logger formats timestamps, severity, component scope, and structured details in a compact terminal layout. Baileys is intentionally configured with its own Pino logger at `silent`; application connection lifecycle and recovery decisions remain visible through the main logger.
 
-## Invalid registered-session recovery (v1.4.4)
+## Invalid registered-session recovery (v1.5.0)
 
 `whatsapp.recoverInvalidSession` defaults to `true`. When pairing mode has a registered/authenticated local session and WhatsApp rejects that login with disconnect code `401`, the app waits for pending credential writes, moves the existing auth directory to a timestamped sibling ending in `.invalid-<timestamp>-<pid>`, and makes one fresh connection attempt using a new auth directory. The old data is preserved for diagnostics or manual restoration. Recovery is limited to once per process to avoid infinite re-pair loops. Set the flag to `false` to retain the old stop-on-401 behavior.
+
+
+## UI response settings, group metadata policy, and AI speed profile (schema v9)
+
+```js
+ui: {
+  buttonsEnabled: true
+},
+groupMetadata: {
+  initialSync: true,
+  fetchCooldownMs: 600000
+},
+ai: {
+  timeoutMs: 5000,
+  totalBudgetMs: 12000,
+  maxKeyAttempts: 1,
+  maxOutputTokens: 320,
+  historyMessages: 6,
+  coalesceMs: 350
+}
+```
+
+`ui.buttonsEnabled` controls the default native-flow button wrapper for command replies. Owners can switch it with `.buttons on/off/status`. `groupMetadata.initialSync` allows the one-time `groupFetchAllParticipating()` cache bootstrap. `groupMetadata.fetchCooldownMs` prevents repeated single-group fetches for an uncached group. These settings do not contain secrets and are persisted in the JSONL config journal. Schema v9 migrates previous default AI settings to the fast profile while preserving explicitly customized order/model IDs.
+
+See [`CONTACTS_AND_GROUP_CACHE.md`](CONTACTS_AND_GROUP_CACHE.md) for the dedicated `contact.jsonl` and group metadata JSONL data design.

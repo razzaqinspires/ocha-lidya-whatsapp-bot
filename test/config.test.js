@@ -16,10 +16,13 @@ test('config facade replays persistent config.replace events from JSONL', async 
     await first.loadConfig();
     assert.equal(first.getConfig().whatsapp.authMode, 'pairing');
     assert.equal(first.getConfig().whatsapp.browserName, 'Chrome');
-    assert.equal(first.getConfig().schemaVersion, 6);
+    assert.equal(first.getConfig().schemaVersion, 9);
     assert.equal(first.getConfig().whatsapp.recoverInvalidSession, true);
     assert.equal(first.getConfig().logging.level, 'info');
     assert.equal(first.getConfig().logging.color, 'auto');
+    assert.equal(first.getConfig().ai.timeoutMs, 5000);
+    assert.equal(first.getConfig().ai.totalBudgetMs, 12000);
+    assert.equal(first.getConfig().ai.maxOutputTokens, 320);
     await first.updateConfig(c => { c.mode = 'self'; c.prefix.single = '!'; c.prefix.mode = 'single'; c.whatsapp.authMode = 'pairing'; c.whatsapp.pairingNumber = '6282177461231'; }, { actor: 'test', reason: 'persistence test' });
     assert.equal(first.getConfig().mode, 'self');
     const db = await import(pathToFileURL(path.resolve(original, 'src/core/database.js')).href);
@@ -44,7 +47,7 @@ test('config facade replays persistent config.replace events from JSONL', async 
 });
 
 
-test('v1.4.4 migrates legacy config to canonical browser, safe session recovery, and logger settings', async () => {
+test('legacy config migrates to canonical browser, session recovery, logger, UI, and AI settings', async () => {
   const original = process.cwd();
   const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'ocha-config-migration-test-'));
   try {
@@ -73,7 +76,7 @@ test('v1.4.4 migrates legacy config to canonical browser, safe session recovery,
     assert.equal(result.status, 0, result.stderr || result.stdout);
     const resultLine = result.stdout.split(/\r?\n/).find(line => line.startsWith('MIGRATION_RESULT:'));
     assert.ok(resultLine, result.stdout);
-    assert.deepEqual(JSON.parse(resultLine.slice('MIGRATION_RESULT:'.length)), { schemaVersion: 6, browserName: 'Chrome' });
+    assert.deepEqual(JSON.parse(resultLine.slice('MIGRATION_RESULT:'.length)), { schemaVersion: 9, browserName: 'Chrome' });
   } finally {
     await fs.rm(temp, { recursive: true, force: true });
   }

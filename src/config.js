@@ -6,11 +6,13 @@
 import { initializeDatabase, appendRecord, getRecords, getLatestConfigRecord, configureDatabase } from './core/database.js';
 
 const DEFAULTS = Object.freeze({
-  schemaVersion: 6,
+  schemaVersion: 9,
   bot: { name: 'Ocha Lidya', aliases: ['Ocha', 'Lidya'], owner: '6283193905842', expectedNumber: '6282177461231' },
   whatsapp: { authMode: 'pairing', pairingNumber: '6282177461231', browserName: 'Chrome', sessionDir: 'sessions/ocha-lidya', recoverInvalidSession: true, connectTimeoutMs: 60000, queryTimeoutMs: 60000, keepAliveIntervalMs: 25000 },
   logging: { level: 'info', color: 'auto', timeZone: 'Asia/Jakarta' },
   mode: 'public',
+  ui: { buttonsEnabled: true },
+  groupMetadata: { initialSync: true, fetchCooldownMs: 600000 },
   prefix: { mode: 'multi', single: '.', list: ['.', '!', '/', '#'] },
   commands: { caseSensitive: false, ignoreEmpty: true },
   security: {
@@ -31,7 +33,7 @@ const DEFAULTS = Object.freeze({
     verifyOnBoot: true
   },
   features: { autoRead: false, autoTyping: false, selfModeReply: false },
-  ai: { enabled: true, providerOrder: ['gemini', 'groq', 'qwen', 'deepseek', 'openai'], models: { gemini: 'gemini-3.6-flash', groq: 'openai/gpt-oss-120b', qwen: 'qwen3.8-flash', deepseek: 'deepseek-flash', openai: 'gpt-6-luna' }, timeoutMs: 35000, maxOutputTokens: 1200, temperature: 0.7, historyMessages: 16, maxInputChars: 10000, retryPerProvider: 1 }
+  ai: { enabled: true, providerOrder: ['groq', 'gemini', 'qwen', 'deepseek', 'openai'], models: { gemini: 'gemini-3.8-flash', groq: 'openai/gpt-oss-20b', qwen: 'qwen3.8-flash', deepseek: 'deepseek-flash', openai: 'gpt-6-luna' }, timeoutMs: 5000, totalBudgetMs: 12000, maxKeyAttempts: 1, maxOutputTokens: 320, temperature: 0.6, historyMessages: 6, maxInputChars: 6000, retryPerProvider: 0, coalesceMs: 350 }
 });
 
 let activeConfig = structuredClone(DEFAULTS);
@@ -98,6 +100,59 @@ export async function loadConfig() {
       reason: 'v1.4.4 add invalid-session recovery and terminal logger settings'
     });
   }
+  activeConfig.ui = { ...DEFAULTS.ui, ...(activeConfig.ui || {}) };
+  // v1.5.0: persist interactive-response mode.
+  if (activeConfig.schemaVersion < 7) {
+    activeConfig.schemaVersion = 7;
+    activeConfig.ui = { ...DEFAULTS.ui, ...(activeConfig.ui || {}) };
+    await appendRecord('config.replace', {
+      config: activeConfig,
+      changedBy: 'system:migration',
+      reason: 'v1.5.0 add owner-controlled interactive command responses'
+    });
+  }
+  // v1.5.0: low-latency AI profile and explicit group metadata cache policy.
+  if (activeConfig.schemaVersion < 8) {
+    activeConfig.schemaVersion = 8;
+    activeConfig.groupMetadata = { ...DEFAULTS.groupMetadata, ...(activeConfig.groupMetadata || {}) };
+    const ai = activeConfig.ai || (activeConfig.ai = {});
+    ai.models = { ...DEFAULTS.ai.models, ...(ai.models || {}) };
+    const previousDefaultOrder = ['gemini', 'groq', 'qwen', 'deepseek', 'openai'];
+    if (JSON.stringify(ai.providerOrder) === JSON.stringify(previousDefaultOrder)) ai.providerOrder = [...DEFAULTS.ai.providerOrder];
+    if (ai.models.groq === 'openai/gpt-oss-120b') ai.models.groq = DEFAULTS.ai.models.groq;
+    if (ai.models.gemini === 'gemini-3.6-flash') ai.models.gemini = DEFAULTS.ai.models.gemini;
+    if ([8500, 35000].includes(ai.timeoutMs)) ai.timeoutMs = DEFAULTS.ai.timeoutMs;
+    if ([22000, 35000].includes(ai.totalBudgetMs) || !Number.isInteger(ai.totalBudgetMs)) ai.totalBudgetMs = DEFAULTS.ai.totalBudgetMs;
+    if ([2, undefined].includes(ai.maxKeyAttempts)) ai.maxKeyAttempts = DEFAULTS.ai.maxKeyAttempts;
+    if ([700, 1200].includes(ai.maxOutputTokens)) ai.maxOutputTokens = DEFAULTS.ai.maxOutputTokens;
+    if ([10, 16].includes(ai.historyMessages)) ai.historyMessages = DEFAULTS.ai.historyMessages;
+    if (ai.maxInputChars === 10000) ai.maxInputChars = DEFAULTS.ai.maxInputChars;
+    if (ai.retryPerProvider === 1) ai.retryPerProvider = DEFAULTS.ai.retryPerProvider;
+    if (!Number.isInteger(ai.coalesceMs)) ai.coalesceMs = DEFAULTS.ai.coalesceMs;
+    await appendRecord('config.replace', {
+      config: activeConfig,
+      changedBy: 'system:migration',
+      reason: 'v1.5.0 low-latency AI settings and one-time group metadata cache policy'
+    });
+  }
+  // v1.5.0 schema v9: lower the default latency/output budget while preserving
+  // owner-defined non-default values. This is a config.js + JSONL migration.
+  if (activeConfig.schemaVersion < 9) {
+    activeConfig.schemaVersion = 9;
+    const ai = activeConfig.ai || (activeConfig.ai = {});
+    if (ai.timeoutMs === 6500) ai.timeoutMs = DEFAULTS.ai.timeoutMs;
+    if (ai.totalBudgetMs === 16000) ai.totalBudgetMs = DEFAULTS.ai.totalBudgetMs;
+    if (ai.maxOutputTokens === 500) ai.maxOutputTokens = DEFAULTS.ai.maxOutputTokens;
+    if (ai.historyMessages === 8) ai.historyMessages = DEFAULTS.ai.historyMessages;
+    if (ai.coalesceMs === 180) ai.coalesceMs = DEFAULTS.ai.coalesceMs;
+    await appendRecord('config.replace', {
+      config: activeConfig,
+      changedBy: 'system:migration',
+      reason: 'v1.5.0 schema v9 lower-latency AI response profile'
+    });
+  }
+  activeConfig.groupMetadata = { ...DEFAULTS.groupMetadata, ...(activeConfig.groupMetadata || {}) };
+  activeConfig.ui = { ...DEFAULTS.ui, ...(activeConfig.ui || {}) };
   configureDatabase(activeConfig.database);
   initialized = true;
   return getConfig();
@@ -115,6 +170,7 @@ export async function updateConfig(mutator, metadata = {}) {
   validateConfig(next);
   await appendRecord('config.replace', { config: next, changedBy: metadata.actor || 'system', reason: metadata.reason || 'configuration update' });
   activeConfig = next;
+  activeConfig.ui = { ...DEFAULTS.ui, ...(activeConfig.ui || {}) };
   configureDatabase(activeConfig.database);
   return getConfig();
 }
@@ -125,12 +181,16 @@ export async function replaceConfig(next, metadata = {}) {
   validateConfig(normalized);
   await appendRecord('config.replace', { config: normalized, changedBy: metadata.actor || 'owner', reason: metadata.reason || 'configuration replacement' });
   activeConfig = normalized;
+  activeConfig.ui = { ...DEFAULTS.ui, ...(activeConfig.ui || {}) };
   configureDatabase(activeConfig.database);
   return getConfig();
 }
 
 function validateConfig(c) {
   if (!['public', 'self'].includes(c.mode)) throw new Error('mode harus public atau self');
+  if (typeof c.ui?.buttonsEnabled !== 'boolean') throw new Error('ui.buttonsEnabled harus boolean');
+  if (typeof c.groupMetadata?.initialSync !== 'boolean') throw new Error('groupMetadata.initialSync harus boolean');
+  if (!Number.isInteger(c.groupMetadata?.fetchCooldownMs) || c.groupMetadata.fetchCooldownMs < 1000 || c.groupMetadata.fetchCooldownMs > 86400000) throw new Error('groupMetadata.fetchCooldownMs harus 1000-86400000');
   if (!['qr', 'pairing'].includes(c.whatsapp?.authMode)) throw new Error('whatsapp.authMode harus qr atau pairing');
   if (!['Chrome', 'Firefox', 'IE', 'Opera', 'Safari', 'Edge'].includes(c.whatsapp?.browserName)) throw new Error('whatsapp.browserName harus Chrome, Firefox, IE, Opera, Safari, atau Edge');
   if (typeof c.whatsapp?.recoverInvalidSession !== 'boolean') throw new Error('whatsapp.recoverInvalidSession harus boolean');
@@ -145,6 +205,9 @@ function validateConfig(c) {
   if (!Number.isInteger(c.database?.archiveMaxCount) || c.database.archiveMaxCount < 1) throw new Error('database.archiveMaxCount minimal 1');
   if (c.ai && (!Array.isArray(c.ai.providerOrder) || c.ai.providerOrder.some(name => !['gemini','groq','qwen','deepseek','openai'].includes(name)))) throw new Error('ai.providerOrder berisi provider tidak dikenal');
   if (c.ai && (!Number.isInteger(c.ai.timeoutMs) || c.ai.timeoutMs < 1000 || c.ai.timeoutMs > 180000)) throw new Error('ai.timeoutMs harus 1000-180000');
+  if (c.ai && (!Number.isInteger(c.ai.totalBudgetMs) || c.ai.totalBudgetMs < 3000 || c.ai.totalBudgetMs > 120000)) throw new Error('ai.totalBudgetMs harus 3000-120000');
+  if (c.ai && (!Number.isInteger(c.ai.maxKeyAttempts) || c.ai.maxKeyAttempts < 1 || c.ai.maxKeyAttempts > 10)) throw new Error('ai.maxKeyAttempts harus 1-10');
+  if (c.ai && (!Number.isInteger(c.ai.coalesceMs) || c.ai.coalesceMs < 0 || c.ai.coalesceMs > 2000)) throw new Error('ai.coalesceMs harus 0-2000');
   if (c.ai && (!Number.isInteger(c.ai.maxOutputTokens) || c.ai.maxOutputTokens < 64 || c.ai.maxOutputTokens > 32768)) throw new Error('ai.maxOutputTokens harus 64-32768');
 }
 

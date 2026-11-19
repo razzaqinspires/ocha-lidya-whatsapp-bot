@@ -50,7 +50,7 @@ whatsapp: {
 },
 ```
 
-For an existing installation, v1.4.4 performs a one-time schema migration to add invalid-session recovery and terminal logger settings while preserving the existing pairing configuration. Then restart `npm start`. The bot waits for Baileys' initial QR readiness event (without displaying the QR) before requesting the eight-character phone-number pairing code in the terminal. On the target phone, open WhatsApp → Linked devices → Link a device → Link with phone number, then enter the code. Use the full international number without `+`, spaces, or punctuation. Set `c.whatsapp.authMode = 'qr'` in `src/config.js` to return to QR login. Session folder, accepted browser identity, and connection timeouts are also application settings under `whatsapp`; `browserName` must be `Chrome`, `Firefox`, `IE`, `Opera`, `Safari`, or `Edge`—never set it to `Ocha Lidya`. See `docs/WHATSAPP_CONNECTION.md`. If WhatsApp rejects a previously saved registered session with `401` while pairing mode is enabled, v1.4.4 moves that session directory to a timestamped `.invalid-*` backup (it does not delete it) and makes one fresh pairing attempt. Set `whatsapp.recoverInvalidSession: false` to disable this behavior.
+For an existing installation, v1.5.0 performs one-time configuration migrations through schema v9, preserving owner-defined provider/model overrides while enabling low-latency AI defaults, button responses, group-cache settings, and contact indexing. Then restart `npm start`. The bot waits for Baileys' initial pairing-readiness event (without displaying the QR) before requesting the eight-character phone-number pairing code in the terminal. On the target phone, open WhatsApp → Linked devices → Link a device → Link with phone number, then enter the code. Use the full international number without `+`, spaces, or punctuation. Set `c.whatsapp.authMode = 'qr'` in `src/config.js` to return to QR login. Session folder, accepted browser identity, and connection timeouts are also application settings under `whatsapp`; `browserName` must be `Chrome`, `Firefox`, `IE`, `Opera`, `Safari`, or `Edge`—never set it to `Ocha Lidya`. See `docs/WHATSAPP_CONNECTION.md`. If WhatsApp rejects a previously saved registered session with `401` while pairing mode is enabled, v1.4.4 moves that session directory to a timestamped `.invalid-*` backup (it does not delete it) and makes one fresh pairing attempt. Set `whatsapp.recoverInvalidSession: false` to disable this behavior.
 
 ### Requirements
 
@@ -125,6 +125,8 @@ The database is append-only. It does not rewrite one large JSON object after eve
 
 ```text
 data/
+├── contact.jsonl              # permanent, deduplicated PN contact index
+├── group-metadata.jsonl       # group-only metadata event log
 ├── control/
 │   └── config.snapshot.jsonl
 ├── journal/
@@ -208,6 +210,13 @@ Default settings are declared in `src/config.js`; runtime changes are persisted 
 | `logging.color` | `auto` | Enable terminal colors when attached to a TTY |
 | `logging.timeZone` | `Asia/Jakarta` | Timestamp timezone for application logs |
 | `mode` | `public` | `public` or `self` |
+| `ui.buttonsEnabled` | `true` | Use interactive quick-reply/list/copy controls on replies |
+| `groupMetadata.initialSync` | `true` | Perform a single initial batch load of participating group metadata |
+| `groupMetadata.fetchCooldownMs` | 600,000 ms | Cooldown for a one-time lazy fetch of a group missing from cache |
+| `ai.timeoutMs` | 5,000 ms | Per-provider response timeout in the fast profile |
+| `ai.totalBudgetMs` | 16,000 ms | Total provider fallback budget |
+| `ai.maxKeyAttempts` | `1` | One API key attempt per provider in fast mode; key cursor rotates between requests |
+| `ai.coalesceMs` | 350 ms | Merge rapid adjacent messages from one sender into a single AI turn |
 | `prefix.mode` | `multi` | `single`, `multi`, or `none` |
 | `prefix.single` | `.` | Single prefix |
 | `prefix.list` | `. ! / #` | Multi-prefix list |
@@ -239,7 +248,7 @@ Default multi-prefix values are `.`, `!`, `/`, and `#`.
 | `.owner` | `.creator` | Display owner contact |
 | `.about` | `.botinfo` | Bot identity and build information |
 | `.runtime` | `.system`, `.sysinfo` | Node runtime, memory, host and process details |
-| `.groupinfo` | `.gcinfo` | Group metadata summary; group-only |
+| `.groupinfo` | `.gcinfo`, `.grouplist` | In a private chat, list cached groups; in a group, show that group's cached metadata |
 
 ### Owner and developer
 
@@ -259,6 +268,12 @@ Default multi-prefix values are `.`, `!`, `/`, and `#`.
 | `.jid` | `.jidinfo`, `.liddebug` | Inspect current PN/LID fields |
 | `.dbstatus` | `.database`, `.dbhealth` | Database health |
 | `.dbsearch keyword` | `.archivefind` | Search ZIP archives |
+| `.aistatus` | `.aihealth` | Show AI provider readiness, model, key counts, average latency, health counters, timeout, and speed profile |
+| `.aiset on/off` | `.aiconfig` | Enable or disable AI |
+| `.aiset speed fast/balanced` | — | Switch between low-latency and more retry-tolerant profiles |
+| `.aiset order <providers>` | — | Set provider fallback order |
+| `.aiset model <provider> <model>` | — | Override one provider's model ID |
+| `.buttons on/off/status` | `.buttonmode` | Owner control for interactive replies |
 | `.master status` | `.masterconfig` | Show master runner switches |
 | `.master eval on/off` | — | Enable/disable JavaScript evaluation |
 | `.master exec on/off` | — | Enable/disable process runners |
@@ -266,7 +281,7 @@ Default multi-prefix values are `.`, `!`, `/`, and `#`.
 | `.master python on/off` | — | Enable/disable Python runner |
 | `.master golang on/off` | — | Enable/disable Go runner |
 
-All owner plugins use `ownerOnly: true`. `.groupinfo` requires a group context.
+All owner plugins use `ownerOnly: true`. `.groupinfo` is intentionally available in private chat: it lists only the local cached group index and does not request fresh metadata for already-cached groups.
 
 ### Prefix examples
 
@@ -302,7 +317,7 @@ Master syntax is reserved outside the normal prefix parser and is owner-only:
 | `>> <Python>` | Python |
 | `>>> <Go>` | Go |
 
-All runners are disabled by default. Enable individual runners with `.master` commands. These switches are persistent database settings, not environment variables.
+All runners are disabled by default. Use `.master eval on` for `>`/`=>`. The shell command `$` requires both `.master exec on` and `.master cli on`; Python and Go similarly require the process switch plus their own switch. These switches are persistent database settings, not environment variables.
 
 **Security warning:** Node.js `vm` is not a security boundary. Shell, Python, and Go commands can affect the host. Do not enable them on a production host containing secrets or user data. Use a dedicated unprivileged container/VM, read-only mounts, no host secrets, CPU/memory/PID limits, and restricted networking. The bot should never run as root.
 
@@ -349,7 +364,7 @@ WhatsApp may provide:
 - PN JID: `628...@s.whatsapp.net`
 - LID: opaque identifier ending in `@lid`
 
-Do not manufacture a phone JID by replacing `@lid` or treating the LID numeric portion as a phone number. The converted serializer uses verified mapping data when available, including `remoteJidAlt`, `participantAlt`, `senderPn`, and Baileys LID mapping APIs. If no verified phone mapping exists, keep the original LID for valid routing.
+Do not manufacture a phone JID by replacing `@lid` or treating the LID numeric portion as a phone number. The message pipeline checks the current Baileys alternate/PN fields: private chat `senderPn`, `remoteJidPn`, `remoteJidAlt`, then `remoteJid`; group sender `senderPn`, `participantPn`, `participantAlt`, then `participant`. A verified `signalRepository.lidMapping.getPNForLID()` lookup is the final fallback. If no verified mapping exists, the sender remains a LID and is not inserted into the PN contact database. Owner recognition uses the same verified PN resolution.
 
 For ordinary replies, use the actual incoming chat JID. PN-only workflows must require a verified mapping.
 
@@ -435,6 +450,7 @@ ocha-lidya-bot/
 ├── data/                    # ignored runtime JSONL database and archives
 ├── docs/
 │   ├── AUTO_GIT_SYNC.md
+│   ├── CONTACTS_AND_GROUP_CACHE.md
 │   ├── CHANGE_LOG.md
 │   ├── CONFIGURATION.md
 │   ├── DATABASE_DESIGN.md
@@ -449,6 +465,11 @@ ocha-lidya-bot/
 │   ├── config.js
 │   ├── core/
 │   │   ├── auto-git-sync.js
+│   │   ├── contacts.js
+│   │   ├── group-metadata.js
+│   │   ├── group-runtime.js
+│   │   ├── jid-resolution.js
+│   │   ├── ui.js
 │   │   ├── database.js
 │   │   ├── git-utils.js
 │   │   ├── repository.js
@@ -464,7 +485,7 @@ ocha-lidya-bot/
 
 ## 18. Version and change history
 
-Current package version: **1.2.0**.
+Current package version: **1.5.0** (configuration schema v9).
 
 See [`docs/CHANGE_LOG.md`](docs/CHANGE_LOG.md) for release history and [`docs/DATABASE_DESIGN.md`](docs/DATABASE_DESIGN.md) for persistence internals.
 
@@ -473,7 +494,7 @@ See [`docs/CHANGE_LOG.md`](docs/CHANGE_LOG.md) for release history and [`docs/DA
 
 AI only responds to non-command messages. In private chats, normal text can invoke AI. In groups, the bot responds **only** when the message explicitly mentions the bot's actual WhatsApp JID or replies to a message authored by the bot. Other group messages are ignored. Unknown prefixed commands never fall through to AI.
 
-Provider fallback order by default: Gemini → Groq → Qwen → DeepSeek → OpenAI. Providers without API keys are skipped. Credentials are arrays: separate multiple keys with commas, semicolons, or newlines. Configure API keys in `.env` only.
+Provider fallback order by default: Groq → Gemini → Qwen → DeepSeek → OpenAI. The default fast profile uses Groq `openai/gpt-oss-20b` first and Gemini `gemini-3.8-flash` as the next fallback. Providers without API keys are skipped. Credentials are arrays: separate multiple keys with commas, semicolons, or newlines. Configure API keys in `.env` only.
 
 ```dotenv
 GEMINI_API_KEY=key_one,key_two
@@ -483,8 +504,19 @@ DEEPSEEK_API_KEY=
 OPENAI_API_KEY=
 ```
 
-The engine records each request and provider attempt as JSONL checkpoints, retries transient errors, rotates keys, falls back across providers, and recovers unfinished jobs after reconnect. Delivery recovery is at-least-once if the process crashes during WhatsApp send. AI conversation turns are isolated by chat and sender.
+The engine warms a bounded in-memory history cache once at startup, uses a 5-second per-provider timeout and 12-second total fallback budget, rotates keys across requests, coalesces messages arriving within 350 ms from the same sender, falls back across providers, and recovers unfinished jobs after reconnect. The default fast profile uses one key attempt per provider to avoid serially waiting on multiple keys; the key cursor advances for subsequent requests. Delivery recovery is at-least-once if the process crashes during WhatsApp send. AI conversation turns are isolated by chat and sender.
 
-Owner commands: `.aistatus`, `.aiset on`, `.aiset off`, `.aiset order gemini,groq,qwen,deepseek,openai`, `.aiset model <provider> <model>`.
+Owner commands: `.aistatus`, `.aiset on`, `.aiset off`, `.aiset speed fast`, `.aiset speed balanced`, `.aiset order groq,gemini,qwen,deepseek,openai`, `.aiset model <provider> <model>`, `.buttons on`, `.buttons off`, and `.buttons status`. Interactive replies are enabled by default; `.buttons off` switches all `m.reply()` command responses to plain text.
 
 See [docs/AI_ENGINE.md](docs/AI_ENGINE.md) for provider model defaults, API details, recovery semantics, and operational guidance. Free tiers are not unlimited and depend on provider account, region, and quota; OpenAI and DeepSeek API usage should be treated as paid unless the account explicitly shows credits.
+
+
+## 20. Permanent contacts, group metadata cache, and interactive commands
+
+At startup Ocha Lidya creates `data/contact.jsonl` and `data/group-metadata.jsonl` if they do not exist. `contact.jsonl` stores one JSON object per line (JSONL), with the exact fields `{"number":"628...","name":"","gender":""}`. The file is a JSONL stream, not one bracketed JSON array. Only an explicit PN JID or a PN returned by Baileys' verified LID mapping is accepted. A number is stored without `@s.whatsapp.net`; duplicates are skipped both on startup and during append. Existing duplicate/invalid rows are compacted once, with the original file copied into `data/quarantine/` first.
+
+The first connection performs one `groupFetchAllParticipating()` batch and persists the returned metadata. A `group.bootstrap.complete` marker prevents repeat full refreshes after a successful bootstrap. Thereafter `groups.upsert`, `groups.update`, and `group-participants.update` events update the local cache. A cached group does not trigger `groupMetadata()` network requests when `.groupinfo` is used. A group missing from cache may receive one lazy fetch, protected by an in-flight guard and configurable cooldown. Member additions/modifications add newly verified PN numbers to the permanent contacts file; member removals update only the group metadata log. When the bot itself is removed/leaves, that group's metadata cache entry is deleted, but contacts are never deleted.
+
+`.groupinfo` in a private chat lists groups already in the metadata cache; selecting a row shows the stored detail. `.groupinfo` inside a group shows that group's cache. It does not force repeated metadata requests. See [`docs/CONTACTS_AND_GROUP_CACHE.md`](docs/CONTACTS_AND_GROUP_CACHE.md) for event semantics, file formats, PN/LID resolution order, and recovery behavior.
+
+All plugin command responses that use `m.reply()` are wrapped into native-flow quick replies when `ui.buttonsEnabled` is true. `.menu` and `.groupinfo` use list selections; `.owner` provides a copy action. Owner command `.buttons off` disables button wrapping globally and `.buttons on` re-enables it. The mode is persisted under `ui.buttonsEnabled`.

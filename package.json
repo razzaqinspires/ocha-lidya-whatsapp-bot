@@ -1,9 +1,9 @@
 {
   "name": "ocha-lidya-whatsapp-bot",
-  "version": "1.4.4",
+  "version": "1.5.0",
   "private": true,
   "type": "module",
-  "description": "Ocha Lidya WhatsApp bot with resilient WhatsApp reconnection, QR/pairing-code login, and multi-provider AI",
+  "description": "Ocha Lidya WhatsApp bot with resilient WhatsApp reconnection, QR/pairing-code login, cached group metadata, PN contact indexing, and low-latency multi-provider AI",
   "engines": {
     "node": ">=20.18.0"
   },

@@ -1,18 +1,24 @@
+import { resolveMessageSenderPn } from '../../core/jid-resolution.js';
 export default {
-  name:'jid', aliases:['jidinfo','liddebug'], category:'developer', ownerOnly:true, description:'Inspect PN/LID identifiers for the current message',
-  async execute({m}) {
-    const k=m.key||{};
-    const fields={
-      chat:m.chat,
-      sender:m.sender,
-      remoteJid:k.remoteJid,
-      remoteJidAlt:k.remoteJidAlt,
-      participant:k.participant,
-      participantAlt:k.participantAlt,
-      senderPn:k.senderPn,
-      fromMe:k.fromMe,
-      isGroup:m.isGroup
+  name: 'jid', aliases: ['jidinfo', 'liddebug'], category: 'developer', ownerOnly: true,
+  description: 'Inspect PN/LID identifiers for the current message',
+  async execute({ sock, m }) {
+    const key = m.key || {};
+    const senderPn = await resolveMessageSenderPn(sock, key, m.isGroup);
+    const fields = {
+      chat: m.chat,
+      sender: m.sender,
+      senderPn: senderPn || null,
+      remoteJid: key.remoteJid,
+      remoteJidAlt: key.remoteJidAlt,
+      remoteJidPn: key.remoteJidPn,
+      participant: key.participant,
+      participantAlt: key.participantAlt,
+      participantPn: key.participantPn,
+      keySenderPn: key.senderPn,
+      fromMe: key.fromMe,
+      isGroup: m.isGroup
     };
-    await m.reply('*JID / LID DIAGNOSTICS*\n```json\n'+JSON.stringify(fields,null,2)+'\n```');
+    return m.reply('*JID / LID DIAGNOSTICS*\n```json\n' + JSON.stringify(fields, null, 2) + '\n```');
   }
 };

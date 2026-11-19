@@ -6,9 +6,11 @@ import { getConfig } from './config.js';
 import { logger } from './logger.js';
 import { getPrefixes } from './prefix.js';
 import { answerMessage, isAITrigger } from '../ai/engine.js';
+import { withCommandButtons } from './ui.js';
 
 export async function dispatch(sock, message) {
   const config = getConfig();
+  withCommandButtons(sock, message);
   if (message.fromMe && !message.isOwner) return;
   const body = String(message.body || '').trim();
   if (!body) return;
@@ -24,7 +26,13 @@ export async function dispatch(sock, message) {
 
   if (plugin) {
     const auth = authorize(message, plugin);
-    if (!auth.ok) return;
+    if (!auth.ok) {
+      if (auth.reason === 'group') return message.reply('Perintah ini hanya dapat digunakan di dalam grup.');
+      if (auth.reason === 'private') return message.reply('Perintah ini hanya dapat digunakan di chat pribadi.');
+      if (auth.reason === 'owner') return message.reply('Perintah ini khusus owner.');
+      if (auth.reason === 'self') return message.reply('Bot sedang dalam mode self.');
+      return;
+    }
     try {
       await plugin.execute({ sock, m:message, args:parsed.args, text:parsed.text, command:parsed.command, config, isOwner:auth.owner });
     } catch (error) {

@@ -11,12 +11,12 @@ Mention validation compares WhatsApp `mentionedJid` against the bot's actual ses
 
 ## Providers and default order
 
-The default order is Gemini → Groq → Qwen → DeepSeek → OpenAI. Only providers with configured credentials are attempted. The order and model IDs are persistent non-secret settings in `src/config.js` / JSONL config events.
+The default fast order is Groq → Gemini → Qwen → DeepSeek → OpenAI. Only providers with configured credentials are attempted. The order and model IDs are persistent non-secret settings in `src/config.js` / JSONL config events.
 
 | Provider | Default model ID | API credential | Notes |
 |---|---|---|---|
-| Gemini | `gemini-3.6-flash` | `GEMINI_API_KEY` | Native Gemini `generateContent` adapter; free-tier availability and quota are account/region dependent. |
-| Groq | `openai/gpt-oss-120b` | `GROQ_API_KEY` | OpenAI-compatible Chat Completions endpoint; official model catalogue lists this model. |
+| Gemini | `gemini-3.8-flash` | `GEMINI_API_KEY` | Native Gemini `generateContent` adapter; free-tier availability and quota are account/region dependent. |
+| Groq | `openai/gpt-oss-20b` | `GROQ_API_KEY` | OpenAI-compatible Chat Completions endpoint; official model catalogue lists this model. |
 | Qwen | `qwen3.8-flash` | `QWEN_API_KEY` | Alibaba Model Studio OpenAI-compatible endpoint; free quota is not universal: Alibaba documents eligibility restrictions (including China/Beijing region, identity verification, and a 90-day validity period) for its new-user quota. |
 | DeepSeek | `deepseek-flash` | `DEEPSEEK_API_KEY` | OpenAI-compatible endpoint; API usage is paid unless the account has promotional balance. |
 | OpenAI | `gpt-6-luna` | `OPENAI_API_KEY` | OpenAI API usage is billed; do not assume ChatGPT subscription includes API credits. |
@@ -25,7 +25,7 @@ Model IDs are defaults, not a promise that a given key/region/account has access
 
 ## Credential arrays
 
-Each provider accepts one or more API keys in its environment variable, separated by commas, semicolons, or newlines. Keys rotate across attempts. Example (local `.env` only):
+Each provider accepts one or more API keys in its environment variable, separated by commas, semicolons, or newlines. Keys rotate between requests; the fast profile makes one attempt per provider and immediately moves to the next fallback on failure. The balanced profile can attempt more than one key for a provider. Example (local `.env` only):
 
 ```dotenv
 GEMINI_API_KEY=key_one,key_two
@@ -42,20 +42,27 @@ Never store keys in JSONL config, database events, source code, command argument
 1. Read provider order and model IDs from persistent config.
 2. Skip providers without keys.
 3. Persist an `ai.job.checkpoint` before/after provider attempts.
-4. Retry transient errors (timeout, rate limit, server errors) and authentication-key rejection once per provider by default. Each retry rotates to the next configured key.
-5. Continue to the next provider after a provider failure.
+4. Each provider request has a bounded timeout. In fast mode, one selected API key is tried per provider; the key cursor rotates for subsequent requests.
+5. Continue to the next configured provider when a provider fails or reaches its timeout.
 6. A small in-memory circuit breaker pauses a provider for 60 seconds after repeated transient failures.
 7. Persist user/assistant turns as append-only `ai.turn` events. Conversation history is isolated by chat JID + sender JID.
 8. On reconnect, queued/incomplete jobs are retried and delivered as a recovery message. Delivery is at-least-once if the process crashes between WhatsApp send and the final checkpoint; exactly-once delivery cannot be guaranteed by the WhatsApp send API.
 
 Checkpoint events store prompt/history and provider attempt metadata in the local JSONL database. Do not enable AI for untrusted group traffic beyond the explicit mention/reply gate.
 
+## Low-latency behavior
+
+The default fast profile is `timeoutMs=5000`, `totalBudgetMs=12000`, `maxKeyAttempts=1`, `maxOutputTokens=320`, `historyMessages=6`, and `coalesceMs=350`. Adjacent messages from the same sender in the same chat that arrive within 350 ms are combined into one user turn and receive one reply. A bounded in-memory conversation cache is warmed once at startup, avoiding a full JSONL history scan for every message. Incoming duplicate message IDs are ignored for a short deduplication window. Provider calls use Node `fetch` with AbortController timeouts and no SDK startup overhead.
+
+Use `.aiset speed balanced` for longer timeouts, a larger output/history budget, and up to two key attempts per provider. Use `.aiset speed fast` to return to the low-latency profile. The fast profile prioritizes Groq first, limits generated output, and rotates one key per request so it does not wait serially on a long list of keys. These are persistent configuration changes.
+
 ## Owner controls
 
-- `.aistatus` — provider readiness, model IDs, key count, circuit state (never reveals keys).
+- `.aistatus` — provider readiness, model IDs, key count, EWMA average/last latency, success/failure count, and circuit state (never reveals keys).
 - `.aiset on` / `.aiset off` — enable/disable AI.
-- `.aiset order gemini,groq,qwen,deepseek,openai` — configure fallback order.
-- `.aiset model groq openai/gpt-oss-120b` — override one model ID.
+- `.aiset speed fast` / `.aiset speed balanced` — switch performance profiles.
+- `.aiset order groq,gemini,qwen,deepseek,openai` — configure fallback order.
+- `.aiset model groq openai/gpt-oss-20b` — override one model ID.
 
 ## Environment setup
 
@@ -69,7 +76,7 @@ Copy `.env.example` to `.env`, then configure at least one provider key. For a f
 - Conversation history is local and event-sourced. It is not cross-device synchronization.
 - Free quotas and model availability change. Verify the account's live provider console before production use.
 
-## Live provider references checked 18 November 2026
+## Live provider references checked 19 November 2026
 
 - Google Gemini model catalogue: <https://ai.google.dev/gemini-api/docs/models>
 - Google Gemini API pricing/free tier: <https://ai.google.dev/gemini-api/docs/pricing>
@@ -80,17 +87,4 @@ Copy `.env.example` to `.env`, then configure at least one provider key. For a f
 - DeepSeek API model and pricing: <https://api-docs.deepseek.com/quick_start/pricing>
 - OpenAI API pricing: <https://developers.openai.com/api/docs/pricing>
 
-Google's live catalogue currently lists Gemini 3.6 Flash as a stable model and its pricing page shows a limited free tier. Free tier data may be used to improve Google's products. Groq publishes model-specific limits; actual limits depend on account plan and are visible in the account console. Alibaba's free quota is conditional (including region and new-account eligibility), time-limited, and not a general unlimited allowance. OpenAI and DeepSeek API use should be treated as metered/paid unless the account explicitly displays promotional credit.
-
-## Live provider references checked 18 November 2026
-
-- Google Gemini model catalogue: https://ai.google.dev/gemini-api/docs/models
-- Google Gemini API pricing/free tier: https://ai.google.dev/gemini-api/docs/pricing
-- Groq model catalogue: https://console.groq.com/docs/models
-- Groq rate limits: https://console.groq.com/docs/rate-limits
-- Alibaba Model Studio Qwen rate limits: https://www.alibabacloud.com/help/en/model-studio/rate-limit
-- Alibaba Model Studio introductory free quota and eligibility: https://help.aliyun.com/en/model-studio/new-free-quota
-- DeepSeek API model and pricing: https://api-docs.deepseek.com/quick_start/pricing
-- OpenAI API pricing: https://developers.openai.com/api/docs/pricing
-
-Google's live catalogue currently lists Gemini 3.6 Flash as a stable model and its pricing page shows a limited free tier. Free tier data may be used to improve Google's products. Groq publishes model-specific limits; actual limits depend on account plan and are visible in the account console. Alibaba's free quota is conditional (including region and new-account eligibility), time-limited, and not a general unlimited allowance. OpenAI and DeepSeek API use should be treated as metered/paid unless the account explicitly displays promotional credit.
+Google's live catalogue currently lists Gemini 3.8 Flash as a model and its pricing page shows a limited free tier. Free tier data may be used to improve Google's products. Groq publishes model-specific limits; actual limits depend on account plan and are visible in the account console. Alibaba's free quota is conditional (including region and new-account eligibility), time-limited, and not a general unlimited allowance. OpenAI and DeepSeek API use should be treated as metered/paid unless the account explicitly displays promotional credit.

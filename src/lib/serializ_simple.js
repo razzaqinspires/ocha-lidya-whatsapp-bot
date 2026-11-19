@@ -95,11 +95,8 @@ function getBotIdentifiers(sock) {
     if (!id) return;
     const dec = sock.decodeJid ? sock.decodeJid(id) : id;
     identifiers.add(dec);
-    const digits = String(dec).replace(/[^0-9]/g, '').split('@')[0];
-    if (digits) {
-      identifiers.add(digits);
-      identifiers.add(`${digits}@s.whatsapp.net`);
-    }
+    // Do not compare bare numeric LID fragments with phone-number identities.
+    // A LID is never a phone number unless Baileys supplies an explicit PN mapping.
   };
 
   add(sock?.user?.id);
@@ -120,6 +117,16 @@ function resolvePhoneJid(sock, jid, key = {}) {
 
   if (decoded.endsWith('@lid')) {
     const normalizedLid = decoded.split(':')[0];
+    const groupContext = Boolean(key.participant || key.participantAlt || key.participantPn);
+    const explicitPn = (groupContext
+      ? [key.participantPn, key.participantAlt, key.senderPn]
+      : [key.remoteJidPn, key.remoteJidAlt, key.senderPn])
+      .find(value => typeof value === 'string' && value.replace(/:\d+(?=@)/, '').endsWith('@s.whatsapp.net'));
+    if (explicitPn) {
+      const normalizedPn = sock.decodeJid(explicitPn);
+      registerJidPair(normalizedLid, normalizedPn);
+      return normalizedPn;
+    }
     if (jidPairs.has(normalizedLid)) return jidPairs.get(normalizedLid);
     if (jidPairs.has(decoded)) return jidPairs.get(decoded);
 
@@ -130,15 +137,6 @@ function resolvePhoneJid(sock, jid, key = {}) {
         return mappedPn;
       }
     } catch {}
-
-    const myLid = sock.authState?.creds?.me?.lid || sock.user?.lid;
-    const myPhone = sock.authState?.creds?.me?.id || sock.user?.id;
-    if (myLid && myPhone) {
-      const decMyLid = sock.decodeJid(myLid);
-      if (decMyLid === decoded || decMyLid.split('@')[0] === decoded.split('@')[0]) {
-        return sock.decodeJid(myPhone);
-      }
-    }
 
     if (key.senderPn?.endsWith('@s.whatsapp.net')) {
       const candidate = key.participant?.endsWith('@lid') ? key.participant : key.remoteJid;
@@ -396,25 +394,25 @@ function serialize(sock, m) {
   storeMessage(m);
   syncBotJidPairs(sock);
 
-  if (m.key.remoteJid?.endsWith('@lid') && m.key.remoteJidAlt?.endsWith('@s.whatsapp.net')) {
-    registerJidPair(sock.decodeJid(m.key.remoteJid), sock.decodeJid(m.key.remoteJidAlt));
+  const remotePn = [m.key.remoteJidAlt, m.key.remoteJidPn, m.key.senderPn].find(value => typeof value === 'string' && value.replace(/:\d+(?=@)/, '').endsWith('@s.whatsapp.net'));
+  const participantPn = [m.key.participantAlt, m.key.participantPn, m.key.senderPn].find(value => typeof value === 'string' && value.replace(/:\d+(?=@)/, '').endsWith('@s.whatsapp.net'));
+  if (m.key.remoteJid?.endsWith('@lid') && remotePn) {
+    registerJidPair(sock.decodeJid(m.key.remoteJid), sock.decodeJid(remotePn));
   }
-  if (m.key.participant?.endsWith('@lid') && m.key.participantAlt?.endsWith('@s.whatsapp.net')) {
-    registerJidPair(sock.decodeJid(m.key.participant), sock.decodeJid(m.key.participantAlt));
+  if (m.key.participant?.endsWith('@lid') && participantPn) {
+    registerJidPair(sock.decodeJid(m.key.participant), sock.decodeJid(participantPn));
   }
-  // Baileys 7.x may expose senderPn on MessageKey. This is a real PN mapping.
+  // Never construct a PN from the numeric portion of a LID. Only explicit
+  // Baileys alternate/PN fields create a mapping.
   const lidCandidate = [m.key.participant, m.key.remoteJid].find(value => value?.endsWith('@lid'));
-  if (lidCandidate && m.key.senderPn?.endsWith('@s.whatsapp.net')) {
-    registerJidPair(sock.decodeJid(lidCandidate), sock.decodeJid(m.key.senderPn));
-  }
+  const explicitSenderPn = [m.key.senderPn, participantPn, remotePn].find(value => typeof value === 'string' && value.endsWith('@s.whatsapp.net'));
+  if (lidCandidate && explicitSenderPn) registerJidPair(sock.decodeJid(lidCandidate), sock.decodeJid(explicitSenderPn));
 
   m.id = m.key.id || '';
 
   const botIds = getBotIdentifiers(sock);
   const rawParticipant = m.key.participant ? sock.decodeJid(m.key.participant) : '';
-  const participantDigits = rawParticipant.replace(/[^0-9]/g, '').split('@')[0];
-  const isFromMyAccount = Boolean(m.key.fromMe) ||
-                          Boolean(rawParticipant && (botIds.has(rawParticipant) || botIds.has(participantDigits)));
+  const isFromMyAccount = Boolean(m.key.fromMe) || Boolean(rawParticipant && botIds.has(rawParticipant));
 
   m.fromMe = isFromMyAccount;
   m.isBaileys = Boolean(m.id && isBotSentMessage(m.id));

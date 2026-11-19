@@ -1,5 +1,29 @@
 # Change Log
 
+All notable changes to Ocha Lidya are recorded here. The newest release is listed first.
+
+## [1.5.0] - 2026-11-19
+
+### Added
+- Dedicated `data/contact.jsonl` PN-only contact index. Each number is digits-only and stored once with blank `name` and `gender` fields. Legacy duplicate/bad lines are backed up to quarantine and compacted at startup.
+- Dedicated `data/group-metadata.jsonl` event log, a one-time `groupFetchAllParticipating()` bootstrap, a durable completion marker, cached group listing in private chat, and lazy one-time fetch with cooldown only for an unknown group.
+- Incremental group cache updates from `groups.upsert`, `groups.update`, and `group-participants.update`; participant add/modify events index verified PN contacts, participant removal updates only group metadata, and bot removal deletes only that group's cache entry.
+- PN/LID resolution for DM and group message keys using `senderPn`, `remoteJidPn`, `remoteJidAlt`, `participantPn`, `participantAlt`, and `signalRepository.lidMapping.getPNForLID()` as a verified fallback. Existing group-cache participants and owner PN are also re-indexed into contacts at startup. Numeric LID fragments are never converted into PN JIDs.
+- Native-flow quick-reply buttons on command responses by default, list selection for menu/group lists, copy action for owner contact, and owner command `.buttons on/off/status`.
+- AI performance controls `.aiset speed fast/balanced`, bounded conversation-history cache warm-up, a 350 ms rapid-message coalescing window, duplicate incoming message ID suppression, smaller output budget, Groq-first fast fallback, one key attempt per provider in fast mode, and per-provider/overall deadlines. Provider latency EWMA and health counters are exposed in `.aistatus`.
+- Added group cache, PN/LID, contacts, AI coalescing, and command-mode regression tests.
+
+### Changed
+- Bumped package to `1.5.0` and configuration schema to v9. `src/config.js` now contains `ui`, `groupMetadata`, and the low-latency AI defaults; existing custom model IDs are preserved during migration.
+- `.groupinfo` is no longer group-only. In private chat it lists cached groups and selecting one displays stored metadata without re-fetching already-cached groups.
+- Owner resolution uses the same verified PN extraction path as the contact database. Master runner messages now explain their individual opt-in switches; runners remain off by default.
+- README, AI guide, configuration guide, and new contacts/group-cache guide updated.
+
+### Validation
+- Offline test suite: 36 tests passed, 2 Baileys-dependent serializer tests skipped because `@whiskeysockets/baileys` was not installed in this build sandbox.
+- Syntax checks and ZIP package verification run after assembly.
+- No live WhatsApp group, contact, or AI provider integration session was run in the build sandbox.
+
 ## v1.4.2 — 2026-11-18
 - Updated `src/config.js` directly: WhatsApp login now defaults to `pairing` with the configured bot number.
 - Added one-time JSONL configuration migration from schema v3 to v4 so existing v1.4.1 installs do not silently retain the old QR default.

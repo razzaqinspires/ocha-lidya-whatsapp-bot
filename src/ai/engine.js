@@ -4,16 +4,20 @@ import { getConfig } from '../core/config.js';
 import { logger } from '../core/logger.js';
 import { generateWithProvider, getProviderInventory } from './providers.js';
 
-const SYSTEM_PROMPT = `Kamu adalah Ocha Lidya, asisten percakapan WhatsApp yang cerdas, jelas, adaptif, dan sopan. Jawab dalam bahasa yang digunakan lawan bicara; utamakan bahasa Indonesia yang natural. Pahami konteks percakapan, jangan mengarang fakta, akui ketidakpastian, dan jangan mengklaim telah melakukan tindakan eksternal yang belum dilakukan. Jawaban WhatsApp harus terstruktur secukupnya, tidak bertele-tele, dan tidak memakai Markdown tabel kecuali benar-benar diperlukan.`;
+const SYSTEM_PROMPT = `Kamu adalah Ocha Lidya, asisten WhatsApp yang tanggap, natural, dan akurat. Jawab dalam bahasa pengguna. Dahulukan jawaban langsung, hindari pembukaan berulang, dan sesuaikan panjang jawaban dengan pertanyaan. Jangan mengarang fakta, jangan mengklaim melakukan tindakan eksternal yang belum dilakukan, dan gunakan konteks percakapan yang tersedia.`;
 const DEFAULTS = Object.freeze({
   enabled: true,
-  providerOrder: ['gemini', 'groq', 'qwen', 'deepseek', 'openai'],
-  models: { gemini: 'gemini-3.6-flash', groq: 'openai/gpt-oss-120b', qwen: 'qwen3.8-flash', deepseek: 'deepseek-flash', openai: 'gpt-6-luna' },
-  timeoutMs: 35_000, maxOutputTokens: 1200, temperature: 0.7, historyMessages: 16,
-  maxInputChars: 10_000, retryPerProvider: 1
+  providerOrder: ['groq', 'gemini', 'qwen', 'deepseek', 'openai'],
+  models: { gemini: 'gemini-3.8-flash', groq: 'openai/gpt-oss-20b', qwen: 'qwen3.8-flash', deepseek: 'deepseek-flash', openai: 'gpt-6-luna' },
+  timeoutMs: 5000, totalBudgetMs: 12000, maxKeyAttempts: 1,
+  maxOutputTokens: 320, temperature: 0.6, historyMessages: 6,
+  maxInputChars: 6000, retryPerProvider: 0, coalesceMs: 350
 });
 
-function aiConfig() { return { ...DEFAULTS, ...(getConfig().ai || {}), models: { ...DEFAULTS.models, ...(getConfig().ai?.models || {}) } }; }
+function aiConfig() {
+  const config = getConfig().ai || {};
+  return { ...DEFAULTS, ...config, models: { ...DEFAULTS.models, ...(config.models || {}) } };
+}
 function canonicalJid(value, sock) {
   if (!value || typeof value !== 'string') return '';
   try { return sock.decodeJid?.(value) || value; } catch { return value; }
@@ -44,81 +48,125 @@ function stripBotMention(text) {
 }
 function conversationKey(chat, sender) { return `${chat}::${sender}`; }
 
+// Conversation history is warmed once and then served from a bounded in-memory cache.
+// The old implementation rescanned the complete event journal for every message.
+const historyCache = new Map();
+const persistedRoles = new Set();
+let historyWarmPromise;
+const MAX_CACHED_CONVERSATIONS = 2500;
+const MAX_CACHED_TURNS = 40;
 
-async function persistTurnsOnce(job, response) {
-  const existing = await getRecords({ type: 'ai.turn', predicate: row => row.payload?.jobId === job.id });
-  if (!existing.some(row => row.payload.role === 'user')) {
-    await appendRecord('ai.turn', { key: job.key, chat: job.chat, sender: job.sender, role: 'user', content: job.userText, jobId: job.id });
-  }
-  if (!existing.some(row => row.payload.role === 'assistant')) {
-    await appendRecord('ai.turn', { key: job.key, chat: job.chat, sender: job.sender, role: 'assistant', content: response.text, provider: response.provider, model: response.model, jobId: job.id });
-  }
+function cacheTurn(key, turn) {
+  let turns = historyCache.get(key);
+  if (!turns) turns = [];
+  turns.push(turn);
+  if (turns.length > MAX_CACHED_TURNS) turns.splice(0, turns.length - MAX_CACHED_TURNS);
+  historyCache.delete(key);
+  historyCache.set(key, turns);
+  while (historyCache.size > MAX_CACHED_CONVERSATIONS) historyCache.delete(historyCache.keys().next().value);
 }
 
-async function loadHistory(chat, sender, limit) {
-  const rows = await getRecords({ type: 'ai.turn' });
-  return rows.filter(row => row.payload?.key === conversationKey(chat, sender))
-    .slice(-limit).map(row => ({ role: row.payload.role, content: row.payload.content }));
+export async function initializeAIHistoryCache() {
+  if (historyWarmPromise) return historyWarmPromise;
+  historyWarmPromise = (async () => {
+    const rows = await getRecords({ type: 'ai.turn' });
+    for (const row of rows) {
+      const payload = row.payload || {};
+      if (!payload.key || !payload.role || typeof payload.content !== 'string') continue;
+      cacheTurn(payload.key, { role: payload.role, content: payload.content });
+      if (payload.jobId) persistedRoles.add(`${payload.jobId}:${payload.role}`);
+    }
+    logger.info({ turns: rows.length, conversations: historyCache.size }, 'AI history cache warmed');
+    return { turns: rows.length, conversations: historyCache.size };
+  })().catch(error => {
+    historyWarmPromise = undefined;
+    throw error;
+  });
+  return historyWarmPromise;
 }
-const jobCache = new Map();
+
+async function persistTurn(job, role, content, response = {}) {
+  const marker = `${job.id}:${role}`;
+  if (persistedRoles.has(marker)) return;
+  await appendRecord('ai.turn', {
+    key: job.key, chat: job.chat, sender: job.sender, role, content,
+    ...(response.provider ? { provider: response.provider } : {}),
+    ...(response.model ? { model: response.model } : {}),
+    jobId: job.id
+  });
+  persistedRoles.add(marker);
+  cacheTurn(job.key, { role, content });
+}
+
 async function checkpoint(jobId, status, payload = {}) {
-  if (payload.job) jobCache.set(jobId, payload.job);
-  const job = payload.job || jobCache.get(jobId);
-  await appendRecord('ai.job.checkpoint', { jobId, status, ...(job ? { job } : {}), ...payload }, { source: 'ai-engine' });
-  if (status === 'delivered' || status === 'failed') jobCache.delete(jobId);
+  await appendRecord('ai.job.checkpoint', { jobId, status, ...payload }, { source: 'ai-engine' });
 }
 function retryDelay(error) {
   const seconds = Number(error.retryAfter);
-  if (Number.isFinite(seconds) && seconds > 0) return Math.min(seconds * 1000, 5000);
-  return 350;
+  if (Number.isFinite(seconds) && seconds > 0) return Math.min(seconds * 1000, 700);
+  return 180;
 }
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-async function executeWithFallback(job, { onComplete } = {}) {
-  jobCache.set(job.id, job);
+async function executeWithFallback(job) {
   const config = aiConfig();
   const inventory = getProviderInventory(config);
   const available = new Set(inventory.filter(provider => provider.configured).map(provider => provider.name));
   const order = (config.providerOrder || DEFAULTS.providerOrder).filter(name => available.has(name));
-  if (!order.length) throw new Error('Belum ada API key AI yang dikonfigurasi. Isi minimal GEMINI_API_KEY atau GROQ_API_KEY di .env.');
+  if (!order.length) throw new Error('Belum ada API key AI yang dikonfigurasi. Isi minimal GROQ_API_KEY atau GEMINI_API_KEY di .env.');
 
+  const startedAt = Date.now();
+  const deadline = startedAt + config.totalBudgetMs;
   const errors = [];
   for (const provider of order) {
-    const maxAttempts = Math.max(1, Number(config.retryPerProvider) + 1);
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      await checkpoint(job.id, 'attempting', { provider, attempt, updatedAt: new Date().toISOString() });
-      try {
-        const result = await generateWithProvider(provider, job.messages, {
-          models: config.models, timeoutMs: config.timeoutMs,
-          maxOutputTokens: config.maxOutputTokens, temperature: config.temperature
-        });
-        await checkpoint(job.id, 'generated', { provider, model: result.model, usage: result.usage, response: result.text });
-        await onComplete?.(result);
-        await checkpoint(job.id, 'ready_to_deliver', { provider, model: result.model, response: result.text });
-        return result;
-      } catch (error) {
-        errors.push({ provider, attempt, message: error.message, status: error.status, code: error.code });
-        await checkpoint(job.id, 'provider_failed', { provider, attempt, error: error.message, retryable: Boolean(error.retryable) });
-        if (!(error.retryable || error.keyRejected) || attempt >= maxAttempts) break;
-        await sleep(retryDelay(error));
+    const remaining = deadline - Date.now();
+    if (remaining < 900) break;
+    const providerTimeout = Math.max(700, Math.min(config.timeoutMs, remaining - 250));
+    try {
+      const result = await generateWithProvider(provider, job.messages, {
+        models: config.models,
+        timeoutMs: providerTimeout,
+        maxOutputTokens: config.maxOutputTokens,
+        temperature: config.temperature,
+        keyAttempts: config.maxKeyAttempts
+      });
+      return { ...result, latencyMs: Date.now() - startedAt };
+    } catch (error) {
+      errors.push({ provider, message: error.message, status: error.status, code: error.code });
+      logger.warn({ jobId: job.id, provider, status: error.status, retryable: error.retryable, remainingMs: deadline - Date.now() }, 'AI provider skipped after bounded attempt');
+      if (Date.now() < deadline && error.retryable && config.retryPerProvider > 0) {
+        await sleep(Math.min(retryDelay(error), Math.max(0, deadline - Date.now() - 1000)));
       }
     }
   }
-  await checkpoint(job.id, 'failed', { errors, failedAt: new Date().toISOString() });
-  const summary = errors.map(error => `${error.provider}: ${error.message}`).join(' | ');
-  throw new Error(`Semua provider AI gagal. ${summary}`);
+  throw Object.assign(new Error(`Semua provider AI gagal dalam ${Date.now() - startedAt}ms. ${errors.map(error => `${error.provider}: ${error.message}`).join(' | ')}`), { providerErrors: errors });
 }
 
-export async function answerMessage(sock, message) {
+const conversationQueues = new Map();
+function enqueueConversation(key, operation) {
+  const previous = conversationQueues.get(key) || Promise.resolve();
+  const current = previous.catch(() => {}).then(operation);
+  conversationQueues.set(key, current);
+  return current.finally(() => {
+    if (conversationQueues.get(key) === current) conversationQueues.delete(key);
+  });
+}
+
+async function setComposing(sock, chat, state) {
+  try { await sock.sendPresenceUpdate(state, chat); } catch {}
+}
+
+async function answerMessageUnlocked(sock, message) {
   const config = aiConfig();
   if (!config.enabled) return message.reply('Layanan AI sedang dinonaktifkan.');
   const userText = stripBotMention(message.body).slice(0, config.maxInputChars);
   if (!userText) return message.reply('Ada yang ingin kamu tanyakan?');
 
+  await initializeAIHistoryCache();
   const key = conversationKey(message.chat, message.sender);
-  const history = await loadHistory(message.chat, message.sender, config.historyMessages);
+  const history = (historyCache.get(key) || []).slice(-config.historyMessages);
   const quotedContext = message.isGroup && message.quoted?.text
-    ? `\n\nPesan yang dibalas: ${String(message.quoted.text).slice(0, 3000)}` : '';
+    ? `\n\nPesan yang dibalas: ${String(message.quoted.text).slice(0, 2000)}` : '';
   const messages = [
     { role: 'system', content: SYSTEM_PROMPT },
     ...history,
@@ -127,38 +175,81 @@ export async function answerMessage(sock, message) {
   const id = crypto.randomUUID();
   const job = { id, chat: message.chat, sender: message.sender, key, messages, userText, createdAt: new Date().toISOString() };
   await checkpoint(id, 'queued', { job, createdAt: job.createdAt });
+  await persistTurn(job, 'user', userText);
 
+  await setComposing(sock, message.chat, 'composing');
   try {
-    const result = await executeWithFallback(job, {
-      onComplete: async response => persistTurnsOnce(job, response)
-    });
+    const result = await executeWithFallback(job);
+    await persistTurn(job, 'assistant', result.text, result);
+    await checkpoint(id, 'generated', { provider: result.provider, model: result.model, response: result.text, latencyMs: result.latencyMs });
+    await setComposing(sock, message.chat, 'paused');
     await message.reply(result.text);
-    await checkpoint(id, 'delivered', { deliveredAt: new Date().toISOString(), provider: result.provider, model: result.model });
-    logger.info({ jobId: id, provider: result.provider, model: result.model, chat: message.chat }, 'AI response delivered');
+    await checkpoint(id, 'delivered', { deliveredAt: new Date().toISOString(), provider: result.provider, model: result.model, latencyMs: result.latencyMs });
+    logger.info({ jobId: id, provider: result.provider, model: result.model, latencyMs: result.latencyMs, chat: message.chat }, 'AI response delivered');
     return result;
   } catch (error) {
+    await setComposing(sock, message.chat, 'paused');
     logger.error({ err: error, jobId: id, chat: message.chat }, 'AI request exhausted all providers');
-    return message.reply('Layanan AI sedang mengalami gangguan pada semua provider. Status percobaan sudah disimpan. Kirim ulang pesan ini untuk membuat percobaan baru setelah provider pulih.');
+    await checkpoint(id, 'failed', { failedAt: new Date().toISOString(), error: error.message });
+    return message.reply('Semua jalur AI sedang sibuk atau menolak permintaan. Coba kirim ulang sebentar lagi.');
   }
 }
 
-/** Resume unfinished jobs after a process restart. Delivery is at-least-once if a crash occurs during WhatsApp send. */
+const pendingTurns = new Map();
+
+/** Coalesce adjacent short messages from the same sender for one quick answer. */
+export function answerMessage(sock, message) {
+  const key = conversationKey(message.chat, message.sender);
+  const waitMs = Math.max(0, Math.min(2000, Number(aiConfig().coalesceMs ?? 350)));
+  return new Promise((resolve, reject) => {
+    let pending = pendingTurns.get(key);
+    if (!pending) {
+      pending = { messages: [], resolvers: [], timer: null, sock };
+      pendingTurns.set(key, pending);
+    }
+    pending.messages.push(message);
+    pending.resolvers.push({ resolve, reject });
+    clearTimeout(pending.timer);
+    pending.timer = setTimeout(async () => {
+      if (pendingTurns.get(key) !== pending) return;
+      pendingTurns.delete(key);
+      const latest = pending.messages.at(-1);
+      const combinedBody = pending.messages
+        .map(item => String(item.body || '').trim())
+        .filter(Boolean)
+        .join('\n')
+        .slice(0, aiConfig().maxInputChars);
+      const merged = { ...latest, body: combinedBody };
+      try {
+        const result = await enqueueConversation(key, () => answerMessageUnlocked(sock, merged));
+        for (const item of pending.resolvers) item.resolve(result);
+      } catch (error) {
+        for (const item of pending.resolvers) item.reject(error);
+      }
+    }, waitMs);
+  });
+}
+
+/** Resume only generated/queued work with bounded provider attempts. */
 export async function resumePendingAI(sock) {
+  await initializeAIHistoryCache();
   const rows = await getRecords({ type: 'ai.job.checkpoint' });
   const latest = new Map();
   for (const row of rows) latest.set(row.payload.jobId, row.payload);
-  const pending = [...latest.values()].filter(state => ['queued', 'attempting', 'provider_failed', 'generated', 'ready_to_deliver'].includes(state.status) && state.job?.messages);
+  const pending = [...latest.values()].filter(state => ['queued', 'generated'].includes(state.status) && state.job?.messages);
   for (const state of pending) {
     const job = state.job;
     try {
-      const result = state.response && ['generated', 'ready_to_deliver'].includes(state.status)
-        ? { text: state.response, provider: state.provider, model: state.model }
-        : await executeWithFallback(job);
-      await persistTurnsOnce(job, result);
+      let result;
+      if (state.status === 'generated' && state.response) result = { text: state.response, provider: state.provider, model: state.model };
+      else result = await executeWithFallback(job);
+      await persistTurn(job, 'user', job.userText);
+      await persistTurn(job, 'assistant', result.text, result);
       await sock.sendMessage(job.chat, { text: `Pemulihan jawaban tertunda:\n\n${result.text}` });
       await checkpoint(job.id, 'delivered', { provider: result.provider, model: result.model, resumed: true, completedAt: new Date().toISOString() });
     } catch (error) {
       logger.error({ err: error, jobId: job.id }, 'AI checkpoint recovery failed');
+      await checkpoint(job.id, 'failed', { failedAt: new Date().toISOString(), error: error.message });
     }
   }
   if (pending.length) logger.info({ count: pending.length }, 'AI pending checkpoints processed');

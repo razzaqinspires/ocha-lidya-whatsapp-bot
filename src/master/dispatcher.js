@@ -41,7 +41,7 @@ async function sendResult(m, title, result) {
   await m.reply(content.slice(0,outputLimit()));
 }
 async function runJs(m, source, returnMode) {
-  if (!getConfig().security.masterEvalEnabled) return m.reply('Eval dinonaktifkan. Aktifkan melalui konfigurasi persisten hanya pada deployment privat.');
+  if (!getConfig().security.masterEvalEnabled) return m.reply('JavaScript eval nonaktif. Owner dapat mengaktifkannya dengan .master eval on.');
   // vm is a convenience context, not a security boundary. This feature is opt-in and owner-only.
   const logs = [];
   const writeLog = (...values) => logs.push(values.map(value => {
@@ -66,17 +66,17 @@ export async function runMasterCommand(sock,m,body) {
   const security = getConfig().security;
   const enabled = security.masterExecEnabled;
   if (token === '>' || token === '=>') return runJs(m,code,token === '=>');
-  if (!enabled) return m.reply('Master execution dinonaktifkan. Aktifkan hanya pada server privat yang Anda kendalikan.');
+  if (!enabled) return m.reply('Master process runner nonaktif. Owner dapat mengaktifkannya dengan .master exec on.');
   try {
     let result;
     if (token === '$') {
-      if (!security.masterCliEnabled) return m.reply('CLI shell belum diaktifkan.');
+      if (!security.masterCliEnabled) return m.reply('CLI shell belum diaktifkan. Jalankan .master cli on setelah .master exec on.');
       result = await runProcess('/bin/sh',['-lc',code]);
     } else if (token === '>>') {
-      if (!security.masterPythonEnabled) return m.reply('Python runner belum diaktifkan.');
+      if (!security.masterPythonEnabled) return m.reply('Python runner belum diaktifkan. Jalankan .master python on setelah .master exec on.');
       result = await runProcess('python3',['-I','-c',code]);
     } else if (token === '>>>') {
-      if (!security.masterGolangEnabled) return m.reply('Go runner belum diaktifkan.');
+      if (!security.masterGolangEnabled) return m.reply('Go runner belum diaktifkan. Jalankan .master golang on setelah .master exec on.');
       result = await runGo(code);
     }
     await sendResult(m,`Ocha Master · ${token}`,result);

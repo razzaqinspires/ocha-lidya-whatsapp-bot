@@ -14,11 +14,18 @@ import { dispatch } from './core/dispatcher.js';
 import serializer from './lib/serializ_simple.js';
 const { serialize, extendSocket, trackSentMessageId } = serializer;
 import { isOwner } from './core/identity.js';
-import { resumePendingAI } from './ai/engine.js';
+import { initializeContacts, addContactFromPnJid } from './core/contacts.js';
+import { initializeGroupMetadata } from './core/group-metadata.js';
+import { resolveMessageSenderPn } from './core/jid-resolution.js';
+import { ensureGroupMetadata, hydrateParticipatingGroupsOnce, handleGroupsUpsert, handleGroupsUpdate, handleGroupParticipantsUpdate } from './core/group-runtime.js';
+import { resumePendingAI, initializeAIHistoryCache } from './ai/engine.js';
 import { getReconnectDelay, isValidInternationalNumber, normalizePhoneNumber, shouldRequestPairingCode, shouldStopReconnect, shouldRecoverInvalidSession } from './core/connection-policy.js';
 
 await initializeDatabase();
 await loadConfig();
+await initializeContacts();
+await initializeGroupMetadata();
+void initializeAIHistoryCache().catch(error => logger.warn({ err: error }, 'AI history cache warm-up deferred'));
 configureLogger(getConfig().logging);
 const whatsappConfig = getConfig().whatsapp;
 const AUTH_DIR = whatsappConfig.sessionDir;
@@ -39,6 +46,24 @@ let startInFlight = false;
 let restarting = false;
 let credsSaveQueue = Promise.resolve();
 let invalidSessionRecoveryUsed = false;
+const processedIncoming = new Map();
+
+function isDuplicateIncoming(key) {
+  const id = key?.id;
+  if (!id) return false;
+  const identity = `${key.remoteJid || ''}:${id}`;
+  const now = Date.now();
+  const previous = processedIncoming.get(identity);
+  if (previous && now - previous < 10 * 60_000) return true;
+  processedIncoming.set(identity, now);
+  if (processedIncoming.size > 5000) {
+    for (const [storedId, timestamp] of processedIncoming) {
+      if (now - timestamp > 10 * 60_000 || processedIncoming.size > 4000) processedIncoming.delete(storedId);
+      else break;
+    }
+  }
+  return false;
+}
 
 function requestControlledRestart({ file, event }) {
   if (restarting) return;
@@ -166,6 +191,7 @@ async function start() {
         const actual = sock.user?.id?.split(':')[0]?.split('@')[0];
         logger.info({ bot: actual, expected: getConfig().bot.expectedNumber }, 'Ocha Lidya connected');
         void resumePendingAI(sock).catch(error => logger.error({ err: error }, 'AI checkpoint recovery failed'));
+        void hydrateParticipatingGroupsOnce(sock).catch(error => logger.warn({ err: error }, 'Group cache bootstrap failed'));
         if (actual && actual !== getConfig().bot.expectedNumber) {
           logger.warn('Nomor bot aktual berbeda dari EXPECTED_BOT_NUMBER. Periksa akun yang dipasangkan.');
         }
@@ -204,16 +230,34 @@ async function start() {
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
       if (type !== 'notify') return;
       for (const raw of messages) {
-        if (!raw.message || raw.key.remoteJid === 'status@broadcast') continue;
+        if (!raw.message || raw.key.remoteJid === 'status@broadcast' || isDuplicateIncoming(raw.key)) continue;
         try {
+          const isGroup = raw.key.remoteJid?.endsWith('@g.us') || false;
+          const senderPn = await resolveMessageSenderPn(sock, raw.key, isGroup);
           const message = serialize(sock, raw);
-          message.isOwner = isOwner(message.sender, getConfig().bot.owner);
+          if (senderPn) {
+            message.sender = senderPn;
+            message.senderPn = senderPn;
+          }
+          message.isOwner = isOwner([senderPn, message.sender], getConfig().bot.owner);
           if (message.fromMe && !message.isOwner) continue;
+          if (!message.fromMe && senderPn) await addContactFromPnJid(senderPn);
+          if (message.isGroup) await ensureGroupMetadata(sock, message.chat);
           await dispatch(sock, message);
         } catch (error) {
           logger.error({ err: error }, 'Message pipeline failed');
         }
       }
+    });
+
+    sock.ev.on('groups.upsert', payload => {
+      void handleGroupsUpsert(sock, payload).catch(error => logger.error({ err: error }, 'Group upsert cache failed'));
+    });
+    sock.ev.on('groups.update', payload => {
+      void handleGroupsUpdate(sock, payload).catch(error => logger.error({ err: error }, 'Group metadata event cache failed'));
+    });
+    sock.ev.on('group-participants.update', update => {
+      void handleGroupParticipantsUpdate(sock, update).catch(error => logger.error({ err: error, groupId: update?.id }, 'Group participant cache update failed'));
     });
 
     sock.ev.on('messages.update', updates => {
