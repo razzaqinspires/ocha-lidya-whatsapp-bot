@@ -50,7 +50,7 @@ whatsapp: {
 },
 ```
 
-For an existing installation, v1.5.0 performs one-time configuration migrations through schema v9, preserving owner-defined provider/model overrides while enabling low-latency AI defaults, button responses, group-cache settings, and contact indexing. Then restart `npm start`. The bot waits for Baileys' initial pairing-readiness event (without displaying the QR) before requesting the eight-character phone-number pairing code in the terminal. On the target phone, open WhatsApp → Linked devices → Link a device → Link with phone number, then enter the code. Use the full international number without `+`, spaces, or punctuation. Set `c.whatsapp.authMode = 'qr'` in `src/config.js` to return to QR login. Session folder, accepted browser identity, and connection timeouts are also application settings under `whatsapp`; `browserName` must be `Chrome`, `Firefox`, `IE`, `Opera`, `Safari`, or `Edge`—never set it to `Ocha Lidya`. See `docs/WHATSAPP_CONNECTION.md`. If WhatsApp rejects a previously saved registered session with `401` while pairing mode is enabled, v1.4.4 moves that session directory to a timestamped `.invalid-*` backup (it does not delete it) and makes one fresh pairing attempt. Set `whatsapp.recoverInvalidSession: false` to disable this behavior.
+For an existing installation, v1.5.0/v1.6.0 perform one-time configuration migrations through schema v10, preserving owner-defined provider/model overrides while enabling low-latency AI defaults, button responses, group-cache settings, and contact indexing. Then restart `npm start`. The bot waits for Baileys' initial pairing-readiness event (without displaying the QR) before requesting the eight-character phone-number pairing code in the terminal. On the target phone, open WhatsApp → Linked devices → Link a device → Link with phone number, then enter the code. Use the full international number without `+`, spaces, or punctuation. Set `c.whatsapp.authMode = 'qr'` in `src/config.js` to return to QR login. Session folder, accepted browser identity, and connection timeouts are also application settings under `whatsapp`; `browserName` must be `Chrome`, `Firefox`, `IE`, `Opera`, `Safari`, or `Edge`—never set it to `Ocha Lidya`. See `docs/WHATSAPP_CONNECTION.md`. If WhatsApp rejects a previously saved registered session with `401` while pairing mode is enabled, v1.4.4 moves that session directory to a timestamped `.invalid-*` backup (it does not delete it) and makes one fresh pairing attempt. Set `whatsapp.recoverInvalidSession: false` to disable this behavior.
 
 ### Requirements
 
@@ -74,7 +74,6 @@ The application logger uses compact, colorized terminal output with WIB timestam
 OPENAI_API_KEY=
 GEMINI_API_KEY=
 GROQ_API_KEY=
-QWEN_API_KEY=
 DEEPSEEK_API_KEY=
 GITHUB_PAT=
 
@@ -195,6 +194,20 @@ Retention is bounded. When the configured maximum is exceeded, the oldest archiv
 | `.dbstatus` | Primary/replica integrity and archive count |
 | `.dbsearch <keyword>` | Search retained ZIP archives without full extraction |
 
+## AI API key management (v1.6.0)
+
+Qwen has been removed. The AI route now attempts all eligible keys for each provider before moving to the next provider. Owner commands:
+
+```text
+.apikey add gemini AQ.xxx_xxx1,AQ.xxx_xxx2
+.apikey list gemini
+.apikey get gemini <fingerprint>
+.apikey delete gemini <fingerprint>
+.aistatus
+```
+
+Managed keys are stored in `data/secrets/provider-keys.json` with restrictive local file permissions. The file is not encrypted; protect the host and backups. `.apikey list/get` mask secrets and use fingerprints to identify keys. If every configured key/provider is exhausted, AI enters maintenance, stays silent to users, and sends a detailed private report to the owner. Keys are probed again when their retry time arrives. See `docs/AI_ENGINE.md` for status classifications and limitations.
+
 ## 7. Persistent configuration reference
 
 Default settings are declared in `src/config.js`; runtime changes are persisted in the JSONL database.
@@ -213,9 +226,8 @@ Default settings are declared in `src/config.js`; runtime changes are persisted 
 | `ui.buttonsEnabled` | `true` | Use interactive quick-reply/list/copy controls on replies |
 | `groupMetadata.initialSync` | `true` | Perform a single initial batch load of participating group metadata |
 | `groupMetadata.fetchCooldownMs` | 600,000 ms | Cooldown for a one-time lazy fetch of a group missing from cache |
-| `ai.timeoutMs` | 5,000 ms | Per-provider response timeout in the fast profile |
-| `ai.totalBudgetMs` | 16,000 ms | Total provider fallback budget |
-| `ai.maxKeyAttempts` | `1` | One API key attempt per provider in fast mode; key cursor rotates between requests |
+| `ai.timeoutMs` | 7,000 ms | Per-key request timeout in the fast profile |
+| `ai.totalBudgetMs` | `45000` | Advisory fallback budget; it never truncates exhaustive key validation |
 | `ai.coalesceMs` | 350 ms | Merge rapid adjacent messages from one sender into a single AI turn |
 | `prefix.mode` | `multi` | `single`, `multi`, or `none` |
 | `prefix.single` | `.` | Single prefix |
@@ -485,7 +497,7 @@ ocha-lidya-bot/
 
 ## 18. Version and change history
 
-Current package version: **1.5.0** (configuration schema v9).
+Current package version: **1.6.0** (configuration schema v10).
 
 See [`docs/CHANGE_LOG.md`](docs/CHANGE_LOG.md) for release history and [`docs/DATABASE_DESIGN.md`](docs/DATABASE_DESIGN.md) for persistence internals.
 
@@ -494,19 +506,18 @@ See [`docs/CHANGE_LOG.md`](docs/CHANGE_LOG.md) for release history and [`docs/DA
 
 AI only responds to non-command messages. In private chats, normal text can invoke AI. In groups, the bot responds **only** when the message explicitly mentions the bot's actual WhatsApp JID or replies to a message authored by the bot. Other group messages are ignored. Unknown prefixed commands never fall through to AI.
 
-Provider fallback order by default: Groq → Gemini → Qwen → DeepSeek → OpenAI. The default fast profile uses Groq `openai/gpt-oss-20b` first and Gemini `gemini-3.8-flash` as the next fallback. Providers without API keys are skipped. Credentials are arrays: separate multiple keys with commas, semicolons, or newlines. Configure API keys in `.env` only.
+Provider fallback order by default: Groq → Gemini → DeepSeek → OpenAI. The default profile uses Groq `openai/gpt-oss-20b` first and Gemini `gemini-3.8-flash` as the next fallback. Providers without API keys are skipped. Multiple environment keys can be separated by commas, semicolons, or newlines. Owner-managed keys can also be added with `.apikey add`; they are stored in a restricted local vault. See `docs/AI_ENGINE.md`.
 
 ```dotenv
 GEMINI_API_KEY=key_one,key_two
 GROQ_API_KEY=key_one;key_two
-QWEN_API_KEY=
 DEEPSEEK_API_KEY=
 OPENAI_API_KEY=
 ```
 
-The engine warms a bounded in-memory history cache once at startup, uses a 5-second per-provider timeout and 12-second total fallback budget, rotates keys across requests, coalesces messages arriving within 350 ms from the same sender, falls back across providers, and recovers unfinished jobs after reconnect. The default fast profile uses one key attempt per provider to avoid serially waiting on multiple keys; the key cursor advances for subsequent requests. Delivery recovery is at-least-once if the process crashes during WhatsApp send. AI conversation turns are isolated by chat and sender.
+The engine warms a bounded in-memory history cache once at startup, attempts every eligible key within each provider before moving to the next provider, records per-key hits and response classifications, coalesces messages arriving within 350 ms from the same sender, and falls back across providers. If all keys are unavailable, AI enters silent maintenance and privately reports the inventory to the owner. Public model identity: Nexora-2.0-Flash. Delivery recovery is at-least-once if the process crashes during WhatsApp send. AI conversation turns are isolated by chat and sender.
 
-Owner commands: `.aistatus`, `.aiset on`, `.aiset off`, `.aiset speed fast`, `.aiset speed balanced`, `.aiset order groq,gemini,qwen,deepseek,openai`, `.aiset model <provider> <model>`, `.buttons on`, `.buttons off`, and `.buttons status`. Interactive replies are enabled by default; `.buttons off` switches all `m.reply()` command responses to plain text.
+Owner commands: `.aistatus`, `.aiset on`, `.aiset off`, `.aiset speed fast`, `.aiset speed balanced`, `.aiset order groq,gemini,deepseek,openai`, `.aiset model <provider> <model>`, `.buttons on`, `.buttons off`, and `.buttons status`. Interactive replies are enabled by default; `.buttons off` switches all `m.reply()` command responses to plain text.
 
 See [docs/AI_ENGINE.md](docs/AI_ENGINE.md) for provider model defaults, API details, recovery semantics, and operational guidance. Free tiers are not unlimited and depend on provider account, region, and quota; OpenAI and DeepSeek API usage should be treated as paid unless the account explicitly shows credits.
 

@@ -2,16 +2,16 @@ import crypto from 'node:crypto';
 import { appendRecord, getRecords } from '../core/database.js';
 import { getConfig } from '../core/config.js';
 import { logger } from '../core/logger.js';
-import { generateWithProvider, getProviderInventory } from './providers.js';
+import { generateWithProvider, getProviderInventory, initializeProviderKeys, getAIMaintenance, setAIMaintenance, providerNames } from './providers.js';
 
-const SYSTEM_PROMPT = `Kamu adalah Ocha Lidya, asisten WhatsApp yang tanggap, natural, dan akurat. Jawab dalam bahasa pengguna. Dahulukan jawaban langsung, hindari pembukaan berulang, dan sesuaikan panjang jawaban dengan pertanyaan. Jangan mengarang fakta, jangan mengklaim melakukan tindakan eksternal yang belum dilakukan, dan gunakan konteks percakapan yang tersedia.`;
+const SYSTEM_PROMPT = `Kamu adalah Ocha Lidya, asisten WhatsApp yang tanggap, natural, dan akurat. Identitas model publik adalah Nexora-2.0-Flash. Jangan pernah menyebut nama provider, vendor, model internal, endpoint, atau detail kunci API. Jika ditanya model apa yang digunakan, jawab persis: Saya menggunakan Nexora-2.0-Flash. Jangan mengklaim model tersebut sebagai nama vendor eksternal. Jawab dalam bahasa pengguna. Dahulukan jawaban langsung, hindari pembukaan berulang, dan sesuaikan panjang jawaban dengan pertanyaan. Jangan mengarang fakta, jangan mengklaim melakukan tindakan eksternal yang belum dilakukan, dan gunakan konteks percakapan yang tersedia.`;
 const DEFAULTS = Object.freeze({
   enabled: true,
-  providerOrder: ['groq', 'gemini', 'qwen', 'deepseek', 'openai'],
-  models: { gemini: 'gemini-3.8-flash', groq: 'openai/gpt-oss-20b', qwen: 'qwen3.8-flash', deepseek: 'deepseek-flash', openai: 'gpt-6-luna' },
-  timeoutMs: 5000, totalBudgetMs: 12000, maxKeyAttempts: 1,
+  providerOrder: ['groq', 'gemini', 'deepseek', 'openai'],
+  models: { gemini: 'gemini-3.8-flash', groq: 'openai/gpt-oss-20b', deepseek: 'deepseek-flash', openai: 'gpt-6-luna' },
+  timeoutMs: 7000, totalBudgetMs: 45000,
   maxOutputTokens: 320, temperature: 0.6, historyMessages: 6,
-  maxInputChars: 6000, retryPerProvider: 0, coalesceMs: 350
+  maxInputChars: 6000, coalesceMs: 350
 });
 
 function aiConfig() {
@@ -101,45 +101,37 @@ async function persistTurn(job, role, content, response = {}) {
 async function checkpoint(jobId, status, payload = {}) {
   await appendRecord('ai.job.checkpoint', { jobId, status, ...payload }, { source: 'ai-engine' });
 }
-function retryDelay(error) {
-  const seconds = Number(error.retryAfter);
-  if (Number.isFinite(seconds) && seconds > 0) return Math.min(seconds * 1000, 700);
-  return 180;
-}
-const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-
 async function executeWithFallback(job) {
+  await initializeProviderKeys();
   const config = aiConfig();
   const inventory = getProviderInventory(config);
   const available = new Set(inventory.filter(provider => provider.configured).map(provider => provider.name));
-  const order = (config.providerOrder || DEFAULTS.providerOrder).filter(name => available.has(name));
-  if (!order.length) throw new Error('Belum ada API key AI yang dikonfigurasi. Isi minimal GROQ_API_KEY atau GEMINI_API_KEY di .env.');
+  const preferred = (config.providerOrder || DEFAULTS.providerOrder).filter(name => providerNames.includes(name));
+  const completeOrder = [...preferred, ...providerNames.filter(name => !preferred.includes(name))];
+  const order = completeOrder.filter(name => available.has(name));
+  if (!order.length) throw Object.assign(new Error('Tidak ada API key AI yang dikonfigurasi.'), { code: 'ALL_PROVIDERS_EXHAUSTED', providerErrors: [{ provider: 'all', code: 'NO_API_KEYS', message: 'No provider credentials configured' }] });
 
   const startedAt = Date.now();
-  const deadline = startedAt + config.totalBudgetMs;
   const errors = [];
   for (const provider of order) {
-    const remaining = deadline - Date.now();
-    if (remaining < 900) break;
-    const providerTimeout = Math.max(700, Math.min(config.timeoutMs, remaining - 250));
+    // Exhaust every eligible key/provider. totalBudgetMs is advisory only; it never truncates the fallback chain.
+    const providerTimeout = config.timeoutMs;
     try {
       const result = await generateWithProvider(provider, job.messages, {
         models: config.models,
         timeoutMs: providerTimeout,
         maxOutputTokens: config.maxOutputTokens,
         temperature: config.temperature,
-        keyAttempts: config.maxKeyAttempts
+        publicModel: 'Nexora-2.0-Flash'
       });
-      return { ...result, latencyMs: Date.now() - startedAt };
+      if (getAIMaintenance().active) await setAIMaintenance(false);
+      return { ...result, model: 'Nexora-2.0-Flash', latencyMs: Date.now() - startedAt };
     } catch (error) {
       errors.push({ provider, message: error.message, status: error.status, code: error.code });
-      logger.warn({ jobId: job.id, provider, status: error.status, retryable: error.retryable, remainingMs: deadline - Date.now() }, 'AI provider skipped after bounded attempt');
-      if (Date.now() < deadline && error.retryable && config.retryPerProvider > 0) {
-        await sleep(Math.min(retryDelay(error), Math.max(0, deadline - Date.now() - 1000)));
-      }
+      logger.warn({ jobId: job.id, provider, status: error.status, retryable: error.retryable, code: error.code }, 'AI provider exhausted; continuing to next provider');
     }
   }
-  throw Object.assign(new Error(`Semua provider AI gagal dalam ${Date.now() - startedAt}ms. ${errors.map(error => `${error.provider}: ${error.message}`).join(' | ')}`), { providerErrors: errors });
+  throw Object.assign(new Error(`Semua provider AI gagal dalam ${Date.now() - startedAt}ms. ${errors.map(error => `${error.provider}: ${error.message}`).join(' | ')}`), { providerErrors: errors, code: 'ALL_PROVIDERS_EXHAUSTED' });
 }
 
 const conversationQueues = new Map();
@@ -156,11 +148,43 @@ async function setComposing(sock, chat, state) {
   try { await sock.sendPresenceUpdate(state, chat); } catch {}
 }
 
+async function notifyOwnerMaintenance(sock, error) {
+  const config = getConfig();
+  const owner = String(config.bot?.owner || '').replace(/\D/g, '');
+  if (!owner) return;
+  const status = getProviderInventory(aiConfig());
+  const summary = status.map(provider => {
+    const details = provider.keyDetails.map(key => `  • ${key.masked} [${key.fingerprint}] ${key.status}; hit ${key.hits}; ok ${key.successes}; fail ${key.failures}; ${key.reason || '—'}${key.retryAt ? `; retry ${new Date(key.retryAt).toISOString()}` : ''}`).join('\n');
+    return `${provider.name}: total key ${provider.keys}, usable ${provider.usableKeys}, hits ${provider.totalHits}, success ${provider.totalSuccesses}, fail ${provider.totalFailures}, tokens ${provider.totalTokens}\n${details || '  (tidak ada key)'}`;
+  }).join('\n\n');
+  const totals = status.reduce((acc, item) => ({ keys: acc.keys + item.keys, hits: acc.hits + item.totalHits, successes: acc.successes + item.totalSuccesses, failures: acc.failures + item.totalFailures, tokens: acc.tokens + item.totalTokens }), { keys: 0, hits: 0, successes: 0, failures: 0, tokens: 0 });
+  const report = `OCHA LIDYA — AI MAINTENANCE\nSeluruh key/provider yang dikonfigurasi telah dicoba dan tidak ada jalur yang dapat dipakai. Chat AI ditutup sementara; pesan pengguna tidak dibalas.\nWaktu: ${new Date().toISOString()}\nPenyebab: ${String(error?.message || 'all keys unavailable').slice(0, 1200)}\nTotal seluruh provider: ${totals.keys} key · ${totals.hits} hit · ${totals.successes} sukses · ${totals.failures} gagal · ${totals.tokens} token terlapor\n\nRINGKASAN KEY\n${summary}\n\nCatatan: status 401/403/429 diklasifikasikan dari respons provider; 400 tidak dianggap bukti key invalid. Key yang cooldown akan diuji ulang saat retryAt tercapai.`;
+  const chunks = [];
+  let chunk = '';
+  for (const line of report.split('\n')) {
+    if (chunk.length + line.length + 1 > 3500 && chunk) { chunks.push(chunk); chunk = ''; }
+    chunk += `${chunk ? '\n' : ''}${line}`;
+  }
+  if (chunk) chunks.push(chunk);
+  try {
+    for (const part of chunks) await sock.sendMessage(`${owner}@s.whatsapp.net`, { text: part });
+    return true;
+  } catch (sendError) {
+    logger.error({ err: sendError }, 'Unable to send AI maintenance report to owner');
+    return false;
+  }
+}
+
 async function answerMessageUnlocked(sock, message) {
   const config = aiConfig();
   if (!config.enabled) return message.reply('Layanan AI sedang dinonaktifkan.');
   const userText = stripBotMention(message.body).slice(0, config.maxInputChars);
   if (!userText) return message.reply('Ada yang ingin kamu tanyakan?');
+  if (!getAIMaintenance().active && /((model|llm).{0,40}(apa|what|which))|(\bapa\b.{0,30}\bmodel\b)|(kamu.{0,40}(menggunakan|pakai).{0,30}(model|ai))|(model.{0,30}(yang|dipakai|digunakan))/i.test(userText)) {
+    const identity = 'Saya menggunakan Nexora-2.0-Flash.';
+    await message.reply(identity);
+    return { provider: 'nexora', model: 'Nexora-2.0-Flash', text: identity };
+  }
 
   await initializeAIHistoryCache();
   const key = conversationKey(message.chat, message.sender);
@@ -191,7 +215,15 @@ async function answerMessageUnlocked(sock, message) {
     await setComposing(sock, message.chat, 'paused');
     logger.error({ err: error, jobId: id, chat: message.chat }, 'AI request exhausted all providers');
     await checkpoint(id, 'failed', { failedAt: new Date().toISOString(), error: error.message });
-    return message.reply('Semua jalur AI sedang sibuk atau menolak permintaan. Coba kirim ulang sebentar lagi.');
+    if (error.code === 'ALL_PROVIDERS_EXHAUSTED' || error.providerErrors) {
+      const state = await setAIMaintenance(true, { reason: 'all provider keys unavailable' });
+      if (!state.notifiedAt) {
+        const notified = await notifyOwnerMaintenance(sock, error);
+        if (notified) await setAIMaintenance(true, { reason: 'all provider keys unavailable', notifiedAt: new Date().toISOString() });
+      }
+      return null; // Silent maintenance: do not send any reply to the user.
+    }
+    return null;
   }
 }
 
@@ -255,4 +287,4 @@ export async function resumePendingAI(sock) {
   if (pending.length) logger.info({ count: pending.length }, 'AI pending checkpoints processed');
 }
 
-export function getAIStatus() { return { ...aiConfig(), providers: getProviderInventory(aiConfig()) }; }
+export function getAIStatus() { return { ...aiConfig(), publicModel: 'Nexora-2.0-Flash', maintenance: getAIMaintenance(), providers: getProviderInventory(aiConfig()) }; }

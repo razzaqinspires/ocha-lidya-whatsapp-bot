@@ -6,7 +6,7 @@
 import { initializeDatabase, appendRecord, getRecords, getLatestConfigRecord, configureDatabase } from './core/database.js';
 
 const DEFAULTS = Object.freeze({
-  schemaVersion: 9,
+  schemaVersion: 10,
   bot: { name: 'Ocha Lidya', aliases: ['Ocha', 'Lidya'], owner: '6283193905842', expectedNumber: '6282177461231' },
   whatsapp: { authMode: 'pairing', pairingNumber: '6282177461231', browserName: 'Chrome', sessionDir: 'sessions/ocha-lidya', recoverInvalidSession: true, connectTimeoutMs: 60000, queryTimeoutMs: 60000, keepAliveIntervalMs: 25000 },
   logging: { level: 'info', color: 'auto', timeZone: 'Asia/Jakarta' },
@@ -33,7 +33,7 @@ const DEFAULTS = Object.freeze({
     verifyOnBoot: true
   },
   features: { autoRead: false, autoTyping: false, selfModeReply: false },
-  ai: { enabled: true, providerOrder: ['groq', 'gemini', 'qwen', 'deepseek', 'openai'], models: { gemini: 'gemini-3.8-flash', groq: 'openai/gpt-oss-20b', qwen: 'qwen3.8-flash', deepseek: 'deepseek-flash', openai: 'gpt-6-luna' }, timeoutMs: 5000, totalBudgetMs: 12000, maxKeyAttempts: 1, maxOutputTokens: 320, temperature: 0.6, historyMessages: 6, maxInputChars: 6000, retryPerProvider: 0, coalesceMs: 350 }
+  ai: { enabled: true, providerOrder: ['groq', 'gemini', 'deepseek', 'openai'], models: { gemini: 'gemini-3.8-flash', groq: 'openai/gpt-oss-20b', deepseek: 'deepseek-flash', openai: 'gpt-6-luna' }, timeoutMs: 7000, totalBudgetMs: 45000, maxOutputTokens: 320, temperature: 0.6, historyMessages: 6, maxInputChars: 6000, coalesceMs: 350 }
 });
 
 let activeConfig = structuredClone(DEFAULTS);
@@ -123,11 +123,9 @@ export async function loadConfig() {
     if (ai.models.gemini === 'gemini-3.6-flash') ai.models.gemini = DEFAULTS.ai.models.gemini;
     if ([8500, 35000].includes(ai.timeoutMs)) ai.timeoutMs = DEFAULTS.ai.timeoutMs;
     if ([22000, 35000].includes(ai.totalBudgetMs) || !Number.isInteger(ai.totalBudgetMs)) ai.totalBudgetMs = DEFAULTS.ai.totalBudgetMs;
-    if ([2, undefined].includes(ai.maxKeyAttempts)) ai.maxKeyAttempts = DEFAULTS.ai.maxKeyAttempts;
     if ([700, 1200].includes(ai.maxOutputTokens)) ai.maxOutputTokens = DEFAULTS.ai.maxOutputTokens;
     if ([10, 16].includes(ai.historyMessages)) ai.historyMessages = DEFAULTS.ai.historyMessages;
     if (ai.maxInputChars === 10000) ai.maxInputChars = DEFAULTS.ai.maxInputChars;
-    if (ai.retryPerProvider === 1) ai.retryPerProvider = DEFAULTS.ai.retryPerProvider;
     if (!Number.isInteger(ai.coalesceMs)) ai.coalesceMs = DEFAULTS.ai.coalesceMs;
     await appendRecord('config.replace', {
       config: activeConfig,
@@ -150,6 +148,19 @@ export async function loadConfig() {
       changedBy: 'system:migration',
       reason: 'v1.5.0 schema v9 lower-latency AI response profile'
     });
+  }
+  // v1.6.0 schema v10: remove Qwen from routing and remove the per-provider key-attempt cap.
+  if (activeConfig.schemaVersion < 10) {
+    activeConfig.schemaVersion = 10;
+    const ai = activeConfig.ai || (activeConfig.ai = {});
+    ai.providerOrder = (Array.isArray(ai.providerOrder) ? ai.providerOrder : DEFAULTS.ai.providerOrder).filter(name => name !== 'qwen');
+    if (!ai.providerOrder.length) ai.providerOrder = [...DEFAULTS.ai.providerOrder];
+    if (ai.models) delete ai.models.qwen;
+    ai.models = { ...DEFAULTS.ai.models, ...(ai.models || {}) };
+    delete ai.maxKeyAttempts;
+    delete ai.retryPerProvider;
+    if (ai.totalBudgetMs === 12000 || ai.totalBudgetMs === 16000) ai.totalBudgetMs = DEFAULTS.ai.totalBudgetMs;
+    await appendRecord('config.replace', { config: activeConfig, changedBy: 'system:migration', reason: 'v1.6.0 remove Qwen and enable exhaustive per-provider API-key rotation' });
   }
   activeConfig.groupMetadata = { ...DEFAULTS.groupMetadata, ...(activeConfig.groupMetadata || {}) };
   activeConfig.ui = { ...DEFAULTS.ui, ...(activeConfig.ui || {}) };
@@ -203,10 +214,9 @@ function validateConfig(c) {
   if (!/^\d{8,15}$/.test(String(c.bot?.owner || ''))) throw new Error('bot.owner harus berupa nomor internasional tanpa +');
   if (!Number.isInteger(c.database?.segmentMaxBytes) || c.database.segmentMaxBytes < 65536) throw new Error('database.segmentMaxBytes minimal 65536');
   if (!Number.isInteger(c.database?.archiveMaxCount) || c.database.archiveMaxCount < 1) throw new Error('database.archiveMaxCount minimal 1');
-  if (c.ai && (!Array.isArray(c.ai.providerOrder) || c.ai.providerOrder.some(name => !['gemini','groq','qwen','deepseek','openai'].includes(name)))) throw new Error('ai.providerOrder berisi provider tidak dikenal');
+  if (c.ai && (!Array.isArray(c.ai.providerOrder) || c.ai.providerOrder.some(name => !['gemini','groq','deepseek','openai'].includes(name)))) throw new Error('ai.providerOrder berisi provider tidak dikenal');
   if (c.ai && (!Number.isInteger(c.ai.timeoutMs) || c.ai.timeoutMs < 1000 || c.ai.timeoutMs > 180000)) throw new Error('ai.timeoutMs harus 1000-180000');
   if (c.ai && (!Number.isInteger(c.ai.totalBudgetMs) || c.ai.totalBudgetMs < 3000 || c.ai.totalBudgetMs > 120000)) throw new Error('ai.totalBudgetMs harus 3000-120000');
-  if (c.ai && (!Number.isInteger(c.ai.maxKeyAttempts) || c.ai.maxKeyAttempts < 1 || c.ai.maxKeyAttempts > 10)) throw new Error('ai.maxKeyAttempts harus 1-10');
   if (c.ai && (!Number.isInteger(c.ai.coalesceMs) || c.ai.coalesceMs < 0 || c.ai.coalesceMs > 2000)) throw new Error('ai.coalesceMs harus 0-2000');
   if (c.ai && (!Number.isInteger(c.ai.maxOutputTokens) || c.ai.maxOutputTokens < 64 || c.ai.maxOutputTokens > 32768)) throw new Error('ai.maxOutputTokens harus 64-32768');
 }

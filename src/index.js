@@ -19,12 +19,14 @@ import { initializeGroupMetadata } from './core/group-metadata.js';
 import { resolveMessageSenderPn } from './core/jid-resolution.js';
 import { ensureGroupMetadata, hydrateParticipatingGroupsOnce, handleGroupsUpsert, handleGroupsUpdate, handleGroupParticipantsUpdate } from './core/group-runtime.js';
 import { resumePendingAI, initializeAIHistoryCache } from './ai/engine.js';
+import { initializeProviderKeys } from './ai/providers.js';
 import { getReconnectDelay, isValidInternationalNumber, normalizePhoneNumber, shouldRequestPairingCode, shouldStopReconnect, shouldRecoverInvalidSession } from './core/connection-policy.js';
 
 await initializeDatabase();
 await loadConfig();
 await initializeContacts();
 await initializeGroupMetadata();
+await initializeProviderKeys();
 void initializeAIHistoryCache().catch(error => logger.warn({ err: error }, 'AI history cache warm-up deferred'));
 configureLogger(getConfig().logging);
 const whatsappConfig = getConfig().whatsapp;

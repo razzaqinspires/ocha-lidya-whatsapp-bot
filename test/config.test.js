@@ -16,12 +16,12 @@ test('config facade replays persistent config.replace events from JSONL', async 
     await first.loadConfig();
     assert.equal(first.getConfig().whatsapp.authMode, 'pairing');
     assert.equal(first.getConfig().whatsapp.browserName, 'Chrome');
-    assert.equal(first.getConfig().schemaVersion, 9);
+    assert.equal(first.getConfig().schemaVersion, 10);
     assert.equal(first.getConfig().whatsapp.recoverInvalidSession, true);
     assert.equal(first.getConfig().logging.level, 'info');
     assert.equal(first.getConfig().logging.color, 'auto');
-    assert.equal(first.getConfig().ai.timeoutMs, 5000);
-    assert.equal(first.getConfig().ai.totalBudgetMs, 12000);
+    assert.equal(first.getConfig().ai.timeoutMs, 7000);
+    assert.equal(first.getConfig().ai.totalBudgetMs, 45000);
     assert.equal(first.getConfig().ai.maxOutputTokens, 320);
     await first.updateConfig(c => { c.mode = 'self'; c.prefix.single = '!'; c.prefix.mode = 'single'; c.whatsapp.authMode = 'pairing'; c.whatsapp.pairingNumber = '6282177461231'; }, { actor: 'test', reason: 'persistence test' });
     assert.equal(first.getConfig().mode, 'self');
@@ -76,7 +76,40 @@ test('legacy config migrates to canonical browser, session recovery, logger, UI,
     assert.equal(result.status, 0, result.stderr || result.stdout);
     const resultLine = result.stdout.split(/\r?\n/).find(line => line.startsWith('MIGRATION_RESULT:'));
     assert.ok(resultLine, result.stdout);
-    assert.deepEqual(JSON.parse(resultLine.slice('MIGRATION_RESULT:'.length)), { schemaVersion: 9, browserName: 'Chrome' });
+    assert.deepEqual(JSON.parse(resultLine.slice('MIGRATION_RESULT:'.length)), { schemaVersion: 10, browserName: 'Chrome' });
+  } finally {
+    await fs.rm(temp, { recursive: true, force: true });
+  }
+});
+
+test('schema v9 migration removes Qwen and legacy maxKeyAttempts', async () => {
+  const original = process.cwd();
+  const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'ocha-config-v10-test-'));
+  try {
+    const databaseUrl = pathToFileURL(path.resolve(original, 'src/core/database.js')).href;
+    const configUrl = pathToFileURL(path.resolve(original, 'src/config.js')).href;
+    const source = `
+      const database = await import(${JSON.stringify(databaseUrl)});
+      await database.initializeDatabase();
+      await database.appendRecord('config.replace', { config: {
+        schemaVersion: 9,
+        bot: { owner: '6283193905842', expectedNumber: '6282177461231' },
+        whatsapp: { authMode: 'pairing', pairingNumber: '6282177461231', browserName: 'Chrome' },
+        ai: { providerOrder: ['qwen', 'groq'], models: { qwen: 'qwen-model', groq: 'openai/gpt-oss-20b' }, maxKeyAttempts: 2, timeoutMs: 5000, totalBudgetMs: 12000 }
+      } });
+      const config = await import(${JSON.stringify(configUrl)});
+      await config.loadConfig();
+      console.log('V10_RESULT:' + JSON.stringify({ schemaVersion: config.getConfig().schemaVersion, ai: config.getConfig().ai }));
+    `;
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', source], { cwd: temp, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const line = result.stdout.split(/\r?\n/).find(value => value.startsWith('V10_RESULT:'));
+    assert.ok(line, result.stdout);
+    const output = JSON.parse(line.slice('V10_RESULT:'.length));
+    assert.equal(output.schemaVersion, 10);
+    assert.deepEqual(output.ai.providerOrder, ['groq']);
+    assert.equal(output.ai.models.qwen, undefined);
+    assert.equal(output.ai.maxKeyAttempts, undefined);
   } finally {
     await fs.rm(temp, { recursive: true, force: true });
   }

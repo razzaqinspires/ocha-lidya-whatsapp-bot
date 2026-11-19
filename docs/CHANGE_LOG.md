@@ -1,3 +1,17 @@
+# Changelog
+
+## [1.6.0] - 2026-11-19
+
+- Removed Qwen from the provider registry, defaults, routing, `.env.example`, and owner configuration choices.
+- Added a managed API-key vault and owner-only `.apikey add/delete/list/get` commands. Key secrets are masked in status output and identified by stable SHA-256 fingerprints; the vault is restricted to local owner permissions and is documented as unencrypted.
+- Reworked provider routing to attempt every eligible API key for the current provider before moving to the next provider. Removed `maxKeyAttempts` from runtime config and migrated existing configurations to schema v10.
+- Added per-key hit, success, failure, token-usage, last HTTP status, reason, and retry-time accounting using append-only `ai.key.event` records.
+- Added response-based classifications for active, invalid/expired/revoked, forbidden, daily quota exhausted, rate limited, provider/network error, and request/model error. Cooldown keys are probed again after their retry time.
+- Added persisted AI maintenance mode. If every configured key/provider is unavailable, AI stops replying to users silently and sends one detailed private report to the owner. Later requests probe recovered keys and automatically resume AI when one works.
+- Added the public model identity `Nexora-2.0-Flash`; the assistant no longer identifies upstream provider/model names in ordinary chat.
+- Expanded `.aistatus` into an AI control-center report with provider and per-key inventory, counters, cooldowns, and maintenance state.
+- Updated AI/configuration documentation and tests. No live provider credentials were available, so provider behavior was tested with mocked HTTP responses only.
+
 # Change Log
 
 All notable changes to Ocha Lidya are recorded here. The newest release is listed first.

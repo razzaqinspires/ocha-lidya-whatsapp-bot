@@ -20,6 +20,7 @@ build/
 coverage/
 
 # Runtime JSONL database and personal WhatsApp data
+data/secrets/
 data/control/
 data/journal/
 data/replica/

@@ -1,75 +1,184 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import { appendRecord, getRecords } from '../core/database.js';
 import { logger } from '../core/logger.js';
 
+const VAULT = path.resolve('data/secrets/provider-keys.json');
 const PROVIDERS = {
-  groq: { env: 'GROQ_API_KEY', baseURL: 'https://api.groq.com/openai/v1/chat/completions', model: 'openai/gpt-oss-20b' },
-  openai: { env: 'OPENAI_API_KEY', baseURL: 'https://api.openai.com/v1/chat/completions', model: 'gpt-6-luna' },
-  qwen: { env: 'QWEN_API_KEY', baseURL: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions', model: 'qwen3.8-flash' },
-  deepseek: { env: 'DEEPSEEK_API_KEY', baseURL: 'https://api.deepseek.com/chat/completions', model: 'deepseek-flash' },
-  gemini: { env: 'GEMINI_API_KEY', baseURL: 'https://generativelanguage.googleapis.com/v1beta/models', model: 'gemini-3.8-flash' }
+  groq: { env: 'GROQ_API_KEY', baseURL: 'https://api.groq.com/openai/v1/chat/completions', model: 'openai/gpt-oss-20b', protocol: 'openai-compatible' },
+  gemini: { env: 'GEMINI_API_KEY', baseURL: 'https://generativelanguage.googleapis.com/v1beta/models', model: 'gemini-3.8-flash', protocol: 'gemini' },
+  deepseek: { env: 'DEEPSEEK_API_KEY', baseURL: 'https://api.deepseek.com/chat/completions', model: 'deepseek-flash', protocol: 'openai-compatible' },
+  openai: { env: 'OPENAI_API_KEY', baseURL: 'https://api.openai.com/v1/chat/completions', model: 'gpt-6-luna', protocol: 'openai-compatible' }
 };
-const keyCursor = new Map();
-const circuit = new Map();
-const providerMetrics = new Map();
 const transientStatus = new Set([408, 409, 425, 429, 500, 502, 503, 504]);
+const keyStats = new Map();
+const providerMetrics = new Map();
+const providerCircuit = new Map();
+let vault = {};
+let initialized = false;
+let saveQueue = Promise.resolve();
+let maintenance = { active: false, since: null, notifiedAt: null, reason: null };
+const fingerprint = key => crypto.createHash('sha256').update(key).digest('hex').slice(0, 12);
+const mask = key => key.length < 10 ? `${key.slice(0, 2)}••••` : `${key.slice(0, 5)}••••••${key.slice(-4)}`;
 
-function getKeys(name) {
-  return (process.env[PROVIDERS[name].env] || '').split(/[;,\n]/).map(value => value.trim()).filter(Boolean);
+export const providerNames = Object.freeze(Object.keys(PROVIDERS));
+export function normalizeProvider(value) { return String(value || '').trim().toLowerCase(); }
+export function isProvider(value) { return Object.hasOwn(PROVIDERS, normalizeProvider(value)); }
+
+async function persistVault() {
+  saveQueue = saveQueue.then(async () => {
+    await fs.mkdir(path.dirname(VAULT), { recursive: true, mode: 0o700 });
+    const temp = `${VAULT}.${process.pid}.tmp`;
+    await fs.writeFile(temp, `${JSON.stringify(vault, null, 2)}\n`, { mode: 0o600 });
+    await fs.chmod(temp, 0o600);
+    await fs.rename(temp, VAULT);
+    await fs.chmod(VAULT, 0o600);
+  });
+  return saveQueue;
 }
-function nextKey(name) {
-  const keys = getKeys(name);
-  if (!keys.length) return null;
-  const index = keyCursor.get(name) || 0;
-  keyCursor.set(name, (index + 1) % keys.length);
-  return keys[index % keys.length];
-}
-function updateProviderMetrics(name, latencyMs, ok, error) {
-  const previous = providerMetrics.get(name) || { successes: 0, failures: 0, averageLatencyMs: null, lastLatencyMs: null, lastStatus: null };
-  const elapsed = Math.max(0, Math.round(latencyMs));
-  previous.lastLatencyMs = elapsed;
-  if (ok) {
-    previous.successes += 1;
-    previous.averageLatencyMs = previous.averageLatencyMs == null
-      ? elapsed
-      : Math.round(previous.averageLatencyMs * 0.75 + elapsed * 0.25);
-    previous.lastStatus = 'ok';
-  } else {
-    previous.failures += 1;
-    previous.lastStatus = error?.status || error?.code || 'error';
+export async function initializeProviderKeys() {
+  if (initialized) return;
+  try { vault = JSON.parse(await fs.readFile(VAULT, 'utf8')); }
+  catch (error) { if (error.code !== 'ENOENT') { logger.error({ err: error }, 'Provider key vault unreadable'); throw error; } }
+  const keyEvents = await getRecords({ type: 'ai.key.event' });
+  for (const row of keyEvents) {
+    const event = row.payload || {};
+    if (!event.fingerprint) continue;
+    const stat = keyStats.get(event.fingerprint) || { fingerprint: event.fingerprint, hits: 0, successes: 0, failures: 0, tokens: 0, status: 'untested', lastHitAt: null, lastSuccessAt: null, lastErrorAt: null, lastHttpStatus: null, reason: null, retryAt: 0, source: 'unknown' };
+    if (event.event === 'hit') { stat.hits = Math.max(stat.hits, Number(event.hit || 0)); stat.lastHitAt = row.ts; }
+    if (event.event === 'success') { stat.successes++; stat.status = 'active'; stat.reason = null; stat.retryAt = 0; stat.lastSuccessAt = row.ts; stat.tokens += Number(event.tokens || 0); }
+    if (event.event === 'failure') { stat.failures++; stat.status = event.status || 'error'; stat.reason = event.reason || null; stat.retryAt = Date.parse(event.retryAt || '') || 0; stat.lastErrorAt = row.ts; stat.lastHttpStatus = event.httpStatus || null; }
+    keyStats.set(event.fingerprint, stat);
   }
-  providerMetrics.set(name, previous);
+  const records = await getRecords({ type: 'ai.maintenance' });
+  const last = records.at(-1)?.payload;
+  if (last?.active) maintenance = { active: true, since: last.since, notifiedAt: last.notifiedAt, reason: last.reason };
+  initialized = true;
+  for (const provider of providerNames) for (const item of allKeys(provider)) statsFor(item.value).source = item.source;
 }
-
+function ensureInit() { if (!initialized) throw new Error('Provider key manager belum diinisialisasi'); }
+function allKeys(provider) {
+  ensureInit();
+  const env = (process.env[PROVIDERS[provider].env] || '').split(/[;,\n]/).map(x => x.trim()).filter(Boolean).map(value => ({ value, source: 'env' }));
+  const stored = (vault[provider] || []).map(value => ({ value, source: 'vault' }));
+  const seen = new Set();
+  return [...env, ...stored].filter(item => { const id = fingerprint(item.value); if (seen.has(id)) return false; seen.add(id); return true; });
+}
+function statsFor(key) {
+  const id = fingerprint(key);
+  if (!keyStats.has(id)) keyStats.set(id, { fingerprint: id, hits: 0, successes: 0, failures: 0, tokens: 0, status: 'untested', lastHitAt: null, lastSuccessAt: null, lastErrorAt: null, lastHttpStatus: null, reason: null, retryAt: 0, source: 'unknown' });
+  return keyStats.get(id);
+}
+function retryAtFromProvider(error, fallback) {
+  const raw = String(error?.retryAfter || '').trim();
+  if (!raw) return fallback;
+  const seconds = Number(raw);
+  const timestamp = Number.isFinite(seconds) && seconds > 0 ? Date.now() + seconds * 1000 : Date.parse(raw);
+  return Number.isFinite(timestamp) && timestamp > Date.now() ? timestamp : fallback;
+}
+function classifyFailure(error) {
+  const status = Number(error?.status || 0);
+  const message = String(error?.message || '').toLowerCase();
+  if (status === 401) {
+    const expired = /expired|expiration/.test(message);
+    return { status: expired ? 'expired' : 'invalid', permanent: true, retryAt: Date.now() + 6 * 60 * 60_000, reason: expired ? 'provider explicitly reported an expired key' : 'unauthorized / key invalid or revoked' };
+  }
+  if (status === 403) {
+    if (/expired|expiration/.test(message)) return { status: 'expired', permanent: true, retryAt: Date.now() + 6 * 60 * 60_000, reason: 'provider explicitly reported an expired key' };
+    if (/revoked|invalid api.?key|api.?key.*invalid/.test(message)) return { status: 'invalid', permanent: true, retryAt: Date.now() + 6 * 60 * 60_000, reason: 'key revoked or rejected' };
+    const quota = /quota|daily|billing|limit|exhausted|resource_exhausted/.test(message);
+    return quota
+      ? { status: 'daily_limit', permanent: false, retryAt: retryAtFromProvider(error, nextUtcDay()), reason: 'provider quota / daily limit' }
+      : { status: 'forbidden', permanent: true, retryAt: Date.now() + 60 * 60_000, reason: 'forbidden / permission or project restriction' };
+  }
+  if (status === 429) {
+    const daily = /quota|daily|per.day|resource_exhausted|billing|limit.*exceed/.test(message);
+    return daily
+      ? { status: 'daily_limit', permanent: false, retryAt: retryAtFromProvider(error, nextUtcDay()), reason: 'daily quota exhausted' }
+      : { status: 'rate_limited', permanent: false, retryAt: Date.now() + 30_000, reason: 'temporary rate limit' };
+  }
+  if (status === 400) return { status: 'request_or_model_error', permanent: false, retryAt: Date.now() + 5 * 60_000, reason: 'bad request or model unsupported; key validity not proven' };
+  if (status >= 500 || error?.retryable || error?.code === 'ETIMEDOUT') return { status: 'provider_error', permanent: false, retryAt: Date.now() + 15_000, reason: 'provider/network temporarily unavailable' };
+  return { status: 'error', permanent: false, retryAt: Date.now() + 60_000, reason: 'unclassified error' };
+}
+function nextUtcDay() { const d = new Date(); return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1, 0, 5); }
+function isEligible(stat) { return !stat.retryAt || stat.retryAt <= Date.now(); }
+function publicKeyInfo(provider, item) {
+  const stat = statsFor(item.value);
+  return { provider, fingerprint: stat.fingerprint, masked: mask(item.value), source: item.source, ...stat, usableNow: isEligible(stat), probeDue: isEligible(stat) && ['invalid', 'forbidden', 'daily_limit', 'rate_limited', 'provider_error'].includes(stat.status) };
+}
 export function getProviderInventory(config = {}) {
-  return Object.entries(PROVIDERS).map(([name, spec]) => {
+  return providerNames.map(name => {
+    const keys = allKeys(name).map(item => publicKeyInfo(name, item));
     const metrics = providerMetrics.get(name) || {};
+    const usable = keys.filter(item => item.usableNow).length;
     return {
-      name,
-      model: config.models?.[name] || spec.model,
-      configured: getKeys(name).length > 0,
-      keys: getKeys(name).length,
-      circuitOpen: (circuit.get(name)?.openUntil || 0) > Date.now(),
-      averageLatencyMs: metrics.averageLatencyMs ?? null,
-      lastLatencyMs: metrics.lastLatencyMs ?? null,
-      successes: metrics.successes || 0,
-      failures: metrics.failures || 0,
-      lastStatus: metrics.lastStatus || null
+      name, model: config.models?.[name] || PROVIDERS[name].model,
+      configured: keys.length > 0, keys: keys.length, usableKeys: usable,
+      invalidKeys: keys.filter(k => ['invalid', 'expired', 'forbidden'].includes(k.status)).length,
+      dailyLimitedKeys: keys.filter(k => k.status === 'daily_limit' && !k.usableNow).length,
+      totalHits: keys.reduce((sum, key) => sum + key.hits, 0),
+      totalSuccesses: keys.reduce((sum, key) => sum + key.successes, 0),
+      totalFailures: keys.reduce((sum, key) => sum + key.failures, 0),
+      totalTokens: keys.reduce((sum, key) => sum + key.tokens, 0),
+      keyDetails: keys,
+      averageLatencyMs: metrics.averageLatencyMs ?? null, lastLatencyMs: metrics.lastLatencyMs ?? null,
+      successes: metrics.successes || 0, failures: metrics.failures || 0, lastStatus: metrics.lastStatus || null,
+      circuitOpen: (providerCircuit.get(name)?.openUntil || 0) > Date.now()
     };
   });
 }
+async function persistKeyEvent(provider, key, event, details = {}) {
+  const stat = statsFor(key);
+  await appendRecord('ai.key.event', { provider, fingerprint: stat.fingerprint, event, ...details }, { source: 'provider-key-manager' });
+}
+export async function manageApiKeys(action, provider, values = []) {
+  ensureInit(); provider = normalizeProvider(provider);
+  if (!isProvider(provider)) throw new Error(`Provider tidak valid. Pilihan: ${providerNames.join(', ')}`);
+  const keys = Array.isArray(values) ? values : [values];
+  if (action === 'add') {
+    let added = 0;
+    for (const raw of keys) {
+      const key = String(raw || '').trim();
+      if (key.length < 12 || /[\s,;]/.test(key)) continue;
+      const exists = allKeys(provider).some(item => item.value === key);
+      if (exists) continue;
+      vault[provider] ||= []; vault[provider].push(key); statsFor(key).source = 'vault'; added++;
+    }
+    if (added) await persistVault();
+    return { action, provider, added, total: allKeys(provider).length };
+  }
+  if (action === 'delete') {
+    const wanted = new Set(keys.map(value => String(value || '').trim()).filter(Boolean));
+    const before = (vault[provider] || []).length;
+    vault[provider] = (vault[provider] || []).filter(key => !wanted.has(key) && !wanted.has(fingerprint(key)));
+    const removed = before - vault[provider].length;
+    if (removed) await persistVault();
+    return { action, provider, removed, note: 'Kunci dari .env tidak dapat dihapus melalui command; hapus dari file .env.' };
+  }
+  if (action === 'list') return { action, provider, keys: allKeys(provider).map(item => publicKeyInfo(provider, item)) };
+  if (action === 'get') {
+    const needle = String(keys[0] || '').trim();
+    const found = allKeys(provider).find(item => item.value === needle || fingerprint(item.value) === needle || mask(item.value) === needle);
+    if (!found) throw new Error('Kunci tidak ditemukan. Gunakan fingerprint dari .apikey list.');
+    return { action, provider, key: publicKeyInfo(provider, found) };
+  }
+  throw new Error('Type harus add, delete, list, atau get.');
+}
+
 function providerError(name, status, message, retryAfter) {
   const error = new Error(`${name} HTTP ${status}: ${message}`);
-  error.provider = name; error.status = status; error.retryable = transientStatus.has(status); error.keyRejected = status === 401 || status === 403; error.retryAfter = retryAfter;
-  return error;
+  error.provider = name; error.status = status; error.retryable = transientStatus.has(status); error.retryAfter = retryAfter;
+  throw error;
 }
 async function postJSON(url, headers, body, timeoutMs, provider) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal: controller.signal });
-    const raw = await response.text();
-    let data;
-    try { data = raw ? JSON.parse(raw) : {}; } catch { data = { raw: raw.slice(0, 1000) }; }
-    if (!response.ok) throw providerError(provider, response.status, String(data.error?.message || data.message || data.raw || response.statusText).slice(0, 600), response.headers.get('retry-after'));
+    const raw = await response.text(); let data;
+    try { data = raw ? JSON.parse(raw) : {}; } catch { data = { raw: raw.slice(0, 1200) }; }
+    if (!response.ok) providerError(provider, response.status, String(data.error?.message || data.message || data.raw || response.statusText).slice(0, 900), response.headers.get('retry-after'));
     return data;
   } catch (error) {
     if (error.name === 'AbortError' || controller.signal.aborted) Object.assign(error, { provider, retryable: true, code: 'ETIMEDOUT' });
@@ -77,58 +186,63 @@ async function postJSON(url, headers, body, timeoutMs, provider) {
     throw error;
   } finally { clearTimeout(timer); }
 }
-async function requestOpenAICompatible(name, model, messages, options) {
-  const spec = PROVIDERS[name]; const key = nextKey(name);
-  if (!key) throw Object.assign(new Error(`API key ${spec.env} belum diatur`), { provider: name, retryable: false, code: 'NO_API_KEY' });
-  const data = await postJSON(spec.baseURL, { authorization: `Bearer ${key}`, 'content-type': 'application/json' }, {
-    model, messages, temperature: options.temperature ?? 0.7, max_tokens: options.maxOutputTokens ?? 1200, stream: false
-  }, options.timeoutMs, name);
+async function requestWithKey(name, key, model, messages, options) {
+  const spec = PROVIDERS[name];
+  if (name === 'gemini') {
+    const system = messages.find(m => m.role === 'system')?.content || '';
+    const contents = messages.filter(m => m.role !== 'system').map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: String(m.content) }] }));
+    const url = `${spec.baseURL}/${encodeURIComponent(model)}:generateContent`;
+    const data = await postJSON(url, { 'content-type': 'application/json', 'x-goog-api-key': key }, { systemInstruction: system ? { parts: [{ text: system }] } : undefined, contents, generationConfig: { temperature: options.temperature ?? 0.6, maxOutputTokens: options.maxOutputTokens ?? 500 } }, options.timeoutMs, name);
+    const text = (data.candidates?.[0]?.content?.parts || []).map(part => part.text || '').join('').trim();
+    if (!text) throw Object.assign(new Error(data.promptFeedback?.blockReason || 'Gemini returned empty response'), { provider: name, retryable: true });
+    return { text, usage: data.usageMetadata || null };
+  }
+  const data = await postJSON(spec.baseURL, { authorization: `Bearer ${key}`, 'content-type': 'application/json' }, { model, messages, temperature: options.temperature ?? 0.6, max_tokens: options.maxOutputTokens ?? 500, stream: false }, options.timeoutMs, name);
   const text = data.choices?.[0]?.message?.content;
-  if (typeof text !== 'string' || !text.trim()) throw Object.assign(new Error(`${name} mengembalikan jawaban kosong`), { provider: name, retryable: true });
-  return { text: text.trim(), usage: data.usage || null, model: data.model || model, provider: name };
-}
-async function requestGemini(model, messages, options) {
-  const key = nextKey('gemini');
-  if (!key) throw Object.assign(new Error('API key GEMINI_API_KEY belum diatur'), { provider: 'gemini', retryable: false, code: 'NO_API_KEY' });
-  const system = messages.find(message => message.role === 'system')?.content || '';
-  const contents = messages.filter(message => message.role !== 'system').map(message => ({ role: message.role === 'assistant' ? 'model' : 'user', parts: [{ text: String(message.content) }] }));
-  const url = `${PROVIDERS.gemini.baseURL}/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`;
-  const data = await postJSON(url, { 'content-type': 'application/json' }, {
-    systemInstruction: system ? { parts: [{ text: system }] } : undefined, contents,
-    generationConfig: { temperature: options.temperature ?? 0.7, maxOutputTokens: options.maxOutputTokens ?? 1200 }
-  }, options.timeoutMs, 'gemini');
-  const text = (data.candidates?.[0]?.content?.parts || []).map(part => part.text || '').join('').trim();
-  if (!text) throw Object.assign(new Error(data.promptFeedback?.blockReason || 'Gemini mengembalikan jawaban kosong'), { provider: 'gemini', retryable: true });
-  return { text, usage: data.usageMetadata || null, model, provider: 'gemini' };
+  if (typeof text !== 'string' || !text.trim()) throw Object.assign(new Error(`${name} returned empty response`), { provider: name, retryable: true });
+  return { text: text.trim(), usage: data.usage || null };
 }
 export async function generateWithProvider(name, messages, options = {}) {
   if (!PROVIDERS[name]) throw new Error(`Provider tidak dikenal: ${name}`);
-  const state = circuit.get(name) || { failures: 0, openUntil: 0 };
-  if (state.openUntil > Date.now()) throw Object.assign(new Error(`Circuit breaker ${name} aktif sementara`), { provider: name, retryable: true, code: 'CIRCUIT_OPEN' });
-  const model = options.models?.[name] || PROVIDERS[name].model;
-  const keyCount = getKeys(name).length;
-  const maxKeyAttempts = Math.max(1, Math.min(Number(options.keyAttempts || 2), Math.max(keyCount, 1)));
+  const items = allKeys(name);
+  if (!items.length) throw Object.assign(new Error(`No API key for ${name}`), { provider: name, code: 'NO_API_KEY' });
+  const eligible = items.filter(item => isEligible(statsFor(item.value)));
+  if (!eligible.length) throw Object.assign(new Error(`All keys for ${name} are cooling down or exhausted`), { provider: name, code: 'ALL_KEYS_UNAVAILABLE', retryable: true });
   let lastError;
-  for (let keyAttempt = 1; keyAttempt <= maxKeyAttempts; keyAttempt++) {
-    const attemptStarted = Date.now();
+  for (const item of eligible) {
+    const stat = statsFor(item.value); stat.source = item.source;
+    stat.hits++; stat.lastHitAt = new Date().toISOString();
+    await persistKeyEvent(name, item.value, 'hit', { hit: stat.hits });
+    const started = Date.now();
     try {
-      const result = name === 'gemini'
-        ? await requestGemini(model, messages, options)
-        : await requestOpenAICompatible(name, model, messages, options);
-      updateProviderMetrics(name, Date.now() - attemptStarted, true);
-      circuit.set(name, { failures: 0, openUntil: 0 });
-      return result;
+      const result = await requestWithKey(name, item.value, options.models?.[name] || PROVIDERS[name].model, messages, options);
+      const elapsed = Date.now() - started; stat.successes++; stat.status = 'active'; stat.reason = null; stat.retryAt = 0; stat.lastSuccessAt = new Date().toISOString();
+      stat.tokens += Number(result.usage?.total_tokens || result.usage?.totalTokenCount || 0);
+      const pm = providerMetrics.get(name) || { successes: 0, failures: 0, averageLatencyMs: null };
+      pm.successes++; pm.lastLatencyMs = elapsed; pm.averageLatencyMs = pm.averageLatencyMs == null ? elapsed : Math.round(pm.averageLatencyMs * .75 + elapsed * .25); pm.lastStatus = 'ok'; providerMetrics.set(name, pm);
+      await persistKeyEvent(name, item.value, 'success', { latencyMs: elapsed, tokens: Number(result.usage?.total_tokens || result.usage?.totalTokenCount || 0) });
+      providerCircuit.set(name, { failures: 0, openUntil: 0 });
+      return { ...result, provider: name, model: options.publicModel || 'Nexora-2.0-Flash', keyFingerprint: stat.fingerprint, latencyMs: elapsed };
     } catch (error) {
-      updateProviderMetrics(name, Date.now() - attemptStarted, false, error);
-      lastError = error;
-      const canRotate = keyAttempt < maxKeyAttempts && (error.keyRejected || error.status === 429 || error.retryable);
-      if (!canRotate) break;
-      logger.warn({ provider: name, keyAttempt, status: error.status, code: error.code }, 'Rotating AI provider API key');
+      lastError = error; const classified = classifyFailure(error);
+      stat.failures++; stat.status = classified.status; stat.reason = classified.reason; stat.retryAt = classified.retryAt; stat.lastErrorAt = new Date().toISOString(); stat.lastHttpStatus = error.status || null;
+      const pm = providerMetrics.get(name) || { successes: 0, failures: 0, averageLatencyMs: null };
+      pm.failures++; pm.lastLatencyMs = Date.now() - started; pm.lastStatus = classified.status; providerMetrics.set(name, pm);
+      await persistKeyEvent(name, item.value, 'failure', { status: classified.status, httpStatus: error.status || null, reason: classified.reason, retryAt: new Date(classified.retryAt).toISOString() });
+      logger.warn({ provider: name, fingerprint: stat.fingerprint, status: classified.status, httpStatus: error.status, reason: classified.reason }, 'Provider key failed; trying next key');
+      // A bad model/request is not evidence that the key is invalid; avoid burning all keys on identical malformed payloads.
+      if (classified.status === 'request_or_model_error') break;
     }
   }
-  const failures = state.failures + 1;
-  circuit.set(name, { failures, openUntil: failures >= 3 && lastError?.retryable ? Date.now() + 60_000 : 0 });
-  logger.warn({ provider: name, status: lastError?.status, retryable: lastError?.retryable, failures, error: lastError?.message }, 'AI provider attempt failed');
-  throw lastError || new Error(`${name} provider failed without a response`);
+  throw Object.assign(lastError || new Error(`${name}: no usable API key`), { provider: name, code: lastError?.code || 'PROVIDER_KEYS_EXHAUSTED' });
 }
-export const providerNames = Object.freeze(Object.keys(PROVIDERS));
+export async function getKeyManagerStatus() {
+  const records = await getRecords({ type: 'ai.key.event' });
+  return { providers: getProviderInventory(), maintenance, recentEvents: records.slice(-30).map(r => ({ ts: r.ts, ...r.payload })) };
+}
+export async function setAIMaintenance(active, details = {}) {
+  maintenance = active ? { active: true, since: maintenance.since || new Date().toISOString(), notifiedAt: details.notifiedAt || maintenance.notifiedAt, reason: details.reason || 'all provider keys unavailable' } : { active: false, since: null, notifiedAt: null, reason: null };
+  await appendRecord('ai.maintenance', { ...maintenance }, { source: 'provider-key-manager' });
+  return maintenance;
+}
+export function getAIMaintenance() { return { ...maintenance }; }

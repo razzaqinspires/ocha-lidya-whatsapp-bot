@@ -46,6 +46,24 @@ test('AI batches rapid adjacent messages and answers once through the fast provi
     assert.equal(requestBody.messages.at(-1).content, 'Halo\nBisa bantu?');
     assert.equal(a.provider, 'groq');
     assert.equal(b.provider, 'groq');
+
+    const identity = await engine.answerMessage(sock, makeMessage('Kamu menggunakan model apa?'));
+    assert.equal(identity.model, 'Nexora-2.0-Flash');
+    assert.equal(replies, 2);
+    assert.equal(calls, 1, 'public identity response does not expose or call an upstream model');
+
+    delete process.env.GROQ_API_KEY;
+    let ownerReports = 0;
+    const maintenanceSock = { sendPresenceUpdate: async () => {}, sendMessage: async (jid, payload) => { ownerReports++; assert.match(jid, /6283193905842/); assert.match(payload.text, /AI MAINTENANCE/); } };
+    const silentMessage = { ...makeMessage('Halo lagi'), reply: async () => { throw new Error('maintenance must stay silent to the user'); } };
+    const exhausted = await engine.answerMessage(maintenanceSock, silentMessage);
+    assert.equal(exhausted, null);
+    assert.equal(ownerReports, 1, 'owner receives one private maintenance report');
+
+    const silentIdentity = { ...makeMessage('Kamu menggunakan model apa?'), reply: async () => { throw new Error('maintenance must not answer any user message'); } };
+    const stillSilent = await engine.answerMessage(maintenanceSock, silentIdentity);
+    assert.equal(stillSilent, null);
+    assert.equal(ownerReports, 1, 'maintenance does not spam duplicate owner reports');
   } finally {
     globalThis.fetch = previousFetch;
     if (previousKey === undefined) delete process.env.GROQ_API_KEY; else process.env.GROQ_API_KEY = previousKey;
