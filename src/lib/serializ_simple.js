@@ -14,6 +14,9 @@ import {
 import crypto from 'node:crypto';
 import helpers from './helpers.js';
 import freply from './freply.js';
+import { buildContactMessage } from './contact-card.js';
+import { registerReplySession } from '../core/reply-sessions.js';
+import { extractMessageText } from './message-text.js';
 let callMusicModule = null;
 try {
   const callMusic = await import('./callMusic.js');
@@ -198,6 +201,8 @@ function unwrapMessage(message) {
       msg = msg.viewOnceMessageV2?.message;
     } else if (type === 'viewOnceMessageV2Extension') {
       msg = msg.viewOnceMessageV2Extension?.message;
+    } else if (type === 'futureProofMessage') {
+      msg = msg.futureProofMessage?.message;
     } else if (type === 'documentWithCaptionMessage') {
       msg = msg.documentWithCaptionMessage?.message;
     } else if (type === 'deviceSentMessage') {
@@ -393,6 +398,7 @@ async function downloadMedia(target, sock, options = {}) {
   return buffer;
 }
 
+
 function serialize(sock, m) {
   if (!m || !m.key) return m;
 
@@ -438,6 +444,17 @@ function serialize(sock, m) {
 
   m.pushName = m.pushName || 'Users';
 
+  // Preserve server-generated stub metadata even when a system event does not
+  // carry a normal proto.Message content object.
+  m.stubType = Number.isInteger(m.messageStubType) ? m.messageStubType : null;
+  m.stubParameters = Array.isArray(m.messageStubParameters) ? m.messageStubParameters : [];
+  if (m.stubType !== null) {
+    const stubEnum = proto?.WebMessageInfo?.StubType || {};
+    m.stubTypeName = Object.entries(stubEnum).find(([name, value]) => !/^\d+$/.test(name) && value === m.stubType)?.[0] || String(m.stubType);
+  } else {
+    m.stubTypeName = '';
+  }
+
   if (m.message) {
     const unwrapped = unwrapMessage(m.message);
     m.message = unwrapped.message;
@@ -449,52 +466,12 @@ function serialize(sock, m) {
     }
 
     m.msg = m.message[m.type] || m.message;
-    m.body = '';
-
-    if (m.type === 'conversation') {
-      m.body = m.message.conversation;
-    } else if (m.type === 'extendedTextMessage') {
-      m.body = m.message.extendedTextMessage?.text || '';
-    } else if (m.type === 'imageMessage') {
-      m.body = m.message.imageMessage?.caption || '';
-    } else if (m.type === 'videoMessage') {
-      m.body = m.message.videoMessage?.caption || '';
-    } else if (m.type === 'documentMessage') {
-      m.body = m.message.documentMessage?.caption || '';
-    } else if (m.type === 'interactiveResponseMessage') {
-      const interactiveMsg = m.message.interactiveResponseMessage;
-      if (interactiveMsg?.nativeFlowResponseMessage) {
-        try {
-          const params = JSON.parse(interactiveMsg.nativeFlowResponseMessage.paramsJson || '{}');
-          m.selectedButtonId = params.id || params.row_id || params.selected_id || params.selectedRowId || interactiveMsg.nativeFlowResponseMessage.name;
-          m.body = m.selectedButtonId || '';
-        } catch {
-          m.body = interactiveMsg.nativeFlowResponseMessage.name || '';
-        }
-      }
-    } else if (m.type === 'templateButtonReplyMessage') {
-      m.selectedButtonId = m.message.templateButtonReplyMessage.selectedId;
-      m.body = m.selectedButtonId || '';
-    } else if (m.type === 'buttonsResponseMessage') {
-      m.selectedButtonId = m.message.buttonsResponseMessage.selectedButtonId;
-      m.body = m.selectedButtonId || '';
-    } else if (m.type === 'listResponseMessage') {
-      m.selectedButtonId = m.message.listResponseMessage.singleSelectReply?.selectedRowId;
-      m.body = m.selectedButtonId || '';
-    } else if (m.type === 'richResponseMessage') {
-      const rich = m.message.richResponseMessage || m.message;
-      const texts = [];
-      if (rich.submessages && Array.isArray(rich.submessages)) {
-        for (const sub of rich.submessages) {
-          if (sub.messageText) texts.push(sub.messageText);
-          if (sub.tableMetadata?.title) texts.push(`[Tabel: ${sub.tableMetadata.title}]`);
-          if (sub.codeMetadata?.codeBlocks) {
-            texts.push(sub.codeMetadata.codeBlocks.map(c => c.codeContent).join(''));
-          }
-        }
-      }
-      m.body = texts.join('\n') || '';
-    }
+    m.body = extractMessageText(m.message, m.type);
+    // MessageType parsing continues below; stub metadata was normalized above.
+    if (m.type === 'interactiveResponseMessage') m.selectedButtonId = m.body;
+    if (m.type === 'templateButtonReplyMessage') m.selectedButtonId = m.body;
+    if (m.type === 'buttonsResponseMessage') m.selectedButtonId = m.body;
+    if (m.type === 'listResponseMessage') m.selectedButtonId = m.body;
 
     const contextInfo = m.msg?.contextInfo;
     m.mentionedJid = contextInfo?.mentionedJid || [];
@@ -540,7 +517,7 @@ function serialize(sock, m) {
           url: qPayload.url || '',
           sender: sock.decodeJid(contextInfo.participant || m.chat),
           fromMe: contextInfo.participant === sock.decodeJid(sock.user?.id),
-          text: qMsg.conversation || qMsg.extendedTextMessage?.text || qPayload.caption || qPayload.text || '',
+          text: extractMessageText(qMsg, qType) || qPayload.caption || qPayload.text || '',
           delete: async () => {
             return await sock.sendMessage(m.chat, {
               delete: {
@@ -568,6 +545,15 @@ function serialize(sock, m) {
       };
     }
   }
+
+  m.sendContact = async ({ number, displayName, organization = '' } = {}, options = {}) => {
+    const target = resolvePhoneJid(sock, m.chat, m.key);
+    if (!target || target.endsWith('@lid')) {
+      throw new Error('JID tujuan belum dapat dipetakan ke alamat WhatsApp yang valid.');
+    }
+    const payload = buildContactMessage({ number, displayName, organization });
+    return sock.sendMessage(target, payload, options);
+  };
 
   m.reply = async (text, quoted = m, options = {}) => {
     let target = m.chat;
@@ -629,6 +615,25 @@ function serialize(sock, m) {
       }
       return await sock.sendMessage(target, { text, ...options });
     }
+  };
+
+
+  m.replyWithSession = async (text, session = {}, quoted = m, options = {}) => {
+    const sent = await m.reply(text, quoted, options);
+    const messageId = sent?.key?.id || sent?.messageId;
+    if (!messageId) throw new Error('WhatsApp tidak mengembalikan message ID; reply session tidak dapat didaftarkan.');
+    registerReplySession({
+      chat: m.chat,
+      sender: m.sender,
+      messageId,
+      kind: session.kind || 'command',
+      choices: session.choices || [],
+      onSelect: session.onSelect,
+      helpText: session.helpText,
+      ttlMs: session.ttlMs,
+      metadata: session.metadata || {}
+    });
+    return sent;
   };
 
   m.freply = async (text, type = 'trolley', options = {}) => {
@@ -932,6 +937,12 @@ function extendSocket(sock) {
           title: b.title || b.display_text || existingParams.title || listTitle || 'Pilih Opsi',
           sections: b.sections || b.listSections || existingParams.sections || []
         };
+      } else if (['cta_reminder', 'cta_cancel_reminder', 'address_message', 'send_location'].includes(buttonName)) {
+        buttonParamsJson = {
+          display_text: b.title || b.display_text || existingParams.display_text || 'Continue',
+          ...(existingParams || {}),
+          ...(b.options || {})
+        };
       } else {
         buttonName = 'quick_reply';
         buttonParamsJson = {
@@ -1169,7 +1180,9 @@ function extendSocket(sock) {
   sock.richMessage = () => new helpers.AIRich(sock);
   sock.airich = () => new helpers.AIRich(sock);
   sock.Rich = () => new helpers.Rich(sock);
-  sock.buttonBuilder = () => new helpers.Button(sock);
+  sock.buttonBuilder = () => new helpers.ButtonBuilder(sock);
+  // Capitalized alias for consumers familiar with the ButtonBuilder terminology.
+  sock.ButtonBuilder = () => new helpers.ButtonBuilder(sock);
   sock.buttonV2Builder = () => new helpers.ButtonV2(sock);
   sock.carouselBuilder = () => new helpers.Carousel(sock);
 

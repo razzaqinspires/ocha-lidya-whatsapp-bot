@@ -1,8 +1,12 @@
 export default {
-  name: 'owner', aliases: ['creator'], category: 'general', description: 'Kontak owner bot',
+  name: 'owner', aliases: ['creator'], category: 'general', description: 'Kirim kartu kontak owner bot',
   async execute({ m, config }) {
     const number = String(config.bot.owner || '').replace(/\D/g, '');
-    const display = number ? `https://wa.me/${number}` : 'Kontak owner belum dikonfigurasi.';
-    return m.reply(`*OWNER OCHA LIDYA*\nNomor: ${number || '-'}\nKontak: ${display}\n\nNomor dapat disalin langsung dari pesan ini.`);
+    if (!number) return m.reply('Nomor owner belum dikonfigurasi.');
+    return m.sendContact({
+      number,
+      displayName: 'Owner Ocha Lidya',
+      organization: 'Razzaq Ventures'
+    });
   }
 };

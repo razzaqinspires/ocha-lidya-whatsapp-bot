@@ -30,7 +30,11 @@ await loadConfig();
 await initializeContacts();
 await initializeGroupMetadata();
 await initializeProviderKeys();
-void initializeAIHistoryCache().catch(error => logger.warn({ err: error }, 'AI history cache warm-up deferred'));
+try {
+  await initializeAIHistoryCache();
+} catch (error) {
+  logger.warn({ err: error }, 'AI history cache warm-up deferred');
+}
 configureLogger(getConfig().logging);
 configureMessageMonitor({ color: getConfig().logging.color });
 const whatsappConfig = getConfig().whatsapp;

@@ -1,4 +1,4 @@
-# Ocha Lidya AI Engine — v1.6.0
+# Ocha Lidya AI Engine — v1.7.0
 
 ## Public identity
 
@@ -86,3 +86,15 @@ This is response-driven validation, not a guaranteed external expiry detector. A
 - The engine can only count calls made through this bot. It cannot report API-key hits made by other applications or direct dashboard/API calls.
 - Total token counts are based on usage fields returned by the provider. Missing usage metadata is not fabricated.
 - Maintenance and key-event history are persisted in the append-only JSONL database. The raw managed key vault is separate from the JSONL database.
+
+
+## Quoted AI reply chains and command-session priority (v1.7.0)
+
+The message dispatcher uses two distinct quoted-reply lanes:
+
+1. **Command screen lane:** before ordinary command parsing and AI detection, the dispatcher checks whether the incoming message quotes an active command screen. The session is identified by the quoted message ID plus chat ID, bound to the sender who opened it, and consumed once a valid choice is selected. Invalid choices stay in the command lane and return the screen's instruction instead of reaching AI. The default session TTL is 10 minutes; sessions are memory-only and are lost on process restart.
+2. **AI answer lane:** in groups, a quoted reply activates AI only when the quoted message ID is registered as a message previously sent by the AI engine. A reply to a bot command, menu, or generic system notice is not treated as an AI reply. Direct private-chat messages remain conversational by default; active command sessions still take priority.
+
+AI answer anchors are persisted as `ai.reply.anchor` records and connect each response to its parent AI job. Startup warms this anchor index before the WhatsApp socket begins accepting messages, avoiding a race where an early quoted group reply could be misclassified. The engine walks the parent chain from root to the quoted answer, then appends the current user reply. The configured bounds are **8 AI answer levels** and **12,000 characters** of accumulated prior context. The quoted message text is also included as a separate reference, capped at 2,500 characters. When the maximum depth is reached, a new answer starts a new bounded branch while still receiving the immediate quoted text. This keeps the prompt bounded and prevents unrelated chat messages or command output from being merged into the chain.
+
+Recovered AI jobs also register a quote anchor after the recovery response is sent. If a send operation does not return a WhatsApp message ID, the answer can still be delivered but cannot become a future quoted-chain anchor. Older bot messages sent before this feature was deployed do not automatically have an AI anchor; new AI answers create them from v1.7.0 onward.

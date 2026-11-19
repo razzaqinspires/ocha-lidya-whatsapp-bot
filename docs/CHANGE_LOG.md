@@ -1,5 +1,37 @@
 # Changelog
 
+## [1.7.0] - 2026-11-19
+
+### Added
+- Added a sender-bound quoted reply-session router. Active command screens are matched by chat and quoted message ID, validated before AI, consumed once on selection, and expire after 10 minutes by default.
+- Reworked `.groupinfo` private-chat navigation: reply `1`-`10` to open a cached group, `0` for the next page, `00` for the previous page, and `0` from a detail screen to return to the list.
+- Added persistent AI answer anchors and bounded quoted-reply chains. Group AI activates from a quote only when the quoted ID belongs to an AI answer, preserving up to 8 levels / 12,000 context characters.
+- Added `.test <type> <options>` owner-only message lab for MessageType/StubType reference, local ButtonBuilder native-flow, quick reply, selection list, URL/call/copy/location/address/catalog CTA, legacy buttonsMessage, hydrated templates, reminder CTA, event/date, poll, image/video/audio/document/sticker/location/contact, PTV circle video, view-once image, AI rich response, and carousel messages.
+- Improved serializer text extraction for event, poll, interactive response, template/buttons/list replies, rich responses and common media captions; expose symbolic `WAMessageStubType` metadata even for stub-only events.
+- Added local `sock.ButtonBuilder()` alias for the existing project builder and reminder/cancel-reminder native-flow helper methods; corrected local CTA call parameters to `phone_number`.
+
+### Changed
+- AI no longer treats every quoted bot command/system message in a group as a conversational trigger. Group quoted-reply AI is restricted to persisted AI answer anchors; explicit bot mentions continue to trigger AI.
+- AI checkpoint recovery now writes the same quote anchor as a normal AI delivery whenever WhatsApp returns a message ID.
+- Documented that `MessageType` is a TypeScript key union (`keyof proto.Message`), `WAMessageStubType` is the system-event enum, and `ButtonBuilder` is a local project helper rather than a Baileys public export.
+
+### Validation
+- Unit tests cover sender-bound command sessions, one-time choice consumption, AI reply-chain bounding and dispatcher trigger rules.
+- Syntax check: 77 JavaScript files. Offline test suite: 55 passed, 2 skipped, 0 failed; the two skips require the Baileys runtime dependency which was not installed in the build sandbox. AI reply-anchor history is warmed before the socket accepts incoming messages.
+- Message delivery/rendering for hydrated, reminder, native-flow, event, poll, PTV, view-once, AI rich and carousel payloads still requires a live WhatsApp linked-device test. Media cases additionally require reachable URLs with matching MIME types.
+
+## [1.6.3] - 2026-11-19
+
+### Changed
+- `.owner` now sends a native WhatsApp contact card instead of a text-only phone number and `wa.me` URL.
+- Added serializer helper `m.sendContact()` so contact messages use the same JID normalization and outgoing-message tracking path as other serializer sends.
+- Contact vCard includes structured `N` plus `FN`, a WhatsApp `waid` telephone field, and `Razzaq Ventures` organization metadata. The `displayName` field is placed inside the contact item for compatibility with the corrected Baileys contact-message shape.
+- Added strict international phone-number validation and vCard escaping; no email, social profile, or unrelated personal metadata is fabricated.
+
+### Validation
+- Added unit coverage for number validation, vCard structure, and contact-item display name placement.
+- Live delivery and save-to-address-book behavior still require verification on a linked WhatsApp client.
+
 ## [1.6.2] - 2026-11-19
 
 - Simplified developer runner permissions: `.master cli on/off` directly controls `$`; `eval`, `python`, and `golang` are independent. Removed the confusing global `masterExecEnabled` gate and retained `.master exec` only as a compatibility alias for CLI.

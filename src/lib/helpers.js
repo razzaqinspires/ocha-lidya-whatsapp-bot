@@ -1198,9 +1198,23 @@ class Button extends BaseBuilder {
       name: 'cta_call',
       buttonParamsJson: JSON.stringify({
         display_text,
-        phone,
+        phone_number: String(phone),
         ...options,
       }),
+    });
+    return this;
+  }
+  addReminder(display_text = 'Set reminder', options = {}) {
+    this._buttons.push({
+      name: 'cta_reminder',
+      buttonParamsJson: JSON.stringify({ display_text: String(display_text), ...options }),
+    });
+    return this;
+  }
+  addCancelReminder(display_text = 'Cancel reminder', options = {}) {
+    this._buttons.push({
+      name: 'cta_cancel_reminder',
+      buttonParamsJson: JSON.stringify({ display_text: String(display_text), ...options }),
     });
     return this;
   }
@@ -1747,6 +1761,7 @@ const __exports = {
   CardBuilder,
   RowBuilder,
   Button,
+  ButtonBuilder: Button,
   ButtonV2,
   Carousel,
   AIRich,

@@ -3,6 +3,7 @@ import { appendRecord, getRecords } from '../core/database.js';
 import { getConfig } from '../core/config.js';
 import { logger } from '../core/logger.js';
 import { generateWithProvider, getProviderInventory, initializeProviderKeys, getAIMaintenance, setAIMaintenance, providerNames } from './providers.js';
+import { AIReplyChainStore, AI_REPLY_CHAIN_LIMITS } from './reply-chain.js';
 
 const SYSTEM_PROMPT = `Kamu adalah Ocha Lidya, asisten WhatsApp yang tanggap, natural, dan akurat. Identitas model publik adalah Nexora-2.0-Flash. Jangan pernah menyebut nama provider, vendor, model internal, endpoint, atau detail kunci API. Jika ditanya model apa yang digunakan, jawab persis: Saya menggunakan Nexora-2.0-Flash. Jangan mengklaim model tersebut sebagai nama vendor eksternal. Jawab dalam bahasa pengguna. Dahulukan jawaban langsung, hindari pembukaan berulang, dan sesuaikan panjang jawaban dengan pertanyaan. Jangan mengarang fakta, jangan mengklaim melakukan tindakan eksternal yang belum dilakukan, dan gunakan konteks percakapan yang tersedia.`;
 const DEFAULTS = Object.freeze({
@@ -30,17 +31,19 @@ function mentionIsBot(sock, mentioned = []) {
   const own = botJids(sock);
   return mentioned.some(jid => own.has(canonicalJid(jid, sock)));
 }
-function isReplyToBot(sock, message) {
-  if (!message.quoted) return false;
-  if (message.quoted.fromMe === true) return true;
-  const own = botJids(sock);
-  return own.has(canonicalJid(message.quoted.sender, sock));
+export function isAIQuotedReply(message) {
+  const quotedId = message?.quoted?.key?.id;
+  if (!quotedId || !message?.chat) return false;
+  return Boolean(aiReplyChain.resolve(message.chat, quotedId).anchor);
 }
 
 export function isAITrigger(sock, message, { prefixed = false, hasKnownCommand = false } = {}) {
   if (!message?.body?.trim() || prefixed || hasKnownCommand || message.fromMe) return false;
+  // Private chats remain conversational by default. In groups, only an explicit
+  // bot mention or a reply to a persisted AI answer can enter the AI lane. The
+  // AI anchor cache is warmed before the socket starts accepting messages.
   if (!message.isGroup) return true;
-  return mentionIsBot(sock, message.mentionedJid) || isReplyToBot(sock, message);
+  return mentionIsBot(sock, message.mentionedJid) || isAIQuotedReply(message);
 }
 
 function stripBotMention(text) {
@@ -52,6 +55,7 @@ function conversationKey(chat, sender) { return `${chat}::${sender}`; }
 // The old implementation rescanned the complete event journal for every message.
 const historyCache = new Map();
 const persistedRoles = new Set();
+const aiReplyChain = new AIReplyChainStore();
 let historyWarmPromise;
 const MAX_CACHED_CONVERSATIONS = 2500;
 const MAX_CACHED_TURNS = 40;
@@ -69,15 +73,22 @@ function cacheTurn(key, turn) {
 export async function initializeAIHistoryCache() {
   if (historyWarmPromise) return historyWarmPromise;
   historyWarmPromise = (async () => {
-    const rows = await getRecords({ type: 'ai.turn' });
+    const [rows, anchorRows] = await Promise.all([
+      getRecords({ type: 'ai.turn' }),
+      getRecords({ type: 'ai.reply.anchor' })
+    ]);
     for (const row of rows) {
       const payload = row.payload || {};
       if (!payload.key || !payload.role || typeof payload.content !== 'string') continue;
       cacheTurn(payload.key, { role: payload.role, content: payload.content });
-      if (payload.jobId) persistedRoles.add(`${payload.jobId}:${payload.role}`);
+      if (payload.jobId) {
+        persistedRoles.add(`${payload.jobId}:${payload.role}`);
+        aiReplyChain.addTurn(payload.jobId, payload.role, payload.content);
+      }
     }
-    logger.info({ turns: rows.length, conversations: historyCache.size }, 'AI history cache warmed');
-    return { turns: rows.length, conversations: historyCache.size };
+    for (const row of anchorRows) aiReplyChain.addAnchor(row.payload || {});
+    logger.info({ turns: rows.length, conversations: historyCache.size, replyAnchors: anchorRows.length }, 'AI history and quote-chain caches warmed');
+    return { turns: rows.length, conversations: historyCache.size, replyAnchors: anchorRows.length };
   })().catch(error => {
     historyWarmPromise = undefined;
     throw error;
@@ -96,6 +107,7 @@ async function persistTurn(job, role, content, response = {}) {
   });
   persistedRoles.add(marker);
   cacheTurn(job.key, { role, content });
+  aiReplyChain.addTurn(job.id, role, content);
 }
 
 async function checkpoint(jobId, status, payload = {}) {
@@ -175,6 +187,16 @@ async function notifyOwnerMaintenance(sock, error) {
   }
 }
 
+async function persistAIReplyAnchor(anchor) {
+  await appendRecord('ai.reply.anchor', anchor, { source: 'ai-engine' });
+  aiReplyChain.addAnchor(anchor);
+  return anchor;
+}
+
+export function resolveAIReplyContext(chat, quotedMessageId) {
+  return aiReplyChain.resolve(chat, quotedMessageId);
+}
+
 async function answerMessageUnlocked(sock, message) {
   const config = aiConfig();
   if (!config.enabled) return message.reply('Layanan AI sedang dinonaktifkan.');
@@ -189,15 +211,27 @@ async function answerMessageUnlocked(sock, message) {
   await initializeAIHistoryCache();
   const key = conversationKey(message.chat, message.sender);
   const history = (historyCache.get(key) || []).slice(-config.historyMessages);
-  const quotedContext = message.isGroup && message.quoted?.text
-    ? `\n\nPesan yang dibalas: ${String(message.quoted.text).slice(0, 2000)}` : '';
+  const quotedMessageId = message.quoted?.key?.id || '';
+  const parentContext = quotedMessageId ? aiReplyChain.resolve(message.chat, quotedMessageId) : { anchor: null, turns: [], depth: 0, threadId: null };
+  const priorTurns = parentContext.turns.length
+    ? parentContext.turns.map(({ role, content }) => ({ role, content }))
+    : history;
+  const quotedContext = message.quoted?.text
+    ? `\n\nKutipan yang sedang ditanggapi pengguna:\n${String(message.quoted.text).slice(0, 2500)}` : '';
   const messages = [
-    { role: 'system', content: SYSTEM_PROMPT },
-    ...history,
+    { role: 'system', content: `${SYSTEM_PROMPT}\n\nJika ada kutipan, jawab berdasarkan konteks kutipan dan rantai percakapan yang disediakan. Jangan menganggap pesan lain di chat sebagai bagian dari rantai ini.` },
+    ...priorTurns,
     { role: 'user', content: `${userText}${quotedContext}` }
   ];
   const id = crypto.randomUUID();
-  const job = { id, chat: message.chat, sender: message.sender, key, messages, userText, createdAt: new Date().toISOString() };
+  const canContinueParent = Boolean(parentContext.anchor && parentContext.anchor.depth < AI_REPLY_CHAIN_LIMITS.maxDepth - 1);
+  const job = {
+    id, chat: message.chat, sender: message.sender, key, messages, userText,
+    parentJobId: canContinueParent ? parentContext.anchor.jobId : null,
+    threadId: canContinueParent ? parentContext.threadId : id,
+    depth: canContinueParent ? parentContext.anchor.depth + 1 : 0,
+    createdAt: new Date().toISOString()
+  };
   await checkpoint(id, 'queued', { job, createdAt: job.createdAt });
   await persistTurn(job, 'user', userText);
 
@@ -207,8 +241,27 @@ async function answerMessageUnlocked(sock, message) {
     await persistTurn(job, 'assistant', result.text, result);
     await checkpoint(id, 'generated', { provider: result.provider, model: result.model, response: result.text, latencyMs: result.latencyMs });
     await setComposing(sock, message.chat, 'paused');
-    await message.reply(result.text);
-    await checkpoint(id, 'delivered', { deliveredAt: new Date().toISOString(), provider: result.provider, model: result.model, latencyMs: result.latencyMs });
+    const sentMessage = await message.reply(result.text);
+    const sentMessageId = sentMessage?.key?.id;
+    if (sentMessageId) {
+      try {
+        await persistAIReplyAnchor({
+          chat: message.chat,
+          messageId: sentMessageId,
+          sender: message.sender,
+          jobId: id,
+          parentJobId: job.parentJobId,
+          threadId: job.threadId,
+          depth: job.depth,
+          createdAt: new Date().toISOString()
+        });
+      } catch (anchorError) {
+        logger.warn({ err: anchorError, jobId: id, messageId: sentMessageId }, 'AI reply anchor was sent but could not be persisted');
+      }
+    } else {
+      logger.warn({ jobId: id }, 'AI answer was sent without a message ID; quoted chain anchor unavailable for this turn');
+    }
+    await checkpoint(id, 'delivered', { deliveredAt: new Date().toISOString(), provider: result.provider, model: result.model, latencyMs: result.latencyMs, replyMessageId: sentMessageId || null });
     logger.info({ jobId: id, provider: result.provider, model: result.model, latencyMs: result.latencyMs, chat: message.chat }, 'AI response delivered');
     return result;
   } catch (error) {
@@ -277,8 +330,25 @@ export async function resumePendingAI(sock) {
       else result = await executeWithFallback(job);
       await persistTurn(job, 'user', job.userText);
       await persistTurn(job, 'assistant', result.text, result);
-      await sock.sendMessage(job.chat, { text: `Pemulihan jawaban tertunda:\n\n${result.text}` });
-      await checkpoint(job.id, 'delivered', { provider: result.provider, model: result.model, resumed: true, completedAt: new Date().toISOString() });
+      const recoveredMessage = await sock.sendMessage(job.chat, { text: `Pemulihan jawaban tertunda:\n\n${result.text}` });
+      const recoveredMessageId = recoveredMessage?.key?.id;
+      if (recoveredMessageId) {
+        try {
+          await persistAIReplyAnchor({
+            chat: job.chat,
+            messageId: recoveredMessageId,
+            sender: job.sender,
+            jobId: job.id,
+            parentJobId: job.parentJobId || null,
+            threadId: job.threadId || job.id,
+            depth: Number(job.depth) || 0,
+            createdAt: new Date().toISOString()
+          });
+        } catch (anchorError) {
+          logger.warn({ err: anchorError, jobId: job.id, messageId: recoveredMessageId }, 'Recovered AI answer sent but its reply anchor could not be persisted');
+        }
+      }
+      await checkpoint(job.id, 'delivered', { provider: result.provider, model: result.model, resumed: true, replyMessageId: recoveredMessageId || null, completedAt: new Date().toISOString() });
     } catch (error) {
       logger.error({ err: error, jobId: job.id }, 'AI checkpoint recovery failed');
       await checkpoint(job.id, 'failed', { failedAt: new Date().toISOString(), error: error.message });

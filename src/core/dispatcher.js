@@ -7,6 +7,7 @@ import { logger } from './logger.js';
 import { getPrefixes } from './prefix.js';
 import { shouldSuppressGroupInteraction } from './group-policy.js';
 import { answerMessage, isAITrigger } from '../ai/engine.js';
+import { dispatchReplySession } from './reply-sessions.js';
 
 export async function dispatch(sock, message) {
   const config = getConfig();
@@ -14,6 +15,12 @@ export async function dispatch(sock, message) {
   // Global group mute suppresses every group command and AI response.
   // Contact and group metadata ingestion runs before dispatch in index.js.
   if (shouldSuppressGroupInteraction(message, config)) return;
+
+  // Priority lane 1: replies to an active command screen (e.g. `.groupinfo`
+  // followed by `1`). It must consume the message before command parsing or AI.
+  const sessionResult = await dispatchReplySession(sock, message);
+  if (sessionResult.matched) return;
+
   const body = String(message.body || '').trim();
   if (!body) return;
   if (isMasterSyntax(body)) {

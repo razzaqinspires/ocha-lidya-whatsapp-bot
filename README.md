@@ -257,10 +257,10 @@ Default multi-prefix values are `.`, `!`, `/`, and `#`.
 |---|---|---|
 | `.menu` | `.help`, `.commands` | Display command menu |
 | `.ping` | `.speed`, `.latency` | Basic response latency |
-| `.owner` | `.creator` | Display owner contact |
+| `.owner` | `.creator` | Send the owner WhatsApp contact card |
 | `.about` | `.botinfo` | Bot identity and build information |
 | `.runtime` | `.system`, `.sysinfo` | Node runtime, memory, host and process details |
-| `.groupinfo` | `.gcinfo`, `.grouplist` | In a private chat, list cached groups; in a group, show that group's cached metadata |
+| `.groupinfo` | `.gcinfo`, `.grouplist` | In a private chat, navigate cached groups by replying with a number; in a group, show that group's cached metadata |
 
 ### Owner and developer
 
@@ -292,6 +292,7 @@ Default multi-prefix values are `.`, `!`, `/`, and `#`.
 | `.master python on/off` | — | Enable/disable Python runner |
 | `.master golang on/off` | — | Enable/disable Go runner |
 | `.mute on/off/status` | `.groupmute` | Owner-only, private-chat-only mute for all group interactions; group metadata/contact indexing remains active |
+| `.test <type> <options>` | `.testmsg`, `.messagetest` | Owner-only Baileys message lab: native-flow, hydrated template, event/date, poll, PTV, view-once, AI rich, and carousel |
 
 All owner plugins use `ownerOnly: true`. `.groupinfo` is intentionally available in private chat: it lists only the local cached group index and does not request fresh metadata for already-cached groups.
 
@@ -497,7 +498,7 @@ ocha-lidya-bot/
 
 ## 18. Version and change history
 
-Current package version: **1.6.0** (configuration schema v10).
+Current package version: **1.7.0** (configuration schema v11).
 
 See [`docs/CHANGE_LOG.md`](docs/CHANGE_LOG.md) for release history and [`docs/DATABASE_DESIGN.md`](docs/DATABASE_DESIGN.md) for persistence internals.
 
@@ -528,9 +529,9 @@ At startup Ocha Lidya creates `data/contact.jsonl` and `data/group-metadata.json
 
 The first connection performs one `groupFetchAllParticipating()` batch and persists the returned metadata. A `group.bootstrap.complete` marker prevents repeat full refreshes after a successful bootstrap. Thereafter `groups.upsert`, `groups.update`, and `group-participants.update` events update the local cache. A cached group does not trigger `groupMetadata()` network requests when `.groupinfo` is used. A group missing from cache may receive one lazy fetch, protected by an in-flight guard and configurable cooldown. Member additions/modifications add newly verified PN numbers to the permanent contacts file; member removals update only the group metadata log. When the bot itself is removed/leaves, that group's metadata cache entry is deleted, but contacts are never deleted.
 
-`.groupinfo` in a private chat lists groups already in the metadata cache; selecting a row shows the stored detail. `.groupinfo` inside a group shows that group's cache. It does not force repeated metadata requests. See [`docs/CONTACTS_AND_GROUP_CACHE.md`](docs/CONTACTS_AND_GROUP_CACHE.md) for event semantics, file formats, PN/LID resolution order, and recovery behavior.
+`.groupinfo` in a private chat lists groups already in the metadata cache. Reply to the exact list message with `1`-`10` to open a group; `0` advances a page and `00` returns to the previous page. Reply `0` to a detail view to return to the list. `.groupinfo` inside a group shows that group's cache. It does not force repeated metadata requests. See [`docs/CONTACTS_AND_GROUP_CACHE.md`](docs/CONTACTS_AND_GROUP_CACHE.md) for event semantics, file formats, PN/LID resolution order, and recovery behavior.
 
-Command responses use the serializer's ordinary text transport by default. This keeps every response readable, searchable, selectable, and copyable in standard WhatsApp clients. `.menu` and `.groupinfo` show explicit command syntax as text. The legacy `ui.buttonsEnabled` setting and `.buttons on/off/status` command remain for configuration compatibility, but ON no longer wraps all command replies in native-flow payloads. Interactive APIs are available only to explicit feature implementations after client compatibility testing; a successful relay/ACK does not guarantee that a WhatsApp client can render the message.
+Command responses use the serializer's ordinary text transport by default. This keeps every response readable, searchable, selectable, and copyable in standard WhatsApp clients. `.menu` and `.groupinfo` show explicit command syntax as text. A quoted reply to an active command screen is routed through the command-session lane before AI detection; these in-memory sessions are sender-bound and expire after 10 minutes by default. In groups, AI quoted-reply activation requires a known AI answer message ID, not merely any message authored by the bot. AI reply chains preserve up to 8 linked AI turns and 12,000 characters of context. See [`docs/REPLY_ROUTING_AND_TEST_MESSAGES.md`](docs/REPLY_ROUTING_AND_TEST_MESSAGES.md). The legacy `ui.buttonsEnabled` setting and `.buttons on/off/status` command remain for configuration compatibility, but ON does not wrap all command replies in native-flow payloads. Interactive APIs are available only to explicit feature implementations after client compatibility testing; a successful relay/ACK does not guarantee that a WhatsApp client can render the message.
 
 
 ## 21. Ocha Master Console, group mute, and message-flow telemetry
