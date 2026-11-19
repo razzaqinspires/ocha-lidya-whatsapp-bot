@@ -1,0 +1,43 @@
+export default {
+  name:'menu', aliases:['help','commands'], category:'general', description:'Daftar perintah Ocha Lidya',
+  async execute({m}) {
+    await m.reply([
+      '*OCHA LIDYA*',
+      'Personal WhatsApp Assistant',
+      '',
+      '*GENERAL*',
+      '.menu — daftar perintah',
+      '.ping — latency',
+      '.owner — kontak owner',
+      '.about — informasi bot',
+      '.runtime — informasi runtime',
+      '.groupinfo — informasi grup',
+      '',
+      '*OWNER / DEVELOPER*',
+      '.setmode public|self',
+      '.setprefix single <prefix>',
+      '.setprefix multi',
+      '.setprefix multi add|del <prefix>',
+      '.setprefix none|show',
+      '.setbotname <nama>',
+      '.plugins — daftar plugin',
+      '.reload — reload plugin',
+      '.jid — inspect JID/LID',
+      '.dbstatus — kesehatan database',
+      '.dbsearch <keyword> — cari arsip',
+      '.aistatus — status provider AI (owner)',
+      '.aiset on|off — aktif/nonaktifkan AI (owner)',
+      '.aiset order <provider,...> — urutan fallback (owner)',
+      '.aiset model <provider> <model> — ubah model (owner)',
+      '.master status — status developer runner',
+      '.master eval|exec|cli|python|golang on|off',
+      '',
+      '*MASTER CONSOLE · OWNER ONLY*',
+      '> JavaScript',
+      '=> JavaScript return',
+      '$ CLI',
+      '>> Python',
+      '>>> Go'
+    ].join('\n'));
+  }
+};

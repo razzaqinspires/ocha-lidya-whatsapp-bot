@@ -1,0 +1,16 @@
+/**
+ * Copy this file into a subfolder as a .js file.
+ * Every plugin is an ESM default export with name + execute().
+ */
+export default {
+  name: 'example',
+  aliases: [],
+  category: 'custom',
+  description: 'Example plugin contract',
+  ownerOnly: false,
+  groupOnly: false,
+  privateOnly: false,
+  async execute({ sock, m, args, text, command, config, isOwner }) {
+    await m.reply(`Command: ${command}\nArguments: ${args.join(' ')}`);
+  }
+};

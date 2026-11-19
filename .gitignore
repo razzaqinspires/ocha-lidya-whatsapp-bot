@@ -1,0 +1,43 @@
+# Secrets and runtime credentials. Keep .env local; never commit PAT/API keys.
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+sessions/
+**/sessions/
+*.pem
+*.key
+
+# Git internals and dependencies
+.git/
+**/.git/
+node_modules/
+**/node_modules/
+dist/
+build/
+coverage/
+
+# Runtime JSONL database and personal WhatsApp data
+data/control/
+data/journal/
+data/replica/
+data/archives/
+data/quarantine/
+data/*.jsonl
+data/*.json
+data/*.tmp
+
+# Logs and temporary artifacts
+logs/*
+!logs/.gitkeep
+*.log
+*.tmp
+*.zip.tmp
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
