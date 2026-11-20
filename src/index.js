@@ -22,6 +22,7 @@ import { ensureGroupMetadata, hydrateParticipatingGroupsOnce, handleGroupsUpsert
 import { resumePendingAI, initializeAIHistoryCache } from './ai/engine.js';
 import { initializeProviderKeys } from './ai/providers.js';
 import { getReconnectDelay, isValidInternationalNumber, normalizePhoneNumber, shouldRequestPairingCode, shouldStopReconnect, shouldRecoverInvalidSession } from './core/connection-policy.js';
+import { startCodeLab, stopCodeLab } from './runtime/code-lab.js';
 
 setOutgoingMessageObserver(observeOutgoingMessage);
 
@@ -37,6 +38,12 @@ try {
 }
 configureLogger(getConfig().logging);
 configureMessageMonitor({ color: getConfig().logging.color });
+try {
+  const codeLabStatus = await startCodeLab();
+  if (codeLabStatus.enabled) logger.info({ gateway: codeLabStatus.gateway, maxConcurrent: codeLabStatus.maxConcurrent }, 'Nexora Code Lab initialized');
+} catch (error) {
+  logger.error({ message: error.message }, 'Nexora Code Lab initialization failed; WhatsApp bot continues without code preview');
+}
 const whatsappConfig = getConfig().whatsapp;
 const AUTH_DIR = whatsappConfig.sessionDir;
 const AUTH_MODE = whatsappConfig.authMode;
@@ -80,7 +87,9 @@ function requestControlledRestart({ file, event }) {
   restarting = true;
   logger.warn({ file, event }, 'Perubahan source inti terdeteksi; proses akan dimulai ulang secara terkontrol');
   clearTimeout(restartTimer);
-  restartTimer = setTimeout(() => {
+  restartTimer = setTimeout(async () => {
+    try { await stopCodeLab(); }
+    catch (error) { logger.warn({ message: error.message }, 'Code Lab cleanup before restart failed'); }
     try { activeSocket?.end?.(new Error(`Source changed: ${file}`)); }
     catch (error) { logger.warn({ err: error }, 'Tidak dapat menutup socket sebelum restart'); }
 
@@ -283,10 +292,26 @@ async function start() {
   }
 }
 
+let shutdownInProgress = false;
+async function shutdownRuntime(signal, exitCode = 0) {
+  if (shutdownInProgress) return;
+  shutdownInProgress = true;
+  logger.warn({ signal }, 'Shutting down Ocha runtime and temporary Code Lab sessions');
+  clearTimeout(reconnectTimer);
+  clearTimeout(restartTimer);
+  try { activeSocket?.end?.(new Error(`Process shutdown: ${signal}`)); } catch {}
+  try { await stopCodeLab(); }
+  catch (error) { logger.error({ message: error.message }, 'Code Lab shutdown cleanup failed'); }
+  process.exit(exitCode);
+}
+
+process.once('SIGINT', () => { void shutdownRuntime('SIGINT', 0); });
+process.once('SIGTERM', () => { void shutdownRuntime('SIGTERM', 0); });
+process.once('SIGHUP', () => { void shutdownRuntime('SIGHUP', 0); });
 process.on('unhandledRejection', error => logger.error({ err: error }, 'Unhandled rejection'));
 process.on('uncaughtException', error => {
   logger.fatal({ err: error }, 'Uncaught exception');
-  process.exit(1);
+  void shutdownRuntime('uncaughtException', 1);
 });
 
 start().catch(error => {

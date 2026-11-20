@@ -63,6 +63,7 @@ For an existing installation, v1.5.0 through v1.7.1 perform one-time configurati
 - A dedicated WhatsApp account for the bot.
 - Writable persistent storage for `data/` and `sessions/`.
 - Python 3 and Go only if their developer runners are intentionally enabled.
+- Docker or rootless Podman plus `cloudflared` for Nexora Code Lab. Pull `python:3.12-alpine` and `node:22-alpine` before enabling execution.
 
 The syntax checker scans every JavaScript file under `src/`, `test/`, and `scripts/`, including the central configuration module at `src/config.js`.
 
@@ -265,6 +266,9 @@ Default multi-prefix values are `.`, `!`, `/`, and `#`.
 | `.about` | `.botinfo` | Bot identity and build information |
 | `.runtime` | `.system`, `.sysinfo` | Node runtime, memory, host and process details |
 | `.groupinfo` | `.gcinfo`, `.grouplist` | In a private chat, navigate cached groups by replying with a number; in a group, show that group's cached metadata |
+| `.run python <code>` | `.execute`, `.previewcode` | Execute Python/Node.js or display HTML in an isolated temporary web preview |
+| Natural-language `coba jalankan` | — | Run the most recent assistant code block and return a session URL |
+| `.nexora status` | `.capability`, `.aitools` | Owner-only AI capability and Code Lab worker controls |
 
 ### Owner and developer
 
@@ -285,6 +289,13 @@ Default multi-prefix values are `.`, `!`, `/`, and `#`.
 | `.dbstatus` | `.database`, `.dbhealth` | Database health |
 | `.dbsearch keyword` | `.archivefind` | Search ZIP archives |
 | `.aistatus` | `.aihealth` | Show AI provider readiness, model, key counts, average latency, health counters, timeout, and speed profile |
+| `.nexora status` | `.capability`, `.aitools` | Show Nexora capability switches, Code Lab status, queue, workers, and tunnel |
+| `.nexora code on/off` | — | Enable or disable the isolated Code Lab service |
+| `.nexora auto-run on/off` | — | Enable or disable natural-language code execution |
+| `.nexora tunnel on/off` | — | Enable or disable temporary public TryCloudflare links |
+| `.nexora all on/off` | — | Turn all Nexora AI and Code Lab capabilities on/off globally |
+| `.nexora workers 1-4` | — | Set simultaneous worker count (not session count) |
+| `.nexora runtime docker/podman` | — | Select the container runtime |
 | `.aiset on/off` | `.aiconfig` | Enable or disable AI |
 | `.aiset speed boost/fast/balanced` | — | Switch between Boost, fast, and retry-tolerant balanced profiles |
 | `.aiset order <providers>` | — | Set provider fallback order |
@@ -555,3 +566,12 @@ All master runtimes (`$`, `>`, `=>`, `>>`, `>>>`) pass through WorkloadTracker. 
 
 The AI review is an advisory impact estimate, not a proof of safety. The confirmation mechanism reduces accidental execution but does not make arbitrary code safe. Run master commands only on a controlled host and keep backups.
 
+
+
+## 22. Nexora Code Lab: isolated execution and temporary preview
+
+Users can ask Ocha to run the most recent assistant code block by saying `coba jalankan` or `buat preview hasilnya`. The AI capability manager routes explicit execution intent to Code Lab. `.run` provides a direct command path. Python 3.12 and Node.js 22 execute in per-session containers; HTML/CSS/JavaScript is displayed in a sandboxed iframe. Python/Node execution is network-isolated and limited to standard libraries, 128 MiB memory, 0.5 CPU, 64 PIDs, 48 KiB combined captured output, and 120 seconds runtime by default.
+
+Each session receives an unguessable path on a temporary `trycloudflare.com` Quick Tunnel. Session paths are independently revoked after 60 minutes, with automatic container and workspace cleanup. One shared Quick Tunnel is reused for concurrent sessions, then closed after a short idle grace period. SIGINT/SIGTERM/SIGHUP cleanup is supported; an independent heartbeat watchdog also removes labelled worker containers and temporary files after an ungraceful bot process loss. A hard power/kernel failure or unavailable container daemon can still delay cleanup.
+
+Install Docker or rootless Podman, `cloudflared`, and pull `python:3.12-alpine` plus `node:22-alpine`. Use `.nexora status` to verify. Anyone who receives a preview URL can access it; do not include secrets or private data. Quick Tunnels are for temporary development/testing, not production hosting. Full lifecycle, security, resource limits, and configuration details are in `docs/CODE_LAB.md`.

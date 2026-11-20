@@ -1,4 +1,49 @@
+## [1.8.1] - 2026-11-20
+
+- Added `.nexora all on/off` as a global owner-only master switch for AI chat, Code Lab, AI auto-run, and the shared public preview tunnel.
+- Changed TryCloudflare lifecycle to one persistent Quick Tunnel per Ocha process; removed idle tunnel shutdown and added bounded reconnect supervision.
+- Added startup preflight for `cloudflared`, Docker/Podman daemon health, and pre-pulled Python/Node runtime images.
+- Reduced the default worker pool from three to two and capped configurable concurrency at four to make memory use more predictable.
+- Clarified worker concurrency separately from total live preview sessions; direct `.run` remains available when AI auto-run is disabled.
+- Deleted Python/Node source workspaces immediately after execution completes and started the host-side timeout after the runtime process is spawned.
+- Updated Nexora status output and operational documentation to describe global controls, one shared tunnel, and headless bounded execution.
+
 # Changelog
+
+## [1.8.0] - 2026-11-20
+
+### Added
+- Added Nexora capability registry and owner controls for Code Lab, natural-language auto-run, public tunnel, worker concurrency, and Docker/Podman selection.
+- Added isolated Python 3.12 and Node.js 22 execution workers plus sandboxed HTML/CSS/JavaScript browser previews.
+- Added a shared free TryCloudflare Quick Tunnel with unique per-session 256-bit URL tokens, one-hour maximum session TTL, per-user quotas, FIFO worker scheduling, and rate limits.
+- Added a loopback-only preview gateway, interactive stdin, bounded output, container resource limits, network isolation, and a detached orphan watchdog for abnormal process termination.
+- Added `.run` / `.execute` / `.previewcode` and natural-language `coba jalankan` routing to the latest assistant code block.
+- Added `docs/CODE_LAB.md` and schema v15 migration for Code Lab configuration.
+
+### Safety and lifecycle
+- Python/Node workers run without network access, with non-root UID, read-only root filesystem, read-only source mount, dropped capabilities, no-new-privileges, bounded memory/CPU/PIDs/tmpfs, and two-minute default execution limit.
+- Session expiry revokes the per-session URL path, stops/removes workers, and deletes source workspace. The shared Quick Tunnel closes after a two-minute no-session grace period.
+- Graceful shutdown handles SIGINT/SIGTERM/SIGHUP. A detached watchdog performs best-effort container/tunnel/workspace cleanup after an ungraceful bot process exit.
+
+### Validation
+- Syntax check: 89 JavaScript files checked.
+- Offline suite: 71 passed, 2 skipped, 0 failed.
+- Local smoke tests used mock Quick Tunnel and mock container runtime to verify concurrent session quota reservation, preview HTTP response, token rejection, interactive stdin, and gateway shutdown. Docker/Podman and real Cloudflare Quick Tunnel were not available in the build environment; live VPS/WhatsApp validation remains required.
+
+## [1.7.3] - 2026-11-20
+
+### Fixed
+- Excluded `sessions/`, quarantined session backups, `data/`, `logs/`, and other runtime/cache/build directories from repository-wide Chokidar traversal. This prevents one watcher per Baileys auth file and addresses the observed `ENOSPC: System limit for number of file watchers reached` failure.
+- Watcher `ENOSPC` errors now produce one compact actionable diagnostic and close the affected watcher instead of repeatedly emitting error dumps.
+- Incoming user messages are no longer printed in `[OCHA FLOW]`; incoming records remain in memory for reply correlation, and outgoing bot responses/receipt updates remain observable.
+- Added structured log redaction for Signal session key material and suppression of the known raw `Closing session: SessionEntry` libsignal dump.
+- Terminal ANSI colors now honor `NO_COLOR`, `FORCE_COLOR`, TTY detection, and `TERM=dumb` to avoid escape-code leakage in redirected logs.
+
+### Diagnostics
+- The supplied `408 / ECONNRESET` reconnect sequence began about six minutes before the first `ENOSPC` watcher error. The watcher issue is real but is not sufficient to explain the initial WebSocket disconnect. The available logs cannot identify whether the earlier reset came from VPS networking, routing, or the remote WhatsApp edge. No evidence links the `.owner` command itself to the disconnect.
+
+### Validation
+- Added tests for runtime watcher exclusions, incoming-message log suppression, and Signal-key redaction. Offline tests do not reproduce the VPS inotify limit or live WhatsApp network conditions.
 
 ## [1.7.2] - 2026-11-20
 
@@ -291,19 +336,3 @@ All notable changes to Ocha Lidya are recorded here. The newest release is liste
 ### Validation
 - Added regression tests for one-time invalid-session recovery policy and schema v6 migration.
 - Pairing against a live WhatsApp account was not run in the build environment; a printed code still requires phone-side confirmation and an eventual `connection: open` state.
-
-
-## [1.7.3] - 2026-11-20
-
-### Fixed
-- Excluded `sessions/`, quarantined session backups, `data/`, `logs/`, and other runtime/cache/build directories from repository-wide Chokidar traversal. This prevents one watcher per Baileys auth file and addresses the observed `ENOSPC: System limit for number of file watchers reached` failure.
-- Watcher `ENOSPC` errors now produce one compact actionable diagnostic and close the affected watcher instead of repeatedly emitting error dumps.
-- Incoming user messages are no longer printed in `[OCHA FLOW]`; incoming records remain in memory for reply correlation, and outgoing bot responses/receipt updates remain observable.
-- Added structured log redaction for Signal session key material and suppression of the known raw `Closing session: SessionEntry` libsignal dump.
-- Terminal ANSI colors now honor `NO_COLOR`, `FORCE_COLOR`, TTY detection, and `TERM=dumb` to avoid escape-code leakage in redirected logs.
-
-### Diagnostics
-- The supplied `408 / ECONNRESET` reconnect sequence began about six minutes before the first `ENOSPC` watcher error. The watcher issue is real but is not sufficient to explain the initial WebSocket disconnect. The available logs cannot identify whether the earlier reset came from VPS networking, routing, or the remote WhatsApp edge. No evidence links the `.owner` command itself to the disconnect.
-
-### Validation
-- Added tests for runtime watcher exclusions, incoming-message log suppression, and Signal-key redaction. Offline tests do not reproduce the VPS inotify limit or live WhatsApp network conditions.

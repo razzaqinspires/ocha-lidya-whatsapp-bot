@@ -16,15 +16,20 @@ test('config facade replays persistent config.replace events from JSONL', async 
     await first.loadConfig();
     assert.equal(first.getConfig().whatsapp.authMode, 'pairing');
     assert.equal(first.getConfig().whatsapp.browserName, 'Chrome');
-    assert.equal(first.getConfig().schemaVersion, 14);
+    assert.equal(first.getConfig().schemaVersion, 16);
     assert.equal(first.getConfig().whatsapp.recoverInvalidSession, true);
     assert.equal(first.getConfig().logging.level, 'info');
     assert.equal(first.getConfig().logging.color, 'auto');
     assert.equal(first.getConfig().ai.timeoutMs, 3500);
     assert.equal(first.getConfig().ai.totalBudgetMs, 14000);
     assert.equal(first.getConfig().ai.maxOutputTokens, 180);
+    assert.equal(first.getConfig().codeLab.ttlMs, 3600000);
+    assert.equal(first.getConfig().codeLab.maxConcurrent, 2);
+    assert.equal(first.getConfig().codeLab.aiExecutionEnabled, true);
     await first.updateConfig(c => { c.mode = 'self'; c.prefix.single = '!'; c.prefix.mode = 'single'; c.whatsapp.authMode = 'pairing'; c.whatsapp.pairingNumber = '6282177461231'; }, { actor: 'test', reason: 'persistence test' });
     assert.equal(first.getConfig().mode, 'self');
+    await first.updateConfig(c => { c.codeLab.maxConcurrent = 4; }, { actor: 'test', reason: 'Code Lab configuration test' });
+    assert.equal(first.getConfig().codeLab.maxConcurrent, 4);
     const db = await import(pathToFileURL(path.resolve(original, 'src/core/database.js')).href);
     const checkpoint = await db.getLatestConfigRecord();
     assert.equal(checkpoint.payload.config.mode, 'self');
@@ -36,10 +41,13 @@ test('config facade replays persistent config.replace events from JSONL', async 
     assert.equal(second.getConfig().whatsapp.authMode, 'pairing');
     assert.equal(second.getConfig().whatsapp.pairingNumber, '6282177461231');
     assert.equal(second.getConfig().whatsapp.browserName, 'Chrome');
+    assert.equal(second.getConfig().codeLab.maxConcurrent, 4);
     await assert.rejects(
       first.updateConfig(c => { c.whatsapp.browserName = 'Ocha Lidya'; }),
       /whatsapp.browserName harus/
     );
+    await assert.rejects(first.updateConfig(c => { c.codeLab.ttlMs = 3600001; }), /codeLab.ttlMs harus/);
+    await assert.rejects(first.updateConfig(c => { c.codeLab.maxConcurrent = 5; }), /codeLab.maxConcurrent harus 1-4/);
   } finally {
     process.chdir(original);
     await fs.rm(temp, { recursive: true, force: true });
@@ -76,7 +84,7 @@ test('legacy config migrates to canonical browser, session recovery, logger, UI,
     assert.equal(result.status, 0, result.stderr || result.stdout);
     const resultLine = result.stdout.split(/\r?\n/).find(line => line.startsWith('MIGRATION_RESULT:'));
     assert.ok(resultLine, result.stdout);
-    assert.deepEqual(JSON.parse(resultLine.slice('MIGRATION_RESULT:'.length)), { schemaVersion: 14, browserName: 'Chrome' });
+    assert.deepEqual(JSON.parse(resultLine.slice('MIGRATION_RESULT:'.length)), { schemaVersion: 16, browserName: 'Chrome' });
   } finally {
     await fs.rm(temp, { recursive: true, force: true });
   }
@@ -106,7 +114,7 @@ test('schema v9 migration removes Qwen and legacy maxKeyAttempts', async () => {
     const line = result.stdout.split(/\r?\n/).find(value => value.startsWith('V10_RESULT:'));
     assert.ok(line, result.stdout);
     const output = JSON.parse(line.slice('V10_RESULT:'.length));
-    assert.equal(output.schemaVersion, 14);
+    assert.equal(output.schemaVersion, 16);
     assert.deepEqual(output.ai.providerOrder, ['groq']);
     assert.equal(output.ai.models.qwen, undefined);
     assert.equal(output.ai.maxKeyAttempts, 1);
@@ -138,11 +146,40 @@ test('schema v11 applies AI Boost only to shipped defaults and preserves owner c
     const line = result.stdout.split(/\r?\n/).find(value => value.startsWith('BOOST_MIGRATION:'));
     assert.ok(line, result.stdout);
     assert.deepEqual(JSON.parse(line.slice('BOOST_MIGRATION:'.length)), {
-      schemaVersion: 14, timeoutMs: 3500, totalBudgetMs: 14000, maxOutputTokens: 180,
+      schemaVersion: 16, timeoutMs: 3500, totalBudgetMs: 14000, maxOutputTokens: 180,
       historyMessages: 3, coalesceMs: 80, maxKeyAttempts: 1, groqModel: 'owner-custom-model'
     });
   } finally {
     process.chdir(original);
+    await fs.rm(temp, { recursive: true, force: true });
+  }
+});
+
+test('v1.8.0 worker concurrency values migrate to the new low-memory maximum', async () => {
+  const original = process.cwd();
+  const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'ocha-code-lab-v181-migration-'));
+  try {
+    const databaseUrl = pathToFileURL(path.resolve(original, 'src/core/database.js')).href;
+    const configUrl = pathToFileURL(path.resolve(original, 'src/config.js')).href;
+    const source = `
+      const db = await import(${JSON.stringify(databaseUrl)});
+      await db.initializeDatabase();
+      await db.appendRecord('config.replace', { config: {
+        schemaVersion: 15,
+        bot: { owner: '6283193905842', expectedNumber: '6282177461231' },
+        whatsapp: { authMode: 'pairing', pairingNumber: '6282177461231', browserName: 'Chrome' },
+        codeLab: { maxConcurrent: 8 }
+      } });
+      const config = await import(${JSON.stringify(configUrl)});
+      await config.loadConfig();
+      console.log('V181_RESULT:' + JSON.stringify({ schemaVersion: config.getConfig().schemaVersion, maxConcurrent: config.getConfig().codeLab.maxConcurrent }));
+    `;
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', source], { cwd: temp, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const line = result.stdout.split(/\r?\n/).find(value => value.startsWith('V181_RESULT:'));
+    assert.ok(line, result.stdout);
+    assert.deepEqual(JSON.parse(line.slice('V181_RESULT:'.length)), { schemaVersion: 16, maxConcurrent: 4 });
+  } finally {
     await fs.rm(temp, { recursive: true, force: true });
   }
 });

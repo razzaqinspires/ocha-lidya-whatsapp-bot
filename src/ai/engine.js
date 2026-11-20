@@ -4,6 +4,8 @@ import { getConfig } from '../core/config.js';
 import { logger } from '../core/logger.js';
 import { generateWithProvider, getProviderInventory, initializeProviderKeys, getAIMaintenance, setAIMaintenance, providerNames } from './providers.js';
 import { AIReplyChainStore, AI_REPLY_CHAIN_LIMITS } from './reply-chain.js';
+import { handleCodeExecutionIntent } from './code-execution.js';
+import './capabilities/code-runner.js';
 
 const SYSTEM_PROMPT = `Kamu adalah Ocha Lidya, asisten WhatsApp yang tanggap, natural, dan akurat. Identitas model publik adalah Nexora-2.0-Flash. Jangan pernah menyebut nama provider, vendor, model internal, endpoint, atau detail kunci API. Jika ditanya model apa yang digunakan, jawab persis: Saya menggunakan Nexora-2.0-Flash. Jangan mengklaim model tersebut sebagai nama vendor eksternal. Jawab dalam bahasa pengguna. Dahulukan jawaban langsung, hindari pembukaan berulang, dan sesuaikan panjang jawaban dengan pertanyaan. Jangan mengarang fakta, jangan mengklaim melakukan tindakan eksternal yang belum dilakukan, dan gunakan konteks percakapan yang tersedia.`;
 const DEFAULTS = Object.freeze({
@@ -232,6 +234,8 @@ async function answerMessageUnlocked(sock, message) {
   const priorTurns = parentContext.turns.length
     ? parentContext.turns.map(({ role, content }) => ({ role, content }))
     : history;
+  const codeExecution = await handleCodeExecutionIntent({ message, userText, history: priorTurns });
+  if (codeExecution.handled) return { provider: 'nexora-capability', capability: 'code_execution', result: codeExecution };
   const quotedContext = message.quoted?.text
     ? `\n\nKutipan yang sedang ditanggapi pengguna:\n${String(message.quoted.text).slice(0, 2500)}` : '';
   const messages = [

@@ -12,6 +12,7 @@ export default {
       `${prefix}owner · kontak owner`,
       `${prefix}about · informasi bot`,
       `${prefix}runtime · informasi runtime`,
+      `${prefix}run python/node/html · jalankan kode & buat preview web sementara`,
       `${prefix}groupinfo · metadata grup tersimpan`,
       '',
       '*OWNER / DEVELOPER*',
@@ -27,6 +28,8 @@ export default {
       `${prefix}buttons on/off · mode tombol`,
       `${prefix}master status · status console runner`,
       `${prefix}mute on/off/status · mute interaksi grup (owner)`,
+      `${prefix}nexora status · panel kontrol Nexora global (owner)`,
+      `${prefix}nexora all on/off · aktif/nonaktifkan semua fitur Nexora (owner)`,
       '',
       '*MASTER CONSOLE · OWNER ONLY*',
       '> JavaScript eval',
@@ -42,7 +45,8 @@ export default {
         { title: 'Owner', description: 'Kontak owner bot', id: `${prefix}owner` },
         { title: 'About', description: 'Informasi bot', id: `${prefix}about` },
         { title: 'Group info', description: 'Metadata grup tersimpan', id: `${prefix}groupinfo` },
-        { title: 'Runtime', description: 'Status runtime', id: `${prefix}runtime` }
+        { title: 'Runtime', description: 'Status runtime', id: `${prefix}runtime` },
+        { title: 'Run code', description: 'Jalankan kode pada worker terisolasi', id: `${prefix}run` }
       ]},
       { title: 'Owner & developer', rows: [
         { title: 'AI status', description: 'Provider dan fallback AI', id: `${prefix}aistatus` },
@@ -50,7 +54,8 @@ export default {
         { title: 'Plugins', description: 'Daftar plugin', id: `${prefix}plugins` },
         { title: 'Master status', description: 'Status runner developer', id: `${prefix}master status` },
         { title: 'Button mode', description: 'Status tombol interaktif', id: `${prefix}buttons status` },
-        { title: 'Group mute', description: 'Mute/unmute seluruh interaksi grup (owner)', id: `${prefix}mute status` }
+        { title: 'Group mute', description: 'Mute/unmute seluruh interaksi grup (owner)', id: `${prefix}mute status` },
+        { title: 'Nexora capabilities', description: 'Kelola Code Lab dan worker AI (owner)', id: `${prefix}nexora status` }
       ]}
     ];
     return sendCommandList(sock, m, { title: config.bot.name, body, sections });

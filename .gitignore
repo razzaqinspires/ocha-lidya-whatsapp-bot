@@ -42,3 +42,6 @@ logs/*
 Thumbs.db
 .vscode/
 .idea/
+
+# Temporary local Code Lab smoke-test workspaces
+instances/

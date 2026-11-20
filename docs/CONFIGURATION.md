@@ -96,3 +96,8 @@ See [`CONTACTS_AND_GROUP_CACHE.md`](CONTACTS_AND_GROUP_CACHE.md) for the dedicat
 ## AI key management (v1.6.0)
 
 Provider keys managed by `.apikey add` are stored separately at `data/secrets/provider-keys.json`, not in the JSONL configuration. The vault directory/file are created with owner-only permissions where supported. This is not encryption; protect host access and backups. `.apikey list` and `.apikey get` expose only masked key values and fingerprints.
+
+
+## Nexora Code Lab (schema v16)
+
+The `codeLab` object manages isolated execution and temporary TryCloudflare previews. Its settings are global owner policy and apply to every bot user. Use `.nexora all on/off` for the bundled master switch, or `.nexora code on/off`, `.nexora auto-run on/off`, `.nexora tunnel on/off`, `.nexora workers 1-4`, and `.nexora runtime docker/podman` for individual controls. `workers` is the simultaneous program limit; total preview sessions are configured separately. See [`CODE_LAB.md`](CODE_LAB.md) for container hardening, persistent Quick Tunnel lifecycle, setup, and operational limits.
