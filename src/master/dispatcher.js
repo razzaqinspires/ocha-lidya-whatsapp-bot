@@ -161,23 +161,25 @@ const pendingWarnings = new Map();
 const WARNING_TTL_MS = 120_000;
 const MAX_PENDING_WARNINGS = 100;
 
-function formatAssessment(runtime, heuristic, assessment, code) {
+function formatAssessment(runtime, heuristic, assessment, code, { localFallback = false } = {}) {
   const impacts = assessment?.impacts?.length ? assessment.impacts.map((item, index) => `${index + 1}. ${item}`).join('\n') : heuristic.reasons.join('\n');
   return [
     '╭─ OCHA WORKLOAD WARNING ─────────────────',
     `│ Runtime   : ${runtime}`,
     `│ Risk      : ${(assessment?.severity || heuristic.level).toUpperCase()}`,
-    `│ AI review : ${assessment ? `${assessment.provider} · ${assessment.latencyMs} ms` : 'Tidak tersedia'}`,
+    `│ AI review : ${localFallback ? 'Tidak tersedia · pemeriksaan lokal' : assessment ? `${assessment.provider} · ${assessment.latencyMs} ms` : 'Tidak tersedia'}`, 
     '├─ PENILAIAN OCHA', assessment?.summary || 'Pola berisiko terdeteksi oleh WorkloadTracker.',
     '├─ POTENSI DAMPAK', impacts || 'Periksa kode dan target sebelum melanjutkan.',
     '├─ SARAN LEBIH AMAN', assessment?.saferAlternative || 'Periksa target, lakukan backup, dan uji pada salinan data.',
-    '├─ KONFIRMASI OWNER', `Balas pesan ini dengan: CONFIRM ${code}`,
-    'Atau balas: CANCEL', 'Konfirmasi berlaku 120 detik dan hanya untuk perintah ini.',
+    '├─ KONFIRMASI OWNER', `Balas pesan peringatan ini dengan: CONFIRM ${code}`,
+    'Atau balas: CANCEL', 'Konfirmasi berlaku 120 detik, satu kali, hanya untuk pengirim dan kode ini.',
+    'PERINGATAN: JavaScript eval berjalan di proses bot dan dapat menggunakan kapabilitas runtime yang tersedia. Jangan konfirmasi kode yang tidak kamu pahami.',
     '╰────────────────────────────────────────'
   ].join('\n');
 }
 
 async function requestRiskConfirmation(sock, m, body, token, command, heuristic) {
+  if (m.isGroup) return m.reply('Konfirmasi eksekusi berisiko hanya tersedia di chat pribadi owner. Tidak ada kode yang dijalankan.');
   if (heuristic.hardBlock) {
     return m.reply(['╭─ OCHA SECURITY BLOCK ─────────────────', 'Perintah ditolak sebelum dieksekusi.', ...heuristic.reasons,
       'Perintah yang dapat merusak host/OS secara luas tidak dapat dibuka melalui konfirmasi chat.',
@@ -187,8 +189,46 @@ async function requestRiskConfirmation(sock, m, body, token, command, heuristic)
   try {
     assessment = await assessWorkloadWithOcha(token === '$' ? 'CLI SHELL' : token === '>>' ? 'PYTHON' : token === '>>>' ? 'GO' : 'JAVASCRIPT EVAL', command);
   } catch (error) {
-    logger.warn({ err: error, runtime: token }, 'Ocha Workload AI assessment unavailable; execution denied');
-    return m.reply(`OCHA WORKLOAD GUARD\nPenilaian AI tidak tersedia (${error.message}). Perintah tidak dijalankan. Coba lagi setelah provider AI aktif.`);
+    // Single-provider policy: never switch vendors. When Groq is exhausted,
+    // use deterministic local heuristics and require an explicit owner reply.
+    // This is NOT an automatic approval and never overrides hard blocks.
+    logger.warn({ err: error, runtime: token, localRisk: heuristic.level, hardBlock: heuristic.hardBlock }, 'Ocha Workload AI assessment unavailable; using local review with mandatory owner confirmation');
+    assessment = {
+      severity: heuristic.level === 'low' ? 'medium' : heuristic.level,
+      recommendation: 'REVIEW',
+      summary: 'Penilaian AI tidak tersedia karena provider utama sedang gagal atau limit habis. Ocha menggunakan pemeriksaan pola lokal; hasil ini bukan audit semantik lengkap.',
+      impacts: heuristic.reasons.length ? heuristic.reasons : ['Kode akan dijalankan dengan kapabilitas runtime yang diaktifkan untuk Master Console.'],
+      saferAlternative: 'Periksa kode dan target secara manual. Batalkan jika ada akses proses, filesystem, jaringan, konfigurasi, kredensial, atau pengiriman pesan yang tidak diperlukan.',
+      provider: 'LOCAL HEURISTIC', latencyMs: 0
+    };
+    const code = createConfirmationCode();
+    const sent = await m.reply(formatAssessment(token, heuristic, assessment, code, { localFallback: true }));
+    const messageId = sent?.key?.id;
+    if (!messageId) return m.reply('Konfirmasi tidak dapat didaftarkan karena ID pesan WhatsApp tidak tersedia. Perintah tidak dijalankan.');
+    const key = `${m.chat}:${messageId}`;
+    const commandHash = crypto.createHash('sha256').update(`${token}\0${command}`).digest('hex');
+    pendingWarnings.set(key, { createdAt: Date.now(), code, runtime: token, commandHash, sender: m.sender });
+    while (pendingWarnings.size > MAX_PENDING_WARNINGS) pendingWarnings.delete(pendingWarnings.keys().next().value);
+    registerReplySession({
+      chat: m.chat, messageId, sender: m.sender, kind: 'master-risk-confirmation',
+      choices: [
+        { key: `CONFIRM ${code}`, label: 'Konfirmasi dan jalankan', value: 'confirm' },
+        { key: 'CANCEL', label: 'Batalkan', value: 'cancel' }
+      ],
+      ttlMs: WARNING_TTL_MS,
+      helpText: `Balas pesan peringatan ini dengan CONFIRM ${code}, atau CANCEL.`,
+      onSelect: async ({ value }) => {
+        const pending = pendingWarnings.get(key);
+        pendingWarnings.delete(key);
+        if (!pending || Date.now() - pending.createdAt > WARNING_TTL_MS) return m.reply('Konfirmasi kedaluwarsa. Tidak ada kode yang dijalankan.');
+        if (pending.sender !== m.sender || pending.commandHash !== commandHash || pending.code !== code) return m.reply('Validasi konfirmasi tidak cocok. Tidak ada kode yang dijalankan.');
+        if (value === 'cancel') return m.reply('Perintah dibatalkan. Tidak ada kode yang dijalankan.');
+        logger.warn({ runtime: token, sender: m.sender, commandHash, risk: assessment.severity, assessment: 'LOCAL_HEURISTIC' }, 'Owner explicitly confirmed execution while AI provider unavailable');
+        return executeMasterCommand(sock, m, body);
+      },
+      metadata: { runtime: token, risk: assessment.severity, commandHash, assessment: 'LOCAL_HEURISTIC' }
+    });
+    return;
   }
   if (shouldAutoApproveAssessment(assessment, heuristic)) {
     logger.info({ runtime: token, command: command.slice(0, 160), sender: m.sender, risk: assessment.severity, provider: assessment.provider, latencyMs: assessment.latencyMs }, 'Ocha WorkloadTracker approved command without confirmation');

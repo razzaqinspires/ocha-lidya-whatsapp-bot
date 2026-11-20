@@ -28,3 +28,9 @@ JavaScript eval (`>` / `=>`) receives live `sock`, `m` / `message`, `config`, `l
 WorkloadTracker classifies all runner source. Low-risk code runs immediately. Suspicious code is reviewed by Ocha using a short, separate AI request. If Ocha explicitly returns `ALLOW` with low/medium severity, the command proceeds automatically. Otherwise Ocha returns an impact summary, risk level, and safer alternative; the owner must reply to the quoted warning with the exact one-time `CONFIRM CODE` or `CANCEL`. Confirmation expires after 120 seconds. If the assessment provider is unavailable, execution is denied. Critical host-wide operations such as root filesystem deletion, disk formatting/wiping, fork bombs, and host shutdown are blocked statically and cannot be overridden in chat. Scoped destructive operations such as `rm -rf ./*/` are escalated for AI review and explicit confirmation.
 
 The AI review is advisory and can be wrong. Confirmation is an accident-prevention step, not a sandbox or guarantee of safety.
+
+## Konfirmasi owner ketika provider AI tidak tersedia
+
+Workload yang terdeteksi mencurigakan selalu membutuhkan konfirmasi eksplisit, termasuk ketika AI assessor memberi rekomendasi ALLOW. Jika provider utama Groq gagal atau limit habis, Ocha tidak berpindah provider. Ocha menggunakan pemeriksaan heuristik lokal sebagai informasi sementara dan tetap meminta owner membalas pesan peringatan dengan `CONFIRM <kode>` atau `CANCEL` dalam 120 detik. Konfirmasi terikat pada chat, pengirim, pesan peringatan, runtime, hash kode, dan hanya dapat dipakai sekali. Jalur ini tidak membuka hard-block untuk perintah destruktif tingkat OS/disk. Konfirmasi eksekusi berisiko hanya tersedia di chat pribadi.
+
+Penting: pemeriksaan lokal bukan pengganti analisis AI penuh. JavaScript eval berjalan dalam proses bot dengan kapabilitas runtime yang tersedia; konfirmasi hanya mengizinkan eksekusi kode yang dipahami owner, bukan menjadikannya sandbox aman.

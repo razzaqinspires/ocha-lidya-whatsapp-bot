@@ -10,6 +10,13 @@ test('WorkloadTracker lets ordinary owner eval through without AI review', () =>
   const result = inspectWorkload('>', 'console.log(sock.user.id); await m.reply("hello");');
   assert.equal(result.level, 'low'); assert.equal(result.suspicious, false); assert.equal(result.hardBlock, false);
 });
+test('WorkloadTracker requires explicit owner confirmation for every suspicious workload', () => {
+  const result = inspectWorkload('=>', 'process.memoryUsage(); await sock.relayMessage(m.chat, payload, {});');
+  assert.equal(result.hardBlock, false);
+  assert.equal(result.suspicious, true);
+  assert.equal(result.requiresConfirmation, true);
+});
+
 test('WorkloadTracker escalates scoped recursive deletion for AI and confirmation', () => {
   const result = inspectWorkload('$', 'rm -rf ./*/');
   assert.equal(result.suspicious, true); assert.equal(result.hardBlock, false); assert.equal(result.requiresConfirmation, true); assert.ok(['medium', 'high'].includes(result.level));

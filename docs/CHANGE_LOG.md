@@ -460,3 +460,11 @@ All notable changes to Ocha Lidya are recorded here. The newest release is liste
 
 ### Validation
 - Added regression tests for provider error wrapping, round-robin key rotation, owner identity without provider availability, varied greetings, profile progression, duplicate-message XP protection, daily cap, and profile-card escaping.
+
+## v1.10.7 — Owner confirmation during provider outage
+- Keep single-provider Groq routing; never fall back to another AI vendor.
+- If the workload assessor is unavailable, use local deterministic heuristics and require an explicit owner reply confirmation instead of silently denying all non-hard-blocked work.
+- Every suspicious workload now requires confirmation even if an AI assessment recommends ALLOW.
+- Confirmation is private-chat only, sender-bound, quoted-message-bound, one-time, expires after 120 seconds, and records a SHA-256 command hash.
+- Hard-block rules for destructive OS/disk commands remain non-overridable.
+- Flag direct process introspection, dynamic require, and WhatsApp socket send/relay calls for confirmation.

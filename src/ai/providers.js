@@ -255,7 +255,7 @@ export async function generateWithProvider(name, messages, options = {}) {
       const pm = providerMetrics.get(name) || { successes: 0, failures: 0, averageLatencyMs: null };
       pm.failures++; pm.lastLatencyMs = Date.now() - started; pm.lastStatus = classified.status; providerMetrics.set(name, pm);
       await recordEvent('failure', { status: classified.status, httpStatus: error.status || null, reason: classified.reason, retryAt: new Date(classified.retryAt).toISOString() });
-      logger.warn({ provider: name, fingerprint: stat.fingerprint, status: classified.status, httpStatus: error.status, reason: classified.reason }, 'Provider key failed; trying next key');
+      logger.warn({ provider: name, fingerprint: stat.fingerprint, status: classified.status, httpStatus: error.status, reason: classified.reason }, 'API key failed; rotating to another key for the same provider only');
       // A bad model/request is not evidence that the key is invalid; avoid burning all keys on identical malformed payloads.
       if (classified.status === 'request_or_model_error') break;
     }
