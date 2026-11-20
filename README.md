@@ -68,7 +68,7 @@ The syntax checker scans every JavaScript file under `src/`, `test/`, and `scrip
 
 ## 3. Logging
 
-The application logger uses compact, colorized terminal output with WIB timestamps and readable context fields. Its level and color mode are managed in `src/config.js` under `logging` (`level: 'info'`, `color: 'auto'`, `timeZone: 'Asia/Jakarta'`). Baileys receives a separate Pino-compatible no-op logger at `silent`, as requested; protocol traces and Baileys internal stack dumps are suppressed while Ocha Lidya lifecycle, pairing, session recovery, and application errors remain visible.
+The application logger uses compact, colorized terminal output with WIB timestamps and readable context fields. Its level and color mode are managed in `src/config.js` under `logging` (`level: 'info'`, `color: 'auto'`, `timeZone: 'Asia/Jakarta'`). Baileys receives a separate Pino-compatible no-op logger at `silent`. Structured logs redact Signal/session key fields, and the known raw libsignal `SessionEntry` console dump is suppressed. Incoming user messages are correlated in memory but are not printed; Ocha command/AI responses and delivery states remain traceable. Runtime auth/data/log directories are excluded from recursive filesystem watchers to prevent Linux inotify exhaustion.
 
 ## 4. Environment variables
 
@@ -422,9 +422,9 @@ A new command is not complete until it is listed in the README and the menu. A n
 
 ## 15. Automatic Git monitoring and push
 
-The application starts a repository-wide file watcher as part of `npm start`. It observes additions, edits, and deletions across the project, including JavaScript, JSON, Markdown, YAML, and other normal source/documentation files. Filesystem events are debounced so a file is not committed while an editor or generator is still writing it.
+The application starts a repository-wide file watcher as part of `npm start`. It observes additions, edits, and deletions across normal source, documentation, test, and package files. Runtime/private trees (`sessions/`, `data/`, `logs/`, dependencies, caches, and build artifacts) are excluded before recursive traversal. Filesystem events are debounced so a file is not committed while an editor or generator is still writing it.
 
-Before staging, the watcher reads the root `.gitignore` and asks Git `check-ignore` whether each changed path is excluded. Git itself is the authoritative matcher, so negation patterns and Git ignore semantics are respected. Paths excluded by `.gitignore`, `.git`, and `node_modules` are never staged. A second guard inspects the staged index and blocks a commit if an excluded file is already staged. New, modified, renamed, and deleted paths that pass the check are staged individually with `git add -A -- <path>`.
+Before staging, the watcher reads the root `.gitignore` and asks Git `check-ignore` whether each changed path is excluded. Git itself is the authoritative matcher, so negation patterns and Git ignore semantics are respected. Paths excluded by `.gitignore`, `.git`, `node_modules`, and the runtime/private-directory policy are never watched or staged. A second guard inspects the staged index and blocks a commit if an excluded file is already staged. New, modified, renamed, and deleted paths that pass the check are staged individually with `git add -A -- <path>`.
 
 After the quiet window, the service creates a local commit and pushes `HEAD` to `origin/main`. The commit message starts with `pasang waktu Otomatis, waktu, tanggal, jam, dan hari yang kompleks.` and includes the weekday, date, time, and `WIB` timestamp for `Asia/Jakarta`. The service never force-pushes. It fetches `origin/main`, rebases only when the remote is a direct ancestor of the local history, and stops if histories have diverged or conflicts occur.
 
@@ -450,7 +450,7 @@ See [`docs/AUTO_GIT_SYNC.md`](docs/AUTO_GIT_SYNC.md) for behavior, failure handl
 
 ## 16. Source hot reload
 
-The source loader watches JavaScript files throughout `src/`, not just command plugins. Adding, editing, or deleting a file under `src/plugins/` updates the plugin registry without restarting WhatsApp. Changes to core, library, master, or other non-plugin JavaScript modules trigger a controlled process restart because Node.js ESM modules and their dependency graphs cannot safely be replaced in place after import. JSON and other non-JavaScript files are not imported by the source loader, but they are monitored by the repository-wide Git watcher for auto-commit and push.
+The source loader watches JavaScript files throughout `src/`, not just command plugins. Adding, editing, or deleting a file under `src/plugins/` updates the plugin registry without restarting WhatsApp. Changes to core, library, master, or other non-plugin JavaScript modules trigger a controlled process restart because Node.js ESM modules and their dependency graphs cannot safely be replaced in place after import. JSON and other non-JavaScript source/documentation files are not imported by the source loader, but eligible files are monitored by the repository-wide Git watcher for auto-commit and push. Runtime directories such as `sessions/`, `data/`, and `logs/` are excluded.
 
 See [`docs/HOT_RELOAD.md`](docs/HOT_RELOAD.md).
 
@@ -545,3 +545,13 @@ Master runners are independent in schema v11. `$` is controlled directly by `.ma
 All group interaction is muted by default through `features.groupsMuted: true`. `.mute on/off/status` is owner-only and private-chat-only. While muted, group commands and group AI are not dispatched, but incoming event processing still indexes verified contacts and maintains group metadata. Private-chat commands and AI are unaffected. See [`docs/GROUP_MUTE_AND_MESSAGE_FLOW.md`](docs/GROUP_MUTE_AND_MESSAGE_FLOW.md).
 
 The message-flow monitor labels private/group destinations and consumes Baileys `messages.update` and `message-receipt.update` events. Its local terminal legend is `✓ SENT`, `✓✓ DELIVERED`, `✓✓ READ`, `✓✓ PLAYED`, and a separately colored `BOT REPLIED` marker. It does not modify WhatsApp's own tick UI or create a third WhatsApp checkmark. The monitor stores only bounded metadata, not message bodies.
+
+
+### Master Console: full eval context and workload guard (v1.7.2)
+
+JavaScript eval (`>` and `=>`) now receives live `sock`, serialized `m`/`message`, `config`, `logger`, `db`, `fs`, `path`, `os`, `crypto`, `childProcess`, `process`, `Buffer`, `require`, and `importModule` references. These are real host capabilities, not mocks. This is intentionally owner-only and is not a security sandbox: eval can affect the running bot and host account.
+
+All master runtimes (`$`, `>`, `=>`, `>>`, `>>>`) pass through WorkloadTracker. Low-risk commands continue immediately. Suspicious operations are sent to Ocha's small workload-assessment request, then Ocha may auto-approve only an explicit `ALLOW` with low/medium severity. Otherwise the owner receives a quoted warning with impact, safer alternative, and a one-time `CONFIRM CODE` / `CANCEL` reply session (120-second expiry). If AI assessment is unavailable, the command fails closed. Static critical host-wide patterns (for example deleting the filesystem root, disk formatting/wiping, fork bombs, and host shutdown) are blocked without a chat override. Scoped destructive actions such as `rm -rf ./*/` require AI review and explicit owner confirmation.
+
+The AI review is an advisory impact estimate, not a proof of safety. The confirmation mechanism reduces accidental execution but does not make arbitrary code safe. Run master commands only on a controlled host and keep backups.
+

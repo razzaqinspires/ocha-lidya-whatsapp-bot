@@ -76,7 +76,7 @@ test('schema v11 defaults all group interaction to muted and removes the global 
     const line = result.stdout.split(/\r?\n/).find(value => value.startsWith('MIGRATED:'));
     assert.ok(line, result.stdout);
     const migrated = JSON.parse(line.slice('MIGRATED:'.length));
-    assert.deepEqual(migrated, { schemaVersion: 12, groupsMuted: true, masterCliEnabled: true });
+    assert.deepEqual(migrated, { schemaVersion: 14, groupsMuted: true, masterCliEnabled: true });
     assert.equal(migrated.masterExecEnabled, undefined);
   });
 });
@@ -93,7 +93,13 @@ test('message monitor aggregates private/group reply and receipt states', async 
     const monitorUrl = pathToFileURL(path.resolve(process.cwd(), 'src/core/message-monitor.js')).href;
     const monitor = await import(`${monitorUrl}?test=${Date.now()}`);
     const dmKey = { remoteJid: '6281111111111@s.whatsapp.net', id: 'incoming-dm-0001', fromMe: false };
-    monitor.observeIncomingMessage({ key: dmKey, sender: '6281111111111@s.whatsapp.net', pushName: 'Tester', chat: dmKey.remoteJid });
+    const originalWrite = process.stdout.write;
+    let inboundLog = '';
+    process.stdout.write = function (chunk, ...args) { inboundLog += String(chunk); return true; };
+    try {
+      monitor.observeIncomingMessage({ key: dmKey, sender: '6281111111111@s.whatsapp.net', pushName: 'Tester', chat: dmKey.remoteJid });
+    } finally { process.stdout.write = originalWrite; }
+    assert.equal(inboundLog, '', 'incoming user messages must not be printed to terminal');
     const sentDm = { remoteJid: dmKey.remoteJid, id: 'outgoing-dm-0001', fromMe: true };
     monitor.observeOutgoingMessage(sentDm, dmKey);
     monitor.observeMessageUpdates([{ key: sentDm, update: { status: 2 } }]);

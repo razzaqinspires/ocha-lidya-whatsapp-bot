@@ -3,6 +3,11 @@ import vm from 'node:vm';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import crypto from 'node:crypto';
+import { createRequire } from 'node:module';
+import * as database from '../core/database.js';
+import { registerReplySession } from '../core/reply-sessions.js';
+import { inspectWorkload, assessWorkloadWithOcha, shouldAutoApproveAssessment, createConfirmationCode } from './workload-tracker.js';
 import { getConfig } from '../core/config.js';
 import { logger } from '../core/logger.js';
 
@@ -84,7 +89,7 @@ async function sendResult(m, token, command, result) {
   await m.reply(renderResult(token, command, result));
 }
 
-async function runJs(m, source, returnMode) {
+async function runJs(sock, m, source, returnMode) {
   if (!getConfig().security.masterEvalEnabled) {
     return m.reply('JavaScript eval sedang OFF. Aktifkan dengan .master eval on.');
   }
@@ -95,7 +100,15 @@ async function runJs(m, source, returnMode) {
     try { return JSON.stringify(value); } catch { return String(value); }
   }).join(' '));
   const safeConsole = { log: writeLog, info: writeLog, warn: writeLog, error: writeLog, debug: writeLog };
-  const context = vm.createContext({ console: safeConsole, Buffer, setTimeout, clearTimeout, setInterval, clearInterval });
+  const config = getConfig();
+  const fs = await import('node:fs/promises');
+  const path = await import('node:path');
+  const os = await import('node:os');
+  const crypto = await import('node:crypto');
+  const childProcess = await import('node:child_process');
+  const require = createRequire(import.meta.url);
+  const ctx = { sock, m, message: m, config, logger, db: database, fs, path, os, crypto, childProcess, process, Buffer, require, importModule: specifier => import(specifier) };
+  const context = vm.createContext({ ...ctx, ctx, console: safeConsole, Buffer, process, require, setTimeout, clearTimeout, setInterval, clearInterval, queueMicrotask, fetch, URL, URLSearchParams, AbortController, TextEncoder, TextDecoder, structuredClone });
   const body = returnMode && !/\breturn\b/.test(source) ? `return (${source});` : source;
   const wrapped = `(async()=>{ ${body} })()`;
   try {
@@ -117,7 +130,7 @@ async function runJs(m, source, returnMode) {
   }
 }
 
-export async function runMasterCommand(sock, m, body) {
+async function executeMasterCommand(sock, m, body) {
   const token = TOKENS.find(value => body.startsWith(value));
   if (!token) return;
   const command = body.slice(token.length).trim();
@@ -129,7 +142,7 @@ export async function runMasterCommand(sock, m, body) {
     return m.reply(`${name} runner sedang OFF. Aktifkan langsung dengan ${help}.`);
   }
 
-  if (token === '>' || token === '=>') return runJs(m, command, token === '=>');
+  if (token === '>' || token === '=>') return runJs(sock, m, command, token === '=>');
   logger.info({ runtime: runnerKey, command: command.slice(0, 160), chatType: m.isGroup ? 'GROUP' : 'PRIVATE' }, 'Master command started');
   try {
     let result;
@@ -141,4 +154,83 @@ export async function runMasterCommand(sock, m, body) {
     logger.warn({ err: error, token }, 'Master command failed');
     await m.reply(`╭─ OCHA MASTER ERROR ─────────────────\n${error.name}: ${error.message}\n╰──────────────────────────────────────`);
   }
+}
+
+
+const pendingWarnings = new Map();
+const WARNING_TTL_MS = 120_000;
+const MAX_PENDING_WARNINGS = 100;
+
+function formatAssessment(runtime, heuristic, assessment, code) {
+  const impacts = assessment?.impacts?.length ? assessment.impacts.map((item, index) => `${index + 1}. ${item}`).join('\n') : heuristic.reasons.join('\n');
+  return [
+    '╭─ OCHA WORKLOAD WARNING ─────────────────',
+    `│ Runtime   : ${runtime}`,
+    `│ Risk      : ${(assessment?.severity || heuristic.level).toUpperCase()}`,
+    `│ AI review : ${assessment ? `${assessment.provider} · ${assessment.latencyMs} ms` : 'Tidak tersedia'}`,
+    '├─ PENILAIAN OCHA', assessment?.summary || 'Pola berisiko terdeteksi oleh WorkloadTracker.',
+    '├─ POTENSI DAMPAK', impacts || 'Periksa kode dan target sebelum melanjutkan.',
+    '├─ SARAN LEBIH AMAN', assessment?.saferAlternative || 'Periksa target, lakukan backup, dan uji pada salinan data.',
+    '├─ KONFIRMASI OWNER', `Balas pesan ini dengan: CONFIRM ${code}`,
+    'Atau balas: CANCEL', 'Konfirmasi berlaku 120 detik dan hanya untuk perintah ini.',
+    '╰────────────────────────────────────────'
+  ].join('\n');
+}
+
+async function requestRiskConfirmation(sock, m, body, token, command, heuristic) {
+  if (heuristic.hardBlock) {
+    return m.reply(['╭─ OCHA SECURITY BLOCK ─────────────────', 'Perintah ditolak sebelum dieksekusi.', ...heuristic.reasons,
+      'Perintah yang dapat merusak host/OS secara luas tidak dapat dibuka melalui konfirmasi chat.',
+      '╰──────────────────────────────────────'].join('\n'));
+  }
+  let assessment;
+  try {
+    assessment = await assessWorkloadWithOcha(token === '$' ? 'CLI SHELL' : token === '>>' ? 'PYTHON' : token === '>>>' ? 'GO' : 'JAVASCRIPT EVAL', command);
+  } catch (error) {
+    logger.warn({ err: error, runtime: token }, 'Ocha Workload AI assessment unavailable; execution denied');
+    return m.reply(`OCHA WORKLOAD GUARD\nPenilaian AI tidak tersedia (${error.message}). Perintah tidak dijalankan. Coba lagi setelah provider AI aktif.`);
+  }
+  if (shouldAutoApproveAssessment(assessment, heuristic)) {
+    logger.info({ runtime: token, command: command.slice(0, 160), sender: m.sender, risk: assessment.severity, provider: assessment.provider, latencyMs: assessment.latencyMs }, 'Ocha WorkloadTracker approved command without confirmation');
+    return executeMasterCommand(sock, m, body);
+  }
+  const code = createConfirmationCode();
+  const sent = await m.reply(formatAssessment(token, heuristic, assessment, code));
+  const messageId = sent?.key?.id;
+  if (!messageId) return m.reply('Gagal mendaftarkan konfirmasi karena WhatsApp tidak mengembalikan ID pesan. Perintah tidak dijalankan.');
+  const key = `${m.chat}:${messageId}`;
+  pendingWarnings.set(key, { createdAt: Date.now(), code, runtime: token });
+  while (pendingWarnings.size > MAX_PENDING_WARNINGS) pendingWarnings.delete(pendingWarnings.keys().next().value);
+  registerReplySession({
+    chat: m.chat, messageId, sender: m.sender, kind: 'master-risk-confirmation',
+    choices: [
+      { key: `CONFIRM ${code}`, label: 'Konfirmasi dan jalankan', value: 'confirm' },
+      { key: 'CANCEL', label: 'Batalkan', value: 'cancel' }
+    ],
+    ttlMs: WARNING_TTL_MS,
+    helpText: `Balas dengan CONFIRM ${code} untuk menjalankan, atau CANCEL untuk membatalkan.`,
+    onSelect: async ({ value }) => {
+      const pending = pendingWarnings.get(key);
+      pendingWarnings.delete(key);
+      if (!pending || Date.now() - pending.createdAt > WARNING_TTL_MS) return m.reply('Konfirmasi sudah kedaluwarsa. Jalankan ulang perintah jika masih diperlukan.');
+      if (value === 'cancel') return m.reply('Perintah dibatalkan. Tidak ada kode yang dijalankan.');
+      logger.warn({ runtime: token, command: command.slice(0, 200), sender: m.sender, risk: assessment.severity }, 'Owner explicitly confirmed risky master command');
+      return executeMasterCommand(sock, m, body);
+    },
+    metadata: { runtime: token, risk: assessment.severity, commandHash: crypto.createHash('sha256').update(command).digest('hex') }
+  });
+}
+
+export async function runMasterCommand(sock, m, body, options = {}) {
+  const token = TOKENS.find(value => body.startsWith(value));
+  if (!token) return;
+  const command = body.slice(token.length).trim();
+  if (!options.confirmed) {
+    const heuristic = inspectWorkload(token, command);
+    if (heuristic.hardBlock || heuristic.suspicious) {
+      logger.warn({ runtime: token, level: heuristic.level, hardBlock: heuristic.hardBlock, reasons: heuristic.reasons, sender: m.sender }, 'Master workload flagged for safety review');
+      return requestRiskConfirmation(sock, m, body, token, command, heuristic);
+    }
+  }
+  return executeMasterCommand(sock, m, body);
 }

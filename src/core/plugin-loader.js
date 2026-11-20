@@ -3,6 +3,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import chokidar from 'chokidar';
 import { logger } from './logger.js';
+import { isRuntimeWatchIgnored } from './watch-policy.js';
 
 const registry = new Map();
 const SOURCE_ROOT = path.resolve('src');
@@ -88,11 +89,12 @@ export function watchSourceFiles({ onRestartRequired = () => {} } = {}) {
     awaitWriteFinish: { stabilityThreshold: 300, pollInterval: 100 },
     ignored: candidate => {
       const relative = path.relative(SOURCE_ROOT, candidate);
-      return relative.split(path.sep).some(part => part === 'node_modules' || part === '.git');
+      return isRuntimeWatchIgnored(relative);
     }
   });
 
   const pendingRestarts = new Map();
+  let watcherFailureHandled = false;
   watcher.on('all', (event, absolutePath) => {
     if (!absolutePath.endsWith('.js')) return;
     const file = path.resolve(absolutePath);
@@ -112,7 +114,18 @@ export function watchSourceFiles({ onRestartRequired = () => {} } = {}) {
     pendingRestarts.set(file, timer);
   });
 
-  watcher.on('error', error => logger.error({ err: error }, 'Source watcher error'));
+  watcher.on('error', error => {
+    if (watcherFailureHandled) return;
+    watcherFailureHandled = true;
+    for (const timer of pendingRestarts.values()) clearTimeout(timer);
+    pendingRestarts.clear();
+    if (error?.code === 'ENOSPC') {
+      logger.error({ code: error.code, syscall: error.syscall, path: error.path }, 'Source watcher kehabisan kuota; hot reload watcher dihentikan untuk melindungi runtime.');
+      void watcher.close().catch(() => {});
+      return;
+    }
+    logger.error({ code: error?.code, message: error?.message }, 'Source watcher gagal');
+  });
   watcher.on('ready', () => logger.info({ root: SOURCE_ROOT }, 'Hot reload seluruh source JavaScript aktif'));
   return watcher;
 }

@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.7.2] - 2026-11-20
+
+### Added
+- JavaScript eval receives live `sock`, `m` / `message`, config, logger, database API, filesystem/path/OS/crypto/process APIs, child_process, require, and dynamic import helper.
+- WorkloadTracker classifies CLI, JavaScript eval, Python, and Go source before execution.
+- Ocha AI impact assessment is invoked only for suspicious workloads to limit token usage.
+- Quoted owner confirmation flow: exact one-time `CONFIRM CODE` or `CANCEL`, expires after 120 seconds.
+- Static hard-blocks for critical host-wide destructive operations; AI assessment failure denies execution.
+- Schema v13 migration; runner enablement remains unchanged.
+
+### Safety notes
+- Owner-only eval exposes real host capabilities and is not a security sandbox.
+- AI review is advisory, not a safety proof. Scoped destructive actions require explicit confirmation; root/disk/host-wide critical patterns are blocked.
+
+# Changelog
+
 ## [1.7.1] - 2026-11-19
 
 ### Changed
@@ -275,3 +291,19 @@ All notable changes to Ocha Lidya are recorded here. The newest release is liste
 ### Validation
 - Added regression tests for one-time invalid-session recovery policy and schema v6 migration.
 - Pairing against a live WhatsApp account was not run in the build environment; a printed code still requires phone-side confirmation and an eventual `connection: open` state.
+
+
+## [1.7.3] - 2026-11-20
+
+### Fixed
+- Excluded `sessions/`, quarantined session backups, `data/`, `logs/`, and other runtime/cache/build directories from repository-wide Chokidar traversal. This prevents one watcher per Baileys auth file and addresses the observed `ENOSPC: System limit for number of file watchers reached` failure.
+- Watcher `ENOSPC` errors now produce one compact actionable diagnostic and close the affected watcher instead of repeatedly emitting error dumps.
+- Incoming user messages are no longer printed in `[OCHA FLOW]`; incoming records remain in memory for reply correlation, and outgoing bot responses/receipt updates remain observable.
+- Added structured log redaction for Signal session key material and suppression of the known raw `Closing session: SessionEntry` libsignal dump.
+- Terminal ANSI colors now honor `NO_COLOR`, `FORCE_COLOR`, TTY detection, and `TERM=dumb` to avoid escape-code leakage in redirected logs.
+
+### Diagnostics
+- The supplied `408 / ECONNRESET` reconnect sequence began about six minutes before the first `ENOSPC` watcher error. The watcher issue is real but is not sufficient to explain the initial WebSocket disconnect. The available logs cannot identify whether the earlier reset came from VPS networking, routing, or the remote WhatsApp edge. No evidence links the `.owner` command itself to the disconnect.
+
+### Validation
+- Added tests for runtime watcher exclusions, incoming-message log suppression, and Signal-key redaction. Offline tests do not reproduce the VPS inotify limit or live WhatsApp network conditions.

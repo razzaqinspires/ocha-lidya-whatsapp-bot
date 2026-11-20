@@ -16,7 +16,7 @@ test('config facade replays persistent config.replace events from JSONL', async 
     await first.loadConfig();
     assert.equal(first.getConfig().whatsapp.authMode, 'pairing');
     assert.equal(first.getConfig().whatsapp.browserName, 'Chrome');
-    assert.equal(first.getConfig().schemaVersion, 12);
+    assert.equal(first.getConfig().schemaVersion, 14);
     assert.equal(first.getConfig().whatsapp.recoverInvalidSession, true);
     assert.equal(first.getConfig().logging.level, 'info');
     assert.equal(first.getConfig().logging.color, 'auto');
@@ -76,7 +76,7 @@ test('legacy config migrates to canonical browser, session recovery, logger, UI,
     assert.equal(result.status, 0, result.stderr || result.stdout);
     const resultLine = result.stdout.split(/\r?\n/).find(line => line.startsWith('MIGRATION_RESULT:'));
     assert.ok(resultLine, result.stdout);
-    assert.deepEqual(JSON.parse(resultLine.slice('MIGRATION_RESULT:'.length)), { schemaVersion: 12, browserName: 'Chrome' });
+    assert.deepEqual(JSON.parse(resultLine.slice('MIGRATION_RESULT:'.length)), { schemaVersion: 14, browserName: 'Chrome' });
   } finally {
     await fs.rm(temp, { recursive: true, force: true });
   }
@@ -106,7 +106,7 @@ test('schema v9 migration removes Qwen and legacy maxKeyAttempts', async () => {
     const line = result.stdout.split(/\r?\n/).find(value => value.startsWith('V10_RESULT:'));
     assert.ok(line, result.stdout);
     const output = JSON.parse(line.slice('V10_RESULT:'.length));
-    assert.equal(output.schemaVersion, 12);
+    assert.equal(output.schemaVersion, 14);
     assert.deepEqual(output.ai.providerOrder, ['groq']);
     assert.equal(output.ai.models.qwen, undefined);
     assert.equal(output.ai.maxKeyAttempts, 1);
@@ -138,7 +138,7 @@ test('schema v11 applies AI Boost only to shipped defaults and preserves owner c
     const line = result.stdout.split(/\r?\n/).find(value => value.startsWith('BOOST_MIGRATION:'));
     assert.ok(line, result.stdout);
     assert.deepEqual(JSON.parse(line.slice('BOOST_MIGRATION:'.length)), {
-      schemaVersion: 12, timeoutMs: 3500, totalBudgetMs: 14000, maxOutputTokens: 180,
+      schemaVersion: 14, timeoutMs: 3500, totalBudgetMs: 14000, maxOutputTokens: 180,
       historyMessages: 3, coalesceMs: 80, maxKeyAttempts: 1, groqModel: 'owner-custom-model'
     });
   } finally {

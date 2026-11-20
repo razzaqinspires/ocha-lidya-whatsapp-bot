@@ -7,12 +7,13 @@ import chokidar from 'chokidar';
 import dotenv from 'dotenv';
 import { logger } from './logger.js';
 import { createAutomaticCommitMessage, parseGitIgnore, parsePorcelainZ } from './git-utils.js';
+import { isRuntimeWatchIgnored } from './watch-policy.js';
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const REPOSITORY = 'razzaqinspires/ocha-lidya-whatsapp-bot';
 const BRANCH = 'main';
 const QUIET_WINDOW_MS = 1800;
-const HARD_IGNORES = new Set(['.git', 'node_modules']);
+
 
 function run(command, args, options = {}) {
   return new Promise((resolve, reject) => {
@@ -42,8 +43,7 @@ function normalizeGitHubRemote(remote) {
 }
 
 function isHardIgnored(relativePath) {
-  const parts = relativePath.split(path.sep).filter(Boolean);
-  return parts.some(part => HARD_IGNORES.has(part));
+  return isRuntimeWatchIgnored(relativePath);
 }
 
 async function isIgnoredByGit(relativePath) {
@@ -219,6 +219,7 @@ export async function startAutoGitSync({ root = PROJECT_ROOT } = {}) {
     }
   };
 
+  let watcherFailureHandled = false;
   const watcher = chokidar.watch(PROJECT_ROOT, {
     ignoreInitial: true,
     persistent: true,
@@ -265,7 +266,16 @@ export async function startAutoGitSync({ root = PROJECT_ROOT } = {}) {
     logger.info({ root: PROJECT_ROOT, repository: REPOSITORY, branch: BRANCH }, 'Pemantauan seluruh file proyek aktif');
     schedule('startup reconciliation');
   });
-  watcher.on('error', error => logger.error({ err: error }, 'Filesystem watcher error'));
+  watcher.on('error', error => {
+    if (watcherFailureHandled) return;
+    watcherFailureHandled = true;
+    if (error?.code === 'ENOSPC') {
+      logger.error({ code: error.code, syscall: error.syscall, path: error.path }, 'Filesystem watcher kehabisan kuota; Auto Git Sync watcher dihentikan agar tidak membebani runtime. Kecualikan direktori sesi/runtime dan naikkan fs.inotify.max_user_watches bila memang diperlukan.');
+      void watcher.close().catch(() => {});
+      return;
+    }
+    logger.error({ code: error?.code, message: error?.message }, 'Filesystem watcher gagal');
+  });
 
   return {
     watcher,

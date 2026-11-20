@@ -6,7 +6,7 @@
 import { initializeDatabase, appendRecord, getRecords, getLatestConfigRecord, configureDatabase } from './core/database.js';
 
 const DEFAULTS = Object.freeze({
-  schemaVersion: 12,
+  schemaVersion: 14,
   bot: { name: 'Ocha Lidya', aliases: ['Ocha', 'Lidya'], owner: '6283193905842', expectedNumber: '6282177461231' },
   whatsapp: { authMode: 'pairing', pairingNumber: '6282177461231', browserName: 'Chrome', sessionDir: 'sessions/ocha-lidya', recoverInvalidSession: true, connectTimeoutMs: 60000, queryTimeoutMs: 60000, keepAliveIntervalMs: 25000 },
   logging: { level: 'info', color: 'auto', timeZone: 'Asia/Jakarta' },
@@ -185,6 +185,18 @@ export async function loadConfig() {
     for (const [key, oldValue] of Object.entries(shipped)) if (ai[key] === oldValue) ai[key] = boosted[key];
     ai.maxKeyAttempts = 1;
     await appendRecord('config.replace', { config: activeConfig, changedBy: 'system:migration', reason: 'v1.7.1 low-latency AI boost profile' });
+  }
+  // v1.7.2 schema v13: add owner master workload guard without enabling runners.
+  if (activeConfig.schemaVersion < 13) {
+    activeConfig.schemaVersion = 13;
+    await appendRecord('config.replace', { config: activeConfig, changedBy: 'system:migration', reason: 'v1.7.2 owner master workload guard and eval runtime context' });
+  }
+  // v1.7.3 schema v14: redact Signal session dumps and keep runtime directories
+  // outside filesystem watchers. Logging color remains auto unless overridden.
+  if (activeConfig.schemaVersion < 14) {
+    activeConfig.schemaVersion = 14;
+    activeConfig.logging = { ...DEFAULTS.logging, ...(activeConfig.logging || {}) };
+    await appendRecord('config.replace', { config: activeConfig, changedBy: 'system:migration', reason: 'v1.7.3 secure terminal logging and runtime watcher exclusions' });
   }
   activeConfig.security = { ...DEFAULTS.security, ...(activeConfig.security || {}) };
   delete activeConfig.security.masterExecEnabled;

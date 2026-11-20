@@ -2,7 +2,7 @@
 
 ## Scope
 
-`src/core/auto-git-sync.js` watches the project root while the application is running. It observes file additions, changes, and removals across source, documentation, package metadata, tests, and scripts. The watcher excludes `.git/` and all `node_modules/` directories at filesystem-watcher level. Other exclusions are evaluated against the active Git ignore rules.
+`src/core/auto-git-sync.js` watches the project root while the application is running. It observes file additions, changes, and removals across source, documentation, package metadata, tests, and scripts. The watcher excludes `.git/`, all `node_modules/`, `sessions/` and quarantined session backups, `data/`, `logs/`, and cache/build/temp/artifact directories at filesystem-watcher level, before Chokidar descends into those trees. `.env` is observed only to refresh the Git token and is never staged; `.env.*` secrets are excluded. Other exclusions are evaluated against the active Git ignore rules.
 
 ## Ignore policy
 
@@ -53,3 +53,7 @@ When the project is already cloned from the target repository, `git:setup` verif
 ## Runtime requirement
 
 Automatic monitoring runs only while the Node.js process is alive. The bot starts it automatically only after validating that the project root is a Git repository on the expected branch with the expected `origin` remote. ZIP extractions without `.git/` now disable Auto Git Sync with one warning instead of repeatedly logging `fatal: not a git repository`. Initialize/clone the repository with `npm run git:setup` or clone the intended GitHub repository, then restart the bot. `npm run git:watch` is available to run the watcher without the WhatsApp bot for troubleshooting. The watcher is not an OS-level daemon and does not run when the device is off or the application process is stopped.
+
+## Linux inotify capacity
+
+Do not raise `fs.inotify.max_user_watches` as the first fix for `ENOSPC`. The primary fix is to avoid watching Baileys auth state: `sessions/` contains one file per Signal pre-key/session and can grow over time. The watcher policy excludes it before traversal. If `ENOSPC` still occurs after upgrading, inspect other processes' watcher usage and only then consider raising the host's inotify limit. On watcher exhaustion, Ocha logs one compact error and closes the failed watcher instead of producing an error storm.

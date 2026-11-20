@@ -14,7 +14,11 @@ const ANSI = {
   reset: '\u001b[0m', dim: '\u001b[2m', cyan: '\u001b[36m', blue: '\u001b[94m',
   green: '\u001b[32m', magenta: '\u001b[35m', yellow: '\u001b[33m', red: '\u001b[31m'
 };
-const canColor = () => colorMode === 'always' || (colorMode === 'auto' && Boolean(process.stdout.isTTY) && !process.env.NO_COLOR);
+const canColor = () => {
+  if (process.env.NO_COLOR !== undefined) return false;
+  if (process.env.FORCE_COLOR && process.env.FORCE_COLOR !== '0') return true;
+  return colorMode === 'always' || (colorMode === 'auto' && Boolean(process.stdout.isTTY) && process.env.TERM !== 'dumb');
+};
 const paint = (value, color) => canColor() ? `${color}${value}${ANSI.reset}` : String(value);
 const token = key => key?.id && key?.remoteJid ? `${key.remoteJid}\u001f${key.id}` : '';
 const now = () => Date.now();
@@ -90,7 +94,8 @@ export function observeIncomingMessage(message) {
     updatedAt: now()
   };
   incoming.set(messageKey, record);
-  output('info', `INBOUND ${String(message.pushName || 'contact').slice(0, 32)}`, message.key, message.key.id, 'MESSAGE', ANSI.cyan);
+  // Incoming user text/name is intentionally never printed. Keep only the
+  // in-memory correlation record so bot replies and receipts remain traceable.
   return record;
 }
 

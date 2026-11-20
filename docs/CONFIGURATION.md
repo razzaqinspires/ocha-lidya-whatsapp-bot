@@ -51,7 +51,7 @@ await updateConfig(c => {
 
 ## Logging (v1.5.0)
 
-Terminal logging is controlled by `src/config.js`:
+Terminal logging is controlled by `src/config.js`. `auto` emits ANSI colors only for an interactive TTY, `NO_COLOR` disables them, `FORCE_COLOR=1` enables them for compatible terminals, and `TERM=dumb` disables them:
 
 ```js
 logging: {
@@ -61,7 +61,7 @@ logging: {
 }
 ```
 
-The main application logger formats timestamps, severity, component scope, and structured details in a compact terminal layout. Baileys is intentionally configured with its own Pino logger at `silent`; application connection lifecycle and recovery decisions remain visible through the main logger.
+The main application logger formats timestamps, severity, component scope, and structured details in a compact terminal layout. Baileys is intentionally configured with its own Pino logger at `silent`; Signal private/session key fields are redacted and the known raw libsignal `SessionEntry` dump is suppressed. Incoming user messages are not printed; command/AI bot actions and delivery states remain traceable.
 
 ## Invalid registered-session recovery (v1.5.0)
 
