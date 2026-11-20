@@ -1,6 +1,8 @@
 import { updateConfig, getConfig } from '../../core/config.js';
 import { getAICapabilityStatus } from '../../ai/capability-manager.js';
+import { getWebsiteBuildQueueStatus } from '../../ai/website-project.js';
 import { getCodeLabStatus, startCodeLab, stopCodeLab, rescheduleCodeWorkers } from '../../runtime/code-lab.js';
+import { runNexoraBootstrap } from '../../runtime/bootstrap-agent.js';
 
 const onOff = value => ['on', 'off'].includes(String(value || '').toLowerCase());
 
@@ -8,12 +10,15 @@ function statusText() {
   const config = getConfig();
   const lab = getCodeLabStatus();
   const capabilities = getAICapabilityStatus();
+  const builderQueue = getWebsiteBuildQueueStatus();
   return [
     '*NEXORA · GLOBAL CAPABILITY CONTROL*',
     `AI chat engine: ${config.ai.enabled ? 'ON' : 'OFF'}`,
     `Code Lab: ${config.codeLab.enabled ? 'ON' : 'OFF'}`,
     `AI auto-run: ${config.codeLab.aiExecutionEnabled ? 'ON' : 'OFF'}`,
     `Public preview tunnel: ${config.codeLab.publicTunnelEnabled ? 'ON' : 'OFF'}`,
+    `Website Builder: ${config.codeLab.websiteBuilderEnabled ? 'ON' : 'OFF'}`,
+    `Website Builder jobs: ${builderQueue.active}/${config.codeLab.websiteBuilderConcurrency} active · ${builderQueue.queued}/${config.codeLab.websiteBuilderQueueLimit} queued`,
     `Gateway: ${lab.gateway}`,
     `TryCloudflare: ${lab.tunnel}`,
     `cloudflared: ${lab.cloudflaredVersion || 'not verified'}`,
@@ -21,7 +26,7 @@ function statusText() {
     ...(lab.runtimeError ? [`Runtime detail: ${lab.runtimeError.slice(0, 240)}`] : []),
     ...(lab.tunnelError ? [`Tunnel detail: ${lab.tunnelError.slice(0, 240)}`] : []),
     `Workers: ${lab.activeWorkers}/${lab.maxConcurrent} running · ${lab.queued} queued`,
-    `Live sessions: ${lab.activeSessions}/${lab.maxSessionsTotal}`,
+    `Live sessions: ${lab.activeSessions}/${lab.maxSessionsTotal} (websites ${lab.activeWebsiteSessions || 0})`,
     `Session reservations: ${lab.pendingReservations}`,
     `Sessions per user: ${config.codeLab.maxSessionsPerUser}`,
     `Session TTL: ${Math.round(lab.ttlMs / 60000)} minutes`,
@@ -33,7 +38,9 @@ function statusText() {
     '*OWNER COMMANDS*',
     '.nexora all on/off · activate/deactivate all Nexora features',
     '.nexora code on/off · execution service',
-    '.nexora auto-run on/off · natural-language execution',
+    '.nexora auto-run on/off · natural-language execution and website auto-preview',
+    '.nexora builder on/off · multi-file static website generator',
+    '.nexora builder-workers 1-4 · simultaneous website generations',
     '.nexora tunnel on/off · one shared public tunnel',
     '.nexora workers 1-4 · simultaneous running jobs',
     '.nexora runtime docker/podman',
@@ -57,15 +64,17 @@ export default {
         config.codeLab.enabled = enabled;
         config.codeLab.aiExecutionEnabled = enabled;
         config.codeLab.publicTunnelEnabled = enabled;
+        config.codeLab.websiteBuilderEnabled = enabled;
       }, { actor: m.sender, reason: `Nexora all capabilities ${value}` });
       if (enabled) {
         try {
+          await runNexoraBootstrap(getConfig().codeLab);
           const status = await startCodeLab();
           if (status.tunnel === 'error' || status.tunnel === 'connecting/offline') {
             return m.reply(`Semua fitur Nexora diset ON, tetapi preview publik belum siap. Periksa cloudflared melalui .nexora status. ${status.tunnelError || ''}`.trim());
           }
           if (!status.runtimeReady) {
-            return m.reply(`Semua fitur Nexora dan tunnel publik sudah ON. Namun Python/Node belum dapat dijalankan karena container runtime belum siap. HTML preview tetap tersedia. Detail: ${status.runtimeError || 'periksa Docker/Podman dan image runtime'}`);
+            return m.reply(`Semua fitur Nexora dan tunnel publik sudah ON. Namun Python/Node belum dapat dijalankan karena container runtime belum siap. HTML dan Website Builder statis tetap dapat digunakan. Detail: ${status.runtimeError || 'periksa Docker/Podman dan image runtime'}`);
           }
         } catch (error) {
           return m.reply(`Pengaturan semua fitur Nexora sudah ON, tetapi Code Lab gagal diinisialisasi: ${error.message}`);
@@ -76,13 +85,23 @@ export default {
       return m.reply(`Semua fitur Nexora global: ${enabled ? 'ON' : 'OFF'}. Kebijakan ini berlaku untuk seluruh pengguna Ocha Lidya.`);
     }
 
-    if (['code', 'auto-run', 'tunnel'].includes(command)) {
-      if (!onOff(value)) return m.reply('Gunakan: .nexora code on/off | auto-run on/off | tunnel on/off');
+    if (command === 'builder-workers') {
+      const workers = Number(value);
+      if (!Number.isInteger(workers) || workers < 1 || workers > 4) return m.reply('Website Builder workers harus 1 sampai 4. Ini membatasi generasi website bersamaan, bukan Code Lab execution workers.');
+      await updateConfig(config => { config.codeLab.websiteBuilderConcurrency = workers; }, { actor: m.sender, reason: `Nexora website builder concurrency ${workers}` });
+      return m.reply(`Batas generasi website global diatur ke ${workers}. Permintaan berikutnya mengikuti antrean FIFO yang dibatasi.`);
+    }
+
+    if (['code', 'auto-run', 'tunnel', 'builder'].includes(command)) {
+      if (!onOff(value)) return m.reply('Gunakan: .nexora code on/off | auto-run on/off | tunnel on/off | builder on/off');
       const enabled = String(value).toLowerCase() === 'on';
-      if (command === 'code') {
+      if (command === 'builder') {
+        await updateConfig(config => { config.codeLab.websiteBuilderEnabled = enabled; }, { actor: m.sender, reason: `Nexora website builder ${value}` });
+      } else if (command === 'code') {
         await updateConfig(config => { config.codeLab.enabled = enabled; }, { actor: m.sender, reason: `Nexora Code Lab ${value}` });
         if (enabled) {
           try {
+            await runNexoraBootstrap(getConfig().codeLab);
             const status = await startCodeLab();
             if (!status.runtimeReady) return m.reply(`Code Lab aktif, tetapi eksekusi Python/Node belum siap. Periksa Docker/Podman dan image runtime melalui .nexora status. ${status.runtimeError || ''}`.trim());
           } catch (error) { return m.reply(`Code Lab tersimpan ON, tetapi startup gagal: ${error.message}`); }
@@ -92,7 +111,7 @@ export default {
       } else {
         await updateConfig(config => { config.codeLab.publicTunnelEnabled = enabled; }, { actor: m.sender, reason: `Nexora persistent tunnel ${value}` });
         if (enabled && getConfig().codeLab.enabled) {
-          try { await startCodeLab(); }
+          try { await runNexoraBootstrap(getConfig().codeLab); await startCodeLab(); }
           catch (error) { return m.reply(`Tunnel diset ON, tetapi gagal dimulai: ${error.message}`); }
         } else if (!enabled) {
           // A public URL cannot remain available without the tunnel. Revoke sessions,
@@ -111,7 +130,7 @@ export default {
       await stopCodeLab();
       await updateConfig(config => { config.codeLab.containerRuntime = runtime; }, { actor: m.sender, reason: `Nexora container runtime ${runtime}` });
       if (getConfig().codeLab.enabled) {
-        try { await startCodeLab(); }
+        try { await runNexoraBootstrap(getConfig().codeLab); await startCodeLab(); }
         catch (error) { return m.reply(`Runtime disimpan sebagai ${runtime}, tetapi Code Lab belum siap: ${error.message}`); }
       }
       return m.reply(`Container runtime diubah menjadi ${runtime}.`);

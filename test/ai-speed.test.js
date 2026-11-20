@@ -61,9 +61,11 @@ test('AI batches rapid adjacent messages and answers once through the fast provi
     assert.equal(exhausted, null);
     assert.equal(ownerReports, 1, 'owner receives one private maintenance report');
 
-    const silentIdentity = { ...makeMessage('Kamu menggunakan model apa?'), reply: async () => { throw new Error('maintenance must not answer any user message'); } };
-    const stillSilent = await engine.answerMessage(maintenanceSock, silentIdentity);
-    assert.equal(stillSilent, null);
+    let identityReply = '';
+    const localIdentity = { ...makeMessage('Kamu menggunakan model apa?'), id: 'identity-maintenance', key: { id: 'identity-maintenance' }, reply: async text => { identityReply = text; return { key: { id: 'identity-reply' } }; } };
+    const localResult = await engine.answerMessage(maintenanceSock, localIdentity);
+    assert.match(identityReply, /Nexora-2.0-Flash/);
+    assert.equal(localResult.provider, 'local-policy', 'public identity remains available during provider maintenance');
     assert.equal(ownerReports, 1, 'maintenance does not spam duplicate owner reports');
   } finally {
     globalThis.fetch = previousFetch;

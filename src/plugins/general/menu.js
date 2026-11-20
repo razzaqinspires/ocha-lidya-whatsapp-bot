@@ -10,7 +10,8 @@ export default {
       `${prefix}menu · daftar perintah`,
       `${prefix}ping · latency`,
       `${prefix}owner · kontak owner`,
-      `${prefix}about · informasi bot`,
+      `${prefix}about · informasi bot dan pembuat`,
+      `${prefix}profile · XP, level, role, dan rank`,
       `${prefix}runtime · informasi runtime`,
       `${prefix}run python/node/html · jalankan kode & buat preview web sementara`,
       `${prefix}groupinfo · metadata grup tersimpan`,
@@ -43,7 +44,8 @@ export default {
       { title: 'General', rows: [
         { title: 'Ping', description: 'Ukur respons bot', id: `${prefix}ping` },
         { title: 'Owner', description: 'Kontak owner bot', id: `${prefix}owner` },
-        { title: 'About', description: 'Informasi bot', id: `${prefix}about` },
+        { title: 'About', description: 'Informasi bot dan pembuat', id: `${prefix}about` },
+        { title: 'My profile', description: 'XP, level, role, dan rank', id: `${prefix}profile` },
         { title: 'Group info', description: 'Metadata grup tersimpan', id: `${prefix}groupinfo` },
         { title: 'Runtime', description: 'Status runtime', id: `${prefix}runtime` },
         { title: 'Run code', description: 'Jalankan kode pada worker terisolasi', id: `${prefix}run` }

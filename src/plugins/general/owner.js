@@ -5,8 +5,8 @@ export default {
     if (!number) return m.reply('Nomor owner belum dikonfigurasi.');
     return m.sendContact({
       number,
-      displayName: 'Owner Ocha Lidya',
-      organization: 'Razzaq Ventures'
+      displayName: config.bot.ownerName || config.bot.creatorName || 'Owner Ocha Lidya',
+      organization: config.bot.organization || 'Razzaq Ventures'
     });
   }
 };

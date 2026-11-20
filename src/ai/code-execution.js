@@ -1,25 +1,39 @@
-import { extractCodeBlock, isCodeExecutionIntent } from '../runtime/code-lab.js';
+import { extractCodeBlockCandidate, isCodeExecutionIntent } from '../runtime/code-lab.js';
 import { invokeAICapability } from './capability-manager.js';
 
 function findPreviousAssistantCode(turns) {
   for (let index = turns.length - 1; index >= 0; index -= 1) {
     const turn = turns[index];
     if (turn.role !== 'assistant') continue;
-    const block = extractCodeBlock(turn.content);
+    const block = extractCodeBlockCandidate(turn.content);
     if (block) return block;
   }
   return null;
 }
 
-export async function handleCodeExecutionIntent({ message, userText, history }) {
+export async function handleCodeExecutionIntent({ message, userText, history, completeCode }) {
   if (!isCodeExecutionIntent(userText)) return { handled: false };
-  const block = extractCodeBlock(userText) || findPreviousAssistantCode(history);
+  // The quoted WhatsApp message is authoritative. A user may reply directly to
+  // an AI code answer even when its persisted reply-chain anchor is unavailable.
+  const quotedText = String(message.quoted?.text || '');
+  let block = extractCodeBlockCandidate(quotedText)
+    || extractCodeBlockCandidate(userText)
+    || findPreviousAssistantCode(history);
   if (!block) {
-    await message.reply('Saya belum menemukan blok kode yang dapat dijalankan pada percakapan ini. Kirim kode dalam blok ```python```, ```javascript```, atau ```html```, lalu minta Ocha menjalankannya.');
+    await message.reply('Saya membaca pesan reply kamu, tetapi tidak menemukan blok kode di dalamnya. Balas pesan yang berisi kode lengkap atau kirim blok kodenya langsung.');
     return { handled: true, reason: 'code-not-found' };
   }
 
   try {
+    if (!block.complete) {
+      if (typeof completeCode !== 'function') {
+        await message.reply('Kode dalam pesan yang kamu reply terpotong. Saya belum akan menjalankannya karena belum lengkap. Minta Ocha melengkapi kode terlebih dahulu.');
+        return { handled: true, reason: 'quoted-code-incomplete' };
+      }
+      const completed = await completeCode({ language: block.language, source: block.source, quotedText });
+      block = extractCodeBlockCandidate(completed);
+      if (!block?.complete) throw new Error('AI belum berhasil melengkapi blok kode secara utuh. Silakan minta ulang pembuatan kode.');
+    }
     const session = await invokeAICapability('code_execution', {
       language: block.language,
       source: block.source
@@ -35,7 +49,7 @@ export async function handleCodeExecutionIntent({ message, userText, history }) 
       session.previewUrl,
       '',
       `URL publik kedaluwarsa: ${expires} WIB (maksimal 1 jam).`,
-      'Program berjalan terisolasi. Input interaktif dapat dikirim dari halaman preview.'
+      'Kode diambil dari pesan reply atau riwayat AI dan dijalankan dalam worker terisolasi.'
     ].join('\n');
     await message.reply(response);
     return { handled: true, session };

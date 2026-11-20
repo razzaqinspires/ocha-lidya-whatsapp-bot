@@ -20,19 +20,27 @@ import { initializeGroupMetadata } from './core/group-metadata.js';
 import { resolveMessageSenderPn } from './core/jid-resolution.js';
 import { ensureGroupMetadata, hydrateParticipatingGroupsOnce, handleGroupsUpsert, handleGroupsUpdate, handleGroupParticipantsUpdate } from './core/group-runtime.js';
 import { resumePendingAI, initializeAIHistoryCache } from './ai/engine.js';
+import { initializeUserProfiles } from './ai/user-profiles.js';
 import { initializeProviderKeys } from './ai/providers.js';
 import { getReconnectDelay, isValidInternationalNumber, normalizePhoneNumber, shouldRequestPairingCode, shouldStopReconnect, shouldRecoverInvalidSession } from './core/connection-policy.js';
 import { startCodeLab, stopCodeLab } from './runtime/code-lab.js';
+import { runNexoraBootstrap } from './runtime/bootstrap-agent.js';
 
 setOutgoingMessageObserver(observeOutgoingMessage);
 
 await initializeDatabase();
 await loadConfig();
+try {
+  await runNexoraBootstrap(getConfig().codeLab);
+} catch (error) {
+  logger.warn({ message: error.message }, 'Nexora dependency bootstrap incomplete; bot will continue and Code Lab will report unavailable capabilities');
+}
 await initializeContacts();
 await initializeGroupMetadata();
 await initializeProviderKeys();
 try {
   await initializeAIHistoryCache();
+  await initializeUserProfiles();
 } catch (error) {
   logger.warn({ err: error }, 'AI history cache warm-up deferred');
 }

@@ -1,6 +1,6 @@
 # Nexora Code Lab
 
-Code Lab is the isolated code-execution capability used by Ocha Lidya/Nexora. A user can ask the AI to run the most recent code block from the conversation, or use `.run` directly. Each execution gets a unique session ID and unguessable URL path. A single temporary TryCloudflare Quick Tunnel is shared by the gateway; per-session tokens keep previews separate without starting a new tunnel process for every request.
+Code Lab is the isolated code-execution capability used by Ocha Lidya/Nexora. A user can ask the AI to run the most recent code block from the conversation, or use `.run` directly. When the user replies to an AI message, Code Lab reads the quoted message text first; it does not require the AI reply-chain anchor to exist. If the quoted fenced block is incomplete, Nexora asks the AI provider to complete it before execution, and refuses to execute if the repaired block is still incomplete. Each execution gets a unique session ID and unguessable URL path. A single temporary TryCloudflare Quick Tunnel is shared by the gateway; per-session tokens keep previews separate without starting a new tunnel process for every request.
 
 ## Supported runtimes
 
@@ -110,3 +110,23 @@ codeLab: {
 ```
 
 `ttlMs` is capped at 3,600,000 ms. The worker runtime limit is independent of preview TTL: a process is terminated after two minutes by default, while its captured output and preview page remain available until the one-hour session expiry.
+
+## Website Builder projects (v1.9.0)
+
+Nexora Website Builder publishes multi-file static frontend projects through the same shared gateway. Each website session has its own tokenized URL, but does not spawn its own tunnel, terminal, or container. Project files are stored in bounded memory and removed when the session expires. See `docs/NEXORA_WEBSITE_BUILDER.md` for format limits, CSP, iframe isolation, owner controls, and backend limitations.
+
+
+
+## Automatic host dependency manager (v1.9.2)
+
+When `npm start` is invoked, npm first runs `prestart` (`scripts/bootstrap/npm-deps.js`). It checks the required Node dependencies and runs `npm install --no-audit --no-fund` when a dependency is missing or `npm ls --depth=0` reports an invalid dependency tree. After the main process loads the persistent configuration, `src/index.js` runs `scripts/bootstrap/ensure-host.sh` through the Nexora dependency manager before Code Lab starts. The host check is idempotent: it checks the selected Docker/Podman runtime, the Python and Node runtime images, and `cloudflared`; it installs only missing packages, starts an existing Docker service, and pulls only images that are not already present. Both checks run synchronously during startup and exit; they do not create a per-user background process, extra terminal, or additional Cloudflare tunnel. Code Lab itself continues to own exactly one shared `cloudflared` process.
+
+On Debian/Ubuntu, the manager uses the distribution Docker Engine package when the daemon is missing and Cloudflare's signed APT repository for `cloudflared`. On RPM-based systems it uses the available `dnf`/`yum` package manager and the official Cloudflare RPM release. Podman is installed from the distribution package manager. Other distributions are detected but may require manual provisioning.
+
+If root privileges are needed, the manager uses the current root session or requests `sudo` once when an interactive terminal is available. It does not silently change Docker socket permissions, add the bot user to the `docker` group, or run untrusted install scripts. If privilege escalation is unavailable, the bot continues to start and reports that Code Lab dependencies remain unavailable; normal WhatsApp/AI chat is not blocked. Docker group membership is effectively root access, so it is deliberately not granted automatically.
+
+The default images are `python:3.12-alpine` and `node:22-alpine`. The manager checks each with `docker image inspect` (or Podman equivalent) and pulls only missing images. `NEXORA_BOOTSTRAP_DRY_RUN=1` can be used to inspect the intended actions without installing packages or changing the host.
+
+## Docker daemon troubleshooting
+
+The Docker CLI being installed does not mean the Docker Engine daemon is running. If `.nexora status` reports a missing `/var/run/docker.sock` or cannot connect to the Docker API, start the daemon on a systemd VPS with `sudo systemctl enable --now docker`, then confirm `docker info` succeeds. Only after the daemon is healthy should the runtime images be pulled. If the `docker.service` unit does not exist, install Docker Engine (the server/daemon package), not only the Docker CLI. Do not expose the Docker socket to untrusted containers.

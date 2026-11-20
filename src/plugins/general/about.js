@@ -1,6 +1,17 @@
 export default {
-  name:'about', aliases:['botinfo'], category:'general', description:'Bot identity and build information',
-  async execute({m,config}) {
-    await m.reply(`*${config.bot.name}*\nPersonal WhatsApp Assistant\nEngine: Baileys 7.x · Node.js ESM\nArchitecture: Plugin Runtime + Hot Reload\nPrefix mode: ${config.prefix.mode}\nBot mode: ${config.mode}`);
+  name: 'about', aliases: ['botinfo'], category: 'general', description: 'Bot identity and build information',
+  async execute({ m, config }) {
+    const creator = config.bot.publicCreatorDisclosure !== false
+      ? `Creator & Owner: ${config.bot.creatorName || config.bot.ownerName}\nOrganization: ${config.bot.organization || 'Razzaq Ventures'}`
+      : 'Creator information: not publicly disclosed';
+    return m.reply([
+      `*${config.bot.name}*`,
+      'Personal WhatsApp Assistant',
+      creator,
+      'Engine: Baileys 7.x · Node.js ESM',
+      'Architecture: Plugin Runtime + Hot Reload + Nexora AI',
+      `Prefix mode: ${config.prefix.mode}`,
+      `Bot mode: ${config.mode}`
+    ].join('\n'));
   }
 };

@@ -2,9 +2,9 @@
 
 Ocha Lidya is a modular WhatsApp automation framework built with native Node.js ESM and `@whiskeysockets/baileys`. The project separates WhatsApp transport, message serialization, command dispatch, plugin execution, persistent configuration, and durable JSONL storage.
 
-## AI response performance (v1.7.1)
+## AI response performance (v1.10.0)
 
-The default AI profile is Boost after the schema v12 migration. It uses an 80 ms message-coalescing window, 3 history turns, a 180-token output budget, one eligible API key attempt per provider, a 3.5-second per-provider timeout, and a 14-second total fallback deadline. Use `.aiset speed boost`, `.aiset speed fast`, or `.aiset speed balanced` to switch profiles. Provider telemetry, job checkpoints, and conversation journal writes are queued asynchronously so they do not block the response-critical path; hot conversation history and quoted-reply anchors are updated immediately. See `docs/AI_ENGINE.md` for trade-offs and operational details.
+The default AI profile is Boost after the schema v12 migration. It uses an 80 ms message-coalescing window, 3 history turns, a 180-token output budget, up to 3 eligible API key attempts per provider with fair round-robin rotation, a 3.5-second per-provider timeout, and a 14-second total fallback deadline. Use `.aiset speed boost`, `.aiset speed fast`, or `.aiset speed balanced` to switch profiles. Provider telemetry, job checkpoints, and conversation journal writes are queued asynchronously so they do not block the response-critical path; hot conversation history and quoted-reply anchors are updated immediately. See `docs/AI_ENGINE.md` for trade-offs and operational details.
 
 ## 1. Project identity
 
@@ -37,6 +37,8 @@ npm test
 npm start
 ```
 
+`npm start` first checks and installs missing declared Node dependencies. On Linux, after loading the saved configuration, startup also runs the Nexora dependency manager to check Docker/Podman, required runtime images, and `cloudflared`; missing supported host packages are installed automatically when the process has the required privileges. Node.js and npm themselves must already be installed. See `docs/CODE_LAB.md` for supported operating systems, privilege behavior, and dry-run mode.
+
 `npm run git:setup` menyiapkan repository lokal/branch `main` dan memastikan remote `origin` mengarah ke repository resmi. Bila folder ini merupakan hasil `git clone`, perintah tersebut hanya memverifikasi konfigurasi yang sudah ada.
 
 By default, the bot uses phone-number pairing code. The shipped `src/config.js` already sets `authMode: 'pairing'`. To switch to QR login, change that value to `'qr'` (or update it through the configuration API):
@@ -63,7 +65,7 @@ For an existing installation, v1.5.0 through v1.7.1 perform one-time configurati
 - A dedicated WhatsApp account for the bot.
 - Writable persistent storage for `data/` and `sessions/`.
 - Python 3 and Go only if their developer runners are intentionally enabled.
-- Docker or rootless Podman plus `cloudflared` for Nexora Code Lab. Pull `python:3.12-alpine` and `node:22-alpine` before enabling execution.
+- Docker or rootless Podman plus `cloudflared` for Nexora Code Lab. On supported Linux systems, startup checks and provisions these dependencies automatically when it has the required privileges.
 
 The syntax checker scans every JavaScript file under `src/`, `test/`, and `scripts/`, including the central configuration module at `src/config.js`.
 
@@ -84,7 +86,7 @@ GITHUB_PAT=
 
 ```
 
-Do not put bot name, owner number, prefixes, bot mode, feature flags, database paths, archive limits, execution switches, or runtime limits in `.env`. Those are managed through `src/config.js` and persisted in the JSONL database. WhatsApp login mode, pairing number, session folder, and connection timeouts are non-secret application settings persisted in the JSONL configuration database. Only `GITHUB_PAT` and provider API keys belong in `.env`.
+Do not put bot name, owner number, prefixes, bot mode, feature flags, database paths, archive limits, execution switches, or runtime limits in `.env`. Those are managed through `src/config.js` and persisted in the JSONL database. WhatsApp login mode, pairing number, session folder, and connection timeouts are non-secret application settings persisted in the JSONL configuration database. Only `GITHUB_PAT` and provider API keys belong in `.env`. Public identity fields (`bot.ownerName`, `bot.creatorName`, `bot.organization`, and `bot.publicCreatorDisclosure`) are non-secret application configuration; the AI prompt receives only this explicit allowlist, never the raw config object or secret vault.
 
 Never commit `.env`, WhatsApp sessions, database journals, archives, or runtime logs.
 
@@ -263,7 +265,8 @@ Default multi-prefix values are `.`, `!`, `/`, and `#`.
 | `.menu` | `.help`, `.commands` | Display command menu |
 | `.ping` | `.speed`, `.latency` | Basic response latency |
 | `.owner` | `.creator` | Send the owner WhatsApp contact card |
-| `.about` | `.botinfo` | Bot identity and build information |
+| `.about` | `.botinfo` | Bot identity, creator, and organization information |
+| `.profile` | `.me`, `.level`, `.xp` | Personal XP, level, rank, relationship role, and progress card |
 | `.runtime` | `.system`, `.sysinfo` | Node runtime, memory, host and process details |
 | `.groupinfo` | `.gcinfo`, `.grouplist` | In a private chat, navigate cached groups by replying with a number; in a group, show that group's cached metadata |
 | `.run python <code>` | `.execute`, `.previewcode` | Execute Python/Node.js or display HTML in an isolated temporary web preview |
@@ -288,7 +291,7 @@ Default multi-prefix values are `.`, `!`, `/`, and `#`.
 | `.jid` | `.jidinfo`, `.liddebug` | Inspect current PN/LID fields |
 | `.dbstatus` | `.database`, `.dbhealth` | Database health |
 | `.dbsearch keyword` | `.archivefind` | Search ZIP archives |
-| `.aistatus` | `.aihealth` | Show AI provider readiness, model, key counts, average latency, health counters, timeout, and speed profile |
+| `.aistatus` | `.aihealth` | Show AI provider readiness, creator identity policy, relationship profiles, key rotation, counters, timeout, and speed profile |
 | `.nexora status` | `.capability`, `.aitools` | Show Nexora capability switches, Code Lab status, queue, workers, and tunnel |
 | `.nexora code on/off` | — | Enable or disable the isolated Code Lab service |
 | `.nexora auto-run on/off` | — | Enable or disable natural-language code execution |
@@ -300,6 +303,7 @@ Default multi-prefix values are `.`, `!`, `/`, and `#`.
 | `.aiset speed boost/fast/balanced` | — | Switch between Boost, fast, and retry-tolerant balanced profiles |
 | `.aiset order <providers>` | — | Set provider fallback order |
 | `.aiset model <provider> <model>` | — | Override one provider's model ID |
+| `.aiset identity on/off` | — | Control public disclosure of creator and organization identity |
 | `.buttons on/off/status` | `.buttonmode` | Owner control for interactive replies |
 | `.master status` | `.masterconfig` | Show master runner switches |
 | `.master eval on/off` | — | Enable/disable JavaScript evaluation |
@@ -455,7 +459,7 @@ Commands:
 
 - `npm run git:setup` — initialize/verify the local repository, branch, and remote.
 - `npm run git:watch` — run only the automatic Git watcher for diagnosis.
-- `npm start` — start the bot and the automatic Git watcher together.
+- `npm start` — start the bot, run the dependency preflight, and start the automatic Git watcher together.
 
 See [`docs/AUTO_GIT_SYNC.md`](docs/AUTO_GIT_SYNC.md) for behavior, failure handling, and security details.
 
@@ -570,8 +574,12 @@ The AI review is an advisory impact estimate, not a proof of safety. The confirm
 
 ## 22. Nexora Code Lab: isolated execution and temporary preview
 
-Users can ask Ocha to run the most recent assistant code block by saying `coba jalankan` or `buat preview hasilnya`. The AI capability manager routes explicit execution intent to Code Lab. `.run` provides a direct command path. Python 3.12 and Node.js 22 execute in per-session containers; HTML/CSS/JavaScript is displayed in a sandboxed iframe. Python/Node execution is network-isolated and limited to standard libraries, 128 MiB memory, 0.5 CPU, 64 PIDs, 48 KiB combined captured output, and 120 seconds runtime by default.
+Users can ask Ocha to run the most recent assistant code block by saying `coba jalankan` or `buat preview hasilnya`, including by replying directly to the AI message containing code. Quoted message text is checked first; truncated quoted code is completed by the AI before execution and is never run while incomplete. The AI capability manager routes explicit execution intent to Code Lab. `.run` provides a direct command path. Python 3.12 and Node.js 22 execute in per-session containers; HTML/CSS/JavaScript is displayed in a sandboxed iframe. Python/Node execution is network-isolated and limited to standard libraries, 128 MiB memory, 0.5 CPU, 64 PIDs, 48 KiB combined captured output, and 120 seconds runtime by default.
 
 Each session receives an unguessable path on a temporary `trycloudflare.com` Quick Tunnel. Session paths are independently revoked after 60 minutes, with automatic container and workspace cleanup. One shared Quick Tunnel is reused for concurrent sessions, then closed after a short idle grace period. SIGINT/SIGTERM/SIGHUP cleanup is supported; an independent heartbeat watchdog also removes labelled worker containers and temporary files after an ungraceful bot process loss. A hard power/kernel failure or unavailable container daemon can still delay cleanup.
 
-Install Docker or rootless Podman, `cloudflared`, and pull `python:3.12-alpine` plus `node:22-alpine`. Use `.nexora status` to verify. Anyone who receives a preview URL can access it; do not include secrets or private data. Quick Tunnels are for temporary development/testing, not production hosting. Full lifecycle, security, resource limits, and configuration details are in `docs/CODE_LAB.md`.
+Install Docker Engine (daemon) or rootless Podman, `cloudflared`, and pull `python:3.12-alpine` plus `node:22-alpine`. On systemd VPS, start Docker with `sudo systemctl enable --now docker`, then verify `docker info` before pulling images. Use `.nexora status` to verify. Anyone who receives a preview URL can access it; do not include secrets or private data. Quick Tunnels are for temporary development/testing, not production hosting. Full lifecycle, security, resource limits, and configuration details are in `docs/CODE_LAB.md`.
+
+## Nexora Website Builder
+
+Starting with v1.9.0, users can ask Ocha to create a website in natural language. Nexora generates a bounded multi-file static frontend project, validates the manifest, and returns a tokenized temporary preview URL through the existing single shared TryCloudflare tunnel. Website projects do not spawn per-user tunnels, terminals, or containers. Owner controls: `.nexora builder on/off` and `.nexora builder-workers 1-4` (bounded generation queue). Follow-up edit requests can revise the latest live project for the same sender/chat while preserving its preview URL. The builder currently supports static frontend prototypes, not production backend services or persistent hosting. See `docs/NEXORA_WEBSITE_BUILDER.md`.

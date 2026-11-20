@@ -5,16 +5,23 @@ import { logger } from '../core/logger.js';
 import { generateWithProvider, getProviderInventory, initializeProviderKeys, getAIMaintenance, setAIMaintenance, providerNames } from './providers.js';
 import { AIReplyChainStore, AI_REPLY_CHAIN_LIMITS } from './reply-chain.js';
 import { handleCodeExecutionIntent } from './code-execution.js';
+import { isWebsiteBuildIntent, createWebsiteGenerationMessages, normalizeWebsiteProject, runWebsiteBuildSlot } from './website-project.js';
+import { invokeAICapability } from './capability-manager.js';
 import './capabilities/code-runner.js';
+import './capabilities/website-builder.js';
+import { getLatestWebsiteProject, isCodeGenerationIntent } from '../runtime/code-lab.js';
+import { getPublicIdentity, isCreatorIdentityQuestion, formatCreatorDisclosure, buildPublicIdentityPrompt } from '../core/public-identity.js';
+import { isOwner as verifyOwner } from '../core/identity.js';
+import { recordUserInteraction, getRelationshipPrompt } from './user-profiles.js';
 
-const SYSTEM_PROMPT = `Kamu adalah Ocha Lidya, asisten WhatsApp yang tanggap, natural, dan akurat. Identitas model publik adalah Nexora-2.0-Flash. Jangan pernah menyebut nama provider, vendor, model internal, endpoint, atau detail kunci API. Jika ditanya model apa yang digunakan, jawab persis: Saya menggunakan Nexora-2.0-Flash. Jangan mengklaim model tersebut sebagai nama vendor eksternal. Jawab dalam bahasa pengguna. Dahulukan jawaban langsung, hindari pembukaan berulang, dan sesuaikan panjang jawaban dengan pertanyaan. Jangan mengarang fakta, jangan mengklaim melakukan tindakan eksternal yang belum dilakukan, dan gunakan konteks percakapan yang tersedia.`;
+const SYSTEM_PROMPT = `Kamu adalah Ocha Lidya, asisten WhatsApp yang tanggap, natural, dan akurat. Identitas model publik adalah Nexora-2.0-Flash. Jangan pernah menyebut nama provider, vendor, model internal, endpoint, atau detail kunci API. Jika ditanya model apa yang digunakan, jawab persis: Saya menggunakan Nexora-2.0-Flash. Jangan mengklaim model tersebut sebagai nama vendor eksternal. Jawab dalam bahasa pengguna. Dahulukan jawaban langsung, hindari pembukaan berulang, jangan mengulang sapaan atau kalimat pembuka yang sama terus-menerus, dan sesuaikan panjang jawaban dengan pertanyaan. Jangan mengarang fakta, jangan mengklaim melakukan tindakan eksternal yang belum dilakukan, dan gunakan konteks percakapan yang tersedia. Identitas pembuat/owner adalah informasi publik yang boleh disampaikan sesuai konfigurasi aman yang diberikan.`;
 const DEFAULTS = Object.freeze({
   enabled: true,
   providerOrder: ['groq', 'gemini', 'deepseek', 'openai'],
   models: { gemini: 'gemini-3.8-flash', groq: 'openai/gpt-oss-20b', deepseek: 'deepseek-flash', openai: 'gpt-6-luna' },
   timeoutMs: 3500, totalBudgetMs: 14000,
   maxOutputTokens: 220, temperature: 0.55, historyMessages: 4,
-  maxInputChars: 3500, coalesceMs: 80, maxKeyAttempts: 1
+  maxInputChars: 3500, coalesceMs: 80, maxKeyAttempts: 3
 });
 
 function aiConfig() {
@@ -138,19 +145,19 @@ async function executeWithFallback(job) {
 
   const startedAt = Date.now();
   const errors = [];
-  const deadline = startedAt + Math.max(3500, Number(config.totalBudgetMs) || 14000);
+  const deadline = startedAt + Math.max(3500, Number(job.totalBudgetMs) || Number(config.totalBudgetMs) || 14000);
   for (const provider of order) {
     const remainingMs = deadline - Date.now();
     if (remainingMs <= 0) break;
-    const providerTimeout = Math.max(1000, Math.min(Number(config.timeoutMs) || 3500, remainingMs));
+    const providerTimeout = Math.max(1000, Math.min(Number(job.providerTimeoutMs) || Number(config.timeoutMs) || 3500, remainingMs));
     try {
       const result = await generateWithProvider(provider, job.messages, {
         models: config.models,
         timeoutMs: providerTimeout,
-        maxOutputTokens: config.maxOutputTokens,
+        maxOutputTokens: Math.max(64, Math.min(32768, Number(job.maxOutputTokens) || Number(config.maxOutputTokens))),
         temperature: config.temperature,
         deferTelemetry: true,
-        maxKeyAttempts: Math.max(1, Number(config.maxKeyAttempts) || 1),
+        maxKeyAttempts: Math.max(1, Math.min(8, Number(config.maxKeyAttempts) || 3)),
         publicModel: 'Nexora-2.0-Flash'
       });
       if (getAIMaintenance().active) await setAIMaintenance(false);
@@ -214,32 +221,211 @@ export function resolveAIReplyContext(chat, quotedMessageId) {
   return aiReplyChain.resolve(chat, quotedMessageId);
 }
 
+async function handleWebsiteBuild(sock, message, userText, history) {
+  if (!isWebsiteBuildIntent(userText, history)) return { handled: false };
+  const config = getConfig();
+  const lab = config.codeLab || {};
+  if (!lab.websiteBuilderEnabled) {
+    await message.reply('Nexora Website Builder sedang dinonaktifkan oleh owner.');
+    return { handled: true, disabled: true };
+  }
+  if (!lab.aiExecutionEnabled) {
+    await message.reply('Website Builder tersedia, tetapi Auto-run sedang OFF. Owner perlu mengaktifkan `.nexora auto-run on` agar proyek dapat dibuat dan dipratinjau otomatis.');
+    return { handled: true, disabled: true };
+  }
+  if (!lab.publicTunnelEnabled) {
+    await message.reply('Website Builder tidak dapat menerbitkan preview karena tunnel publik sedang OFF.');
+    return { handled: true, disabled: true };
+  }
+
+  const key = conversationKey(message.chat, message.sender);
+  const id = crypto.randomUUID();
+  const existingProject = getLatestWebsiteProject({ ownerId: message.sender, chatId: message.chat });
+  const job = {
+    id, chat: message.chat, sender: message.sender, key,
+    messages: createWebsiteGenerationMessages(userText, history, existingProject),
+    userText, maxOutputTokens: 8192, providerTimeoutMs: 45_000, totalBudgetMs: 90_000,
+    createdAt: new Date().toISOString()
+  };
+  void checkpoint(id, 'queued', { job, task: 'website_build', createdAt: job.createdAt }, { defer: true });
+  await persistTurn(job, 'user', userText, {}, { defer: true });
+  void setComposing(sock, message.chat, 'composing');
+  try {
+    const { generated, result } = await runWebsiteBuildSlot(async () => {
+    const generated = await executeWithFallback(job);
+    let project;
+    try { project = normalizeWebsiteProject(generated.text); }
+    catch (firstError) {
+      const repairJob = {
+        ...job,
+        id: crypto.randomUUID(),
+        messages: [
+          { role: 'system', content: 'Perbaiki keluaran berikut menjadi JSON proyek website valid sesuai schema {"title":"...","summary":"...","files":[{"path":"index.html","content":"..."}]}. Kembalikan JSON saja. Pertahankan isi dan desain sejauh mungkin. Wajib index.html. Jangan sertakan Markdown.' },
+          { role: 'user', content: String(generated.text || '').slice(0, 24_000) }
+        ],
+        maxOutputTokens: 8192
+      };
+      const repaired = await executeWithFallback(repairJob);
+      try { project = normalizeWebsiteProject(repaired.text); }
+      catch { throw new Error(`Manifest website tidak lolos validasi: ${firstError.message}`); }
+    }
+    const result = await invokeAICapability('website_builder', { ...project, existingSessionId: existingProject?.id }, { message });
+    return { generated, result };
+    }, { concurrency: lab.websiteBuilderConcurrency, queueLimit: lab.websiteBuilderQueueLimit });
+    const expires = new Date(result.expiresAt).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
+    const response = [
+      existingProject ? '*NEXORA WEBSITE BUILDER · PROYEK DIPERBARUI*' : '*NEXORA WEBSITE BUILDER · PREVIEW SIAP*',
+      `Proyek: ${result.title}`,
+      `File: ${result.fileCount} · ${result.totalBytes} byte · versi ${result.version || 1}`,
+      `Status: ${result.status.toUpperCase()}`,
+      '',
+      result.previewUrl,
+      '',
+      result.summary,
+      '',
+      `Preview sementara berakhir: ${expires} WIB (maksimal 60 menit).`,
+      'Ini adalah website frontend statis. Backend, login sungguhan, database, pembayaran, dan API belum dibuat kecuali dikonfigurasi terpisah.'
+    ].join('\n');
+    await persistTurn(job, 'assistant', response, { provider: generated.provider, model: generated.model }, { defer: true });
+    void checkpoint(id, 'delivered', { task: 'website_build', provider: generated.provider, model: generated.model, previewUrl: result.previewUrl, projectFiles: result.fileCount }, { defer: true });
+    await setComposing(sock, message.chat, 'paused');
+    await message.reply(response);
+    logger.info({ jobId: id, provider: generated.provider, fileCount: result.fileCount, totalBytes: result.totalBytes, projectVersion: result.version || 1, updated: Boolean(result.updated), chat: message.chat }, 'Nexora website project generated or updated');
+    return { handled: true, result };
+  } catch (error) {
+    await setComposing(sock, message.chat, 'paused');
+    logger.warn({ jobId: id, code: error.code, message: error.message }, 'Nexora website build failed');
+    const response = `NEXORA WEBSITE BUILDER\nPembuatan website gagal: ${error.message}\n\nPastikan provider AI, Code Lab, dan TryCloudflare siap melalui .nexora status.`;
+    await persistTurn(job, 'assistant', response, {}, { defer: true });
+    await message.reply(response);
+    return { handled: true, error };
+  }
+}
+
+const GREETING_VARIANTS = Object.freeze([
+  'Halo{who}. Ocha siap. Mau membahas apa hari ini?',
+  'Hai{who}. Ada yang sedang ingin kamu kerjakan atau tanyakan?',
+  'Halo{who}. Mau lanjut topik sebelumnya atau mulai sesuatu yang baru?',
+  'Hai{who}. Ocha di sini. Apa yang bisa kubantu sekarang?',
+  'Halo{who}. Ada ide, pertanyaan, atau pekerjaan yang mau kita urus?',
+  'Hai{who}. Sedang ingin ngobrol santai atau langsung mengerjakan sesuatu?',
+  'Halo{who}. Silakan, apa yang ingin kamu bahas?',
+  'Hai{who}. Kita mulai dari mana hari ini?'
+]);
+function isGreetingOnly(text) {
+  return /^(?:hai+|halo+|hello+|hi+|hey+|assalamualaikum|assalamu['’]alaikum|pagi|siang|sore|malam)[!.?,\s]*$/i.test(String(text || '').trim());
+}
+function isUserIdentityQuestion(text) {
+  return /\b(siapa aku|aku siapa|kamu tahu aku siapa|kamu kenal aku|ingat aku)\b/i.test(String(text || ''));
+}
+function contextRecallKind(text) {
+  const value = String(text || '').toLowerCase();
+  if (/\b(ini aku bilang apa|apa yang aku bilang tadi|aku tadi bilang apa|pesan terakhirku apa|apa pesan terakhirku)\b/.test(value)) return 'user';
+  if (/\b(terus jawaban kamu|jawaban kamu tadi|jawabanmu tadi apa|tadi kamu jawab apa|apa jawabanmu tadi)\b/.test(value)) return 'assistant';
+  return null;
+}
+function formatContextRecall(kind, turns) {
+  const previous = [...(turns || [])].reverse().find(turn => turn.role === kind && String(turn.content || '').trim());
+  if (!previous) return kind === 'user' ? 'Aku belum menemukan pesanmu sebelumnya dalam riwayat percakapan yang tersimpan.' : 'Belum ada jawaban sebelumnya yang tersimpan dalam percakapan ini.';
+  const content = String(previous.content).trim().slice(0, 1400);
+  return kind === 'user' ? `Pesan terakhirmu sebelumnya adalah:\n\n“${content}”` : `Jawabanku sebelumnya adalah:\n\n${content}`;
+}
+function localGreeting(profile, ownerVerified, identity) {
+  const name = ownerVerified ? identity.ownerName : (profile?.displayName && profile.displayName !== 'Pengguna' ? profile.displayName : '');
+  const who = name ? `, ${name}` : '';
+  const index = Math.max(0, (Number(profile?.greetingCount) || 1) - 1) % GREETING_VARIANTS.length;
+  return GREETING_VARIANTS[index].replace('{who}', who);
+}
+async function deliverLocalAnswer(message, userText, answer, key) {
+  const id = crypto.randomUUID();
+  const job = { id, chat: message.chat, sender: message.sender, key, threadId: id, depth: 0 };
+  await persistTurn(job, 'user', userText);
+  await persistTurn(job, 'assistant', answer, { provider: 'local-policy', model: 'Nexora-2.0-Flash' });
+  const sent = await message.reply(answer);
+  const messageId = sent?.key?.id;
+  if (messageId) {
+    const anchor = { chat: message.chat, messageId, sender: message.sender, jobId: id, parentJobId: null, threadId: id, depth: 0, createdAt: new Date().toISOString() };
+    aiReplyChain.addAnchor(anchor);
+    try { await persistAIReplyAnchor(anchor); }
+    catch (error) { logger.warn({ err: error, messageId }, 'Local AI reply anchor persistence failed'); }
+  }
+  return { provider: 'local-policy', model: 'Nexora-2.0-Flash', text: answer };
+}
+
 async function answerMessageUnlocked(sock, message) {
   const responseStartedAt = Date.now();
   const config = aiConfig();
   if (!config.enabled) return message.reply('Layanan AI sedang dinonaktifkan.');
   const userText = stripBotMention(message.body).slice(0, config.maxInputChars);
   if (!userText) return message.reply('Ada yang ingin kamu tanyakan?');
-  if (!getAIMaintenance().active && /((model|llm).{0,40}(apa|what|which))|(\bapa\b.{0,30}\bmodel\b)|(kamu.{0,40}(menggunakan|pakai).{0,30}(model|ai))|(model.{0,30}(yang|dipakai|digunakan))/i.test(userText)) {
-    const identity = 'Saya menggunakan Nexora-2.0-Flash.';
-    await message.reply(identity);
-    return { provider: 'nexora', model: 'Nexora-2.0-Flash', text: identity };
-  }
-
   await initializeAIHistoryCache();
   const key = conversationKey(message.chat, message.sender);
+  const ownerVerified = Boolean(message.isOwner || verifyOwner(message.sender, getConfig().bot.owner));
+  let relationshipProfile = null;
+  try {
+    relationshipProfile = await recordUserInteraction({
+      userId: message.sender, displayName: message.pushName, messageId: message.id || message.key?.id,
+      text: userText, isOwner: ownerVerified
+    });
+  } catch (error) {
+    logger.warn({ err: error, sender: message.sender }, 'Relationship profile update failed; continuing without profile context');
+  }
+  const publicIdentity = getPublicIdentity();
+  const contextRecall = contextRecallKind(userText);
+  if (contextRecall) {
+    const answer = formatContextRecall(contextRecall, historyCache.get(key) || []);
+    return deliverLocalAnswer(message, userText, answer, key);
+  }
+  if (isCreatorIdentityQuestion(userText)) {
+    const answer = formatCreatorDisclosure({ addressedToOwner: ownerVerified });
+    return deliverLocalAnswer(message, userText, answer, key);
+  }
+  if (isUserIdentityQuestion(userText)) {
+    const answer = ownerVerified
+      ? `Kamu adalah ${publicIdentity.ownerName}, owner dan pengembang ${publicIdentity.productName} di bawah ${publicIdentity.organization}. Identitas owner diverifikasi dari akun WhatsApp yang terdaftar di konfigurasi, bukan dari klaim di chat.`
+      : `Nama tampilan WhatsApp yang terlihat olehku adalah ${relationshipProfile?.displayName || message.pushName || 'Pengguna'}. Aku mengenali konteks percakapan melalui profil interaksi chat ini, bukan mengklaim mengetahui identitas pribadimu di luar informasi yang kamu bagikan.`;
+    return deliverLocalAnswer(message, userText, answer, key);
+  }
+  if (isGreetingOnly(userText)) {
+    const answer = localGreeting(relationshipProfile, ownerVerified, publicIdentity);
+    return deliverLocalAnswer(message, userText, answer, key);
+  }
+  if (/((model|llm).{0,40}(apa|what|which))|(\bapa\b.{0,30}\bmodel\b)|(kamu.{0,40}(menggunakan|pakai).{0,30}(model|ai))|(model.{0,30}(yang|dipakai|digunakan))/i.test(userText)) {
+    const identity = 'Saya menggunakan Nexora-2.0-Flash.';
+    return deliverLocalAnswer(message, userText, identity, key);
+  }
+
   const history = (historyCache.get(key) || []).slice(-config.historyMessages);
   const quotedMessageId = message.quoted?.key?.id || '';
   const parentContext = quotedMessageId ? aiReplyChain.resolve(message.chat, quotedMessageId) : { anchor: null, turns: [], depth: 0, threadId: null };
   const priorTurns = parentContext.turns.length
     ? parentContext.turns.map(({ role, content }) => ({ role, content }))
     : history;
-  const codeExecution = await handleCodeExecutionIntent({ message, userText, history: priorTurns });
+  const websiteBuild = await handleWebsiteBuild(sock, message, userText, priorTurns);
+  if (websiteBuild.handled) return { provider: 'nexora-capability', capability: 'website_builder', result: websiteBuild };
+  const codeExecution = await handleCodeExecutionIntent({
+    message, userText, history: priorTurns,
+    completeCode: async ({ language, source }) => {
+      const repairJob = {
+        id: crypto.randomUUID(), chat: message.chat, sender: message.sender, key,
+        messages: [
+          { role: 'system', content: 'Kamu adalah code completion engine. Lengkapi kode yang terpotong tanpa mengubah tujuan program. Kembalikan SATU blok kode Markdown lengkap dengan tag bahasa yang benar dan penutup tiga backtick. Jangan menambahkan penjelasan. Jangan menambahkan akses jaringan, membaca environment secrets, atau operasi host. Kode harus mandiri dan cocok untuk runtime terisolasi.' },
+          { role: 'user', content: `Bahasa: ${language || 'deteksi otomatis'}\n\nKode yang terpotong dari pesan yang saya reply:\n\`\`\`\n${String(source || '').slice(0, 12_000)}\n\`\`\`\n\nLengkapi bagian yang hilang sampai program valid dan utuh.` }
+        ],
+        maxOutputTokens: 4096, providerTimeoutMs: 18_000, totalBudgetMs: 45_000
+      };
+      const completed = await executeWithFallback(repairJob);
+      return completed.text;
+    }
+  });
   if (codeExecution.handled) return { provider: 'nexora-capability', capability: 'code_execution', result: codeExecution };
   const quotedContext = message.quoted?.text
     ? `\n\nKutipan yang sedang ditanggapi pengguna:\n${String(message.quoted.text).slice(0, 2500)}` : '';
+  const codeGeneration = isCodeGenerationIntent(userText);
+  const identityPrompt = buildPublicIdentityPrompt({ isOwner: ownerVerified });
+  const relationshipPrompt = getRelationshipPrompt(relationshipProfile, ownerVerified);
   const messages = [
-    { role: 'system', content: `${SYSTEM_PROMPT}\n\nJika ada kutipan, jawab berdasarkan konteks kutipan dan rantai percakapan yang disediakan. Jangan menganggap pesan lain di chat sebagai bagian dari rantai ini.` },
+    { role: 'system', content: `${SYSTEM_PROMPT}\n\n${identityPrompt}\n\n${relationshipPrompt}\n\nJika ada kutipan, jawab berdasarkan konteks kutipan dan rantai percakapan yang disediakan. Jangan menganggap pesan lain di chat sebagai bagian dari rantai ini.${codeGeneration ? '\n\nUntuk permintaan pembuatan kode: berikan implementasi lengkap, dapat dijalankan, sertakan seluruh fungsi dan entry point, jangan memotong kode, dan bungkus kode dalam satu blok Markdown dengan tag bahasa.' : ''}` },
     ...priorTurns,
     { role: 'user', content: `${userText}${quotedContext}` }
   ];
@@ -247,6 +433,7 @@ async function answerMessageUnlocked(sock, message) {
   const canContinueParent = Boolean(parentContext.anchor && parentContext.anchor.depth < AI_REPLY_CHAIN_LIMITS.maxDepth - 1);
   const job = {
     id, chat: message.chat, sender: message.sender, key, messages, userText,
+    ...(codeGeneration ? { maxOutputTokens: 4096, providerTimeoutMs: 18_000, totalBudgetMs: 45_000 } : {}),
     parentJobId: canContinueParent ? parentContext.anchor.jobId : null,
     threadId: canContinueParent ? parentContext.threadId : id,
     depth: canContinueParent ? parentContext.anchor.depth + 1 : 0,

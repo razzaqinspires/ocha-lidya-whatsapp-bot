@@ -1,9 +1,9 @@
 {
   "name": "ocha-lidya-whatsapp-bot",
-  "version": "1.8.1",
+  "version": "1.10.0",
   "private": true,
   "type": "module",
-  "description": "Ocha Lidya WhatsApp bot with resilient WhatsApp reconnection, QR/pairing-code login, cached group metadata, PN contact indexing, and multi-key provider validation, quoted AI reply chains, boosted low-latency inference, prioritized command reply sessions, group metadata navigation, message test lab, independent master runners with AI workload confirmation guard, secure redacted logs, runtime-safe filesystem watchers, global group mute, and message receipt monitoring",
+  "description": "Ocha Lidya WhatsApp bot with resilient WhatsApp reconnection, QR/pairing-code login, cached group metadata, PN contact indexing, and multi-key provider validation, Nexora multi-file static website builder with same-session revisions, quoted AI reply chains, boosted low-latency inference, prioritized command reply sessions, group metadata navigation, message test lab, independent master runners with AI workload confirmation guard, secure redacted logs, runtime-safe filesystem watchers, global group mute, and message receipt monitoring, public creator identity, adaptive greetings, persistent XP and relationship profile engine, profile card rendering, and fair multi-key provider rotation",
   "engines": {
     "node": ">=20.18.0"
   },
@@ -13,7 +13,9 @@
     "check": "node scripts/check-syntax.js",
     "test": "node --test",
     "git:setup": "node scripts/git-setup.js",
-    "git:watch": "node scripts/git-watch.js"
+    "git:watch": "node scripts/git-watch.js",
+    "prestart": "node scripts/bootstrap/npm-deps.js",
+    "predev": "node scripts/bootstrap/npm-deps.js"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "7.0.0-rc14",

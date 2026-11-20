@@ -24,6 +24,12 @@ export default {
       await updateConfig(config => { config.ai.models[provider.toLowerCase()] = model; }, { actor: m.sender, reason: `AI model ${provider}` });
       return m.reply(`Model ${provider} diubah menjadi ${model}. Pastikan ID model tersedia pada API provider.`);
     }
+    if (action === 'identity') {
+      const value = String(rest[0] || '').toLowerCase();
+      if (!['on', 'off'].includes(value)) return m.reply('Gunakan: .aiset identity on/off · mengatur apakah nama pembuat dan organisasi boleh diumumkan.');
+      await updateConfig(config => { config.bot.publicCreatorDisclosure = value === 'on'; }, { actor: m.sender, reason: `Public creator disclosure ${value}` });
+      return m.reply(`Informasi pembuat publik: ${value.toUpperCase()}.`);
+    }
     if (action === 'speed') {
       const [level] = rest;
       const profile = String(level || '').toLowerCase();
@@ -31,10 +37,10 @@ export default {
       await updateConfig(config => {
         if (profile === 'boost') {
           config.ai.providerOrder = ['groq', 'gemini', 'deepseek', 'openai'];
-          config.ai.timeoutMs = 3500; config.ai.totalBudgetMs = 14000; config.ai.historyMessages = 3; config.ai.maxOutputTokens = 180; config.ai.temperature = 0.5; config.ai.maxInputChars = 3500; config.ai.coalesceMs = 80; config.ai.maxKeyAttempts = 1;
+          config.ai.timeoutMs = 3500; config.ai.totalBudgetMs = 14000; config.ai.historyMessages = 3; config.ai.maxOutputTokens = 180; config.ai.temperature = 0.5; config.ai.maxInputChars = 3500; config.ai.coalesceMs = 80; config.ai.maxKeyAttempts = 3;
         } else if (profile === 'fast') {
           config.ai.providerOrder = ['groq', 'gemini', 'deepseek', 'openai'];
-          config.ai.timeoutMs = 4500; config.ai.totalBudgetMs = 20000; config.ai.historyMessages = 4; config.ai.maxOutputTokens = 220; config.ai.temperature = 0.55; config.ai.maxInputChars = 4500; config.ai.coalesceMs = 120; config.ai.maxKeyAttempts = 1;
+          config.ai.timeoutMs = 4500; config.ai.totalBudgetMs = 20000; config.ai.historyMessages = 4; config.ai.maxOutputTokens = 220; config.ai.temperature = 0.55; config.ai.maxInputChars = 4500; config.ai.coalesceMs = 120; config.ai.maxKeyAttempts = 2;
         } else {
           config.ai.providerOrder = ['gemini', 'groq', 'deepseek', 'openai'];
           config.ai.timeoutMs = 12000; config.ai.totalBudgetMs = 90000; config.ai.historyMessages = 12; config.ai.maxOutputTokens = 850; config.ai.coalesceMs = 400; config.ai.maxKeyAttempts = 4;
@@ -49,6 +55,7 @@ export default {
       '.aiset speed boost/fast/balanced',
       '.aiset order groq,gemini,deepseek,openai',
       '.aiset model groq openai/gpt-oss-20b',
+      '.aiset identity on/off',
       `.aiset saat ini: ${current.timeoutMs}ms/key · target budget ${current.totalBudgetMs}ms · output ${current.maxOutputTokens} token · coalesce ${current.coalesceMs}ms`
     ].join('\n'));
   }

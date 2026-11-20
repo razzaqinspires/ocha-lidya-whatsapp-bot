@@ -1,11 +1,15 @@
 import { getAIStatus } from '../../ai/engine.js';
 import { getKeyManagerStatus } from '../../ai/providers.js';
+import { getRelationshipEngineStatus } from '../../ai/user-profiles.js';
+import { getPublicIdentity } from '../../core/public-identity.js';
 export default {
   name: 'aistatus', aliases: ['aihealth'], category: 'owner', ownerOnly: true,
   description: 'Status AI, kesehatan key, total hit, kuota, dan maintenance',
   async execute({ m }) {
     const status = getAIStatus();
     const manager = await getKeyManagerStatus();
+    const relationships = getRelationshipEngineStatus();
+    const identity = getPublicIdentity();
     const providers = status.providers.map(item => {
       const keys = item.keyDetails.map(key => `  ${key.masked} [${key.fingerprint}] ${key.status} · hit ${key.hits} · ok ${key.successes} · fail ${key.failures}${key.retryAt ? ` · retry ${new Date(key.retryAt).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}` : ''}`).join('\n');
       return [
@@ -20,6 +24,9 @@ export default {
       `Public model: ${status.publicModel}`,
       `AI: ${status.enabled ? 'ENABLED' : 'DISABLED'}`,
       `Maintenance: ${manager.maintenance.active ? `ACTIVE sejak ${manager.maintenance.since}` : 'OFF'}`,
+      `Creator identity: ${identity.creatorName} · ${identity.organization} · public ${identity.disclosureEnabled ? 'ON' : 'OFF'}`,
+      `Relationship profiles: ${relationships.profiles} · XP ${relationships.xpPerInteraction}/interaksi · daily cap ${relationships.dailyXpCap}`,
+      `Key rotation: maksimal ${status.maxKeyAttempts || 3} key/provider/request (round-robin)`,
       `Route: ${status.providerOrder.join(' → ')}`,
       `Timeout/key: ${status.timeoutMs}ms · total budget (advisory): ${status.totalBudgetMs}ms`,
       `History: ${status.historyMessages} · output: ${status.maxOutputTokens} tokens · coalesce: ${status.coalesceMs}ms`,

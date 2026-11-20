@@ -8,6 +8,19 @@
 - Deleted Python/Node source workspaces immediately after execution completes and started the host-side timeout after the runtime process is spawned.
 - Updated Nexora status output and operational documentation to describe global controls, one shared tunnel, and headless bounded execution.
 
+## [1.9.1] - 2026-11-20
+
+### Fixed
+- Code execution now reads `m.quoted.text` first, so replying directly to an AI message containing code is sufficient; it no longer depends on a persisted AI reply-chain anchor to recover the quoted source.
+- Added parsing for incomplete fenced code blocks. If an AI answer was cut off by its output-token limit, Nexora asks the configured provider to complete the quoted code before passing it to the isolated worker; incomplete repair output is never executed.
+- Added task-aware output budgets for code-generation requests (up to 4,096 output tokens and a bounded 45-second fallback budget) while ordinary chat keeps its low-latency budget.
+- Provider request timeout now honors per-job coding/repair budgets instead of always using the short general-chat timeout.
+- Docker/Podman prerequisite diagnostics now distinguish a missing/inactive daemon socket from missing runtime images and provide the correct recovery command.
+
+### Validation
+- Added regression tests for quoted-message priority, truncated quoted code completion, code-generation intent classification, and code-block parsing.
+- Offline test suite and syntax checks run for this release; live WhatsApp quote serialization and Docker daemon operation still require verification on the VPS.
+
 # Changelog
 
 ## [1.8.0] - 2026-11-20
@@ -336,3 +349,57 @@ All notable changes to Ocha Lidya are recorded here. The newest release is liste
 ### Validation
 - Added regression tests for one-time invalid-session recovery policy and schema v6 migration.
 - Pairing against a live WhatsApp account was not run in the build environment; a printed code still requires phone-side confirmation and an eventual `connection: open` state.
+
+## v1.9.0 — Nexora Website Builder
+
+- Added a dedicated Website Builder capability for natural-language multi-file static website generation.
+- Reuses the existing provider-key inventory, health tracking, provider fallback, shared Code Lab gateway, and single persistent TryCloudflare tunnel.
+- Added bounded JSON manifest validation: 20 files maximum, 64 KiB per file, 256 KiB total, strict extension allowlist, safe paths, and required root `index.html`.
+- Added tokenized project resource routes and a sandboxed iframe preview with restrictive Content Security Policy.
+- Added owner/chat-scoped website revisions: follow-up edit requests reuse the current project's files and preserve its preview URL while incrementing the version.
+- Website projects are held in bounded in-memory sessions and expire with the shared Code Lab TTL (maximum 60 minutes).
+- Added global owner control `.nexora builder on/off`; `.nexora all on/off` now includes Website Builder.
+- Added documentation and tests for website intent detection and project validation.
+- Website Builder v1.9.0 supports static frontend prototypes only; real backend/database/authentication/payment/deployment are explicitly out of scope.
+
+
+## v1.9.2 — Nexora automatic host dependency manager
+
+### Added
+- Added npm `prestart`/`predev` dependency checks; missing declared Node packages are installed automatically with `npm install --no-audit --no-fund`.
+- Added `scripts/bootstrap/ensure-host.sh` and `src/runtime/bootstrap-agent.js` as an idempotent host dependency manager.
+- After loading the saved configuration, `npm start` checks the selected container runtime, starts an existing Docker service, installs missing supported host packages, verifies `cloudflared`, and pulls only missing `python:3.12-alpine` / `node:22-alpine` images.
+- Added a dry-run mode with `NEXORA_BOOTSTRAP_DRY_RUN=1` for safe inspection.
+
+### Security and reliability
+- The bootstrap runs synchronously once during startup and exits; it does not spawn a worker, terminal, tunnel, or background installer per user. Code Lab remains responsible for one shared persistent `cloudflared` process.
+- The bot continues to start if optional host provisioning cannot complete. Code Lab reports unavailable runtime capabilities instead of disabling WhatsApp/AI chat.
+- No automatic Docker socket chmod or docker-group membership changes; both could grant root-equivalent control. Privileged package/service operations require root or sudo.
+- Package installation uses supported OS package managers and the official Cloudflare package source/release; no arbitrary remote shell script is piped into a root shell.
+
+### Validation
+- Added shell syntax, dry-run, and bootstrap integration tests. Host package installation and live Docker/Cloudflare operations must still be verified on the target VPS.
+
+
+## v1.10.0 — Identity, Relationship & Experience Engine
+
+### Added
+- Added a safe public identity allowlist in configuration: owner/creator name, organization, and a public disclosure switch. Default creator and owner identity is Arifi Razzaq under Razzaq Ventures.
+- Added deterministic local answers for creator identity, model identity, and simple greetings. These responses do not call an AI provider and remain available during generative-AI maintenance. Greeting variants rotate to avoid repetitive static replies.
+- Added per-user persistent relationship profiles with XP, levels, rank tiers, active days, interaction counts, and aggregate communication-style preferences.
+- Added `.profile` (`.me`, `.level`, `.xp`) with a professional PNG profile card when optional `sharp` is installed and a text fallback otherwise.
+- Added public creator disclosure to `.about`, and use the configured owner name in the `.owner` contact card.
+- Added `.aiset identity on/off` to control public creator disclosure.
+- Added fair round-robin rotation among eligible provider keys and increased default per-provider attempts to three (Boost), two (Fast), and four (Balanced).
+
+### Fixed
+- Provider network errors are now wrapped instead of mutating native/fetch error objects. This fixes getter-only `code` properties that previously caused `Cannot set property code` and falsely exhausted Groq/Gemini routes.
+- Verified owner identity is passed to the model only as a trusted application fact; ordinary chat claims cannot grant owner status.
+
+### Privacy and limits
+- Profile storage keeps aggregate counters and bounded message-ID deduplication only; raw chat content is not copied into profile records.
+- XP has a 100-point daily cap. Relationship roles indicate interaction familiarity, not human emotion or psychological assessment.
+- Only explicit public identity fields are exposed to the model; API keys, phone number, secret vault, and raw configuration remain excluded.
+
+### Validation
+- Added regression tests for provider error wrapping, round-robin key rotation, owner identity without provider availability, varied greetings, profile progression, duplicate-message XP protection, daily cap, and profile-card escaping.

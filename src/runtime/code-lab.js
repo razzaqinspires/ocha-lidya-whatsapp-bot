@@ -78,6 +78,28 @@ export function extractCodeBlock(text) {
   return blocks.at(-1) || null;
 }
 
+// Reply messages can quote an AI response that was cut off by a provider token
+// limit. Preserve that partial fenced block so the AI can finish it safely
+// before the execution worker receives it.
+export function extractCodeBlockCandidate(text) {
+  const source = String(text || '');
+  const pattern = /```([a-zA-Z0-9_+.-]*)[ \t]*\r?\n([\s\S]*?)(```|$)/g;
+  const blocks = [];
+  let match;
+  while ((match = pattern.exec(source))) {
+    const body = String(match[2] || '').trim();
+    if (body) blocks.push({ language: match[1] || '', source: body, complete: match[3] === '```' });
+    if (!match[3]) break;
+  }
+  return blocks.at(-1) || null;
+}
+
+export function isCodeGenerationIntent(text) {
+  const value = String(text || '').toLowerCase();
+  return value.length <= 1200 && /\b(buatkan|buat|tuliskan|implementasikan|implementasi|generate|create|build)\b/.test(value) &&
+    /\b(kode|code|script|program|kalkulator|calculator|python|javascript|node\.js|html|aplikasi|fungsi|function)\b/.test(value);
+}
+
 export function isCodeExecutionIntent(text) {
   const value = String(text || '').trim().toLowerCase();
   if (!value || value.length > 500) return false;
@@ -179,8 +201,25 @@ refresh();const poll=setInterval(async()=>{const keep=await refresh();if(!keep)c
 }
 
 function parseSessionPath(pathname) {
-  const match = pathname.match(/^\/s\/([a-f0-9-]{36})\/([A-Za-z0-9_-]{40,60})\/?$/);
-  return match ? { id: match[1], token: match[2] } : null;
+  const match = pathname.match(/^\/s\/([a-f0-9-]{36})\/([A-Za-z0-9_-]{40,60})(?:\/(.*))?$/);
+  if (!match) return null;
+  let resourcePath = match[3] || '';
+  try { resourcePath = decodeURIComponent(resourcePath); } catch { return null; }
+  if (resourcePath.includes('\\') || resourcePath.includes('\0')) return null;
+  const parts = resourcePath.split('/').filter(Boolean);
+  if (parts.some(part => part === '.' || part === '..' || part.startsWith('.'))) return null;
+  return { id: match[1], token: match[2], resourcePath: parts.join('/') };
+}
+
+function websiteViewerHtml(session) {
+  const target = `/project/${session.id}/${session.token}/index.html`;
+  const title = String(session.title || 'Website Preview').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character]));
+  return `<!doctype html><html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><title>${title} · Nexora Preview</title><style>*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;font:13px system-ui;background:#0b1020;color:#e8eef9}.bar{height:34px;display:flex;align-items:center;justify-content:space-between;padding:0 12px;background:#101a2d;border-bottom:1px solid #26334d}.brand{font-weight:700;letter-spacing:.04em}.badge{color:#a9c5ff}iframe{display:block;width:100%;height:calc(100% - 34px);border:0;background:white}</style></head><body><header class="bar"><span class="brand">NEXORA <span class="badge">WEBSITE PREVIEW</span></span><span>Temporary · ${Object.keys(session.files || {}).length} files</span></header><iframe title="${title}" src="${target}" sandbox="allow-scripts allow-forms" referrerpolicy="no-referrer"></iframe></body></html>`;
+}
+
+function websiteContentType(filePath) {
+  const extension = path.posix.extname(filePath).toLowerCase();
+  return ({ '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml', '.json': 'application/json; charset=utf-8', '.txt': 'text/plain; charset=utf-8', '.webmanifest': 'application/manifest+json; charset=utf-8', '.xml': 'application/xml; charset=utf-8' })[extension] || 'application/octet-stream';
 }
 
 function parseApiPath(pathname) {
@@ -249,12 +288,45 @@ async function routeRequest(request, response) {
     return sendJson(response, 405, { error: 'Method tidak diizinkan.' });
   }
 
+  const projectMatch = url.pathname.match(/^\/project\/([a-f0-9-]{36})\/([A-Za-z0-9_-]{40,60})\/(.*)$/);
+  if (request.method === 'GET' && projectMatch) {
+    let resourcePath;
+    try { resourcePath = decodeURIComponent(projectMatch[3] || 'index.html'); } catch { return sendJson(response, 400, { error: 'Path resource tidak valid.' }); }
+    const parts = resourcePath.replaceAll('\\', '/').split('/').filter(Boolean);
+    if (!parts.length || parts.some(part => part === '.' || part === '..' || part.startsWith('.'))) return sendJson(response, 400, { error: 'Path resource tidak aman.' });
+    const session = state.sessions.get(projectMatch[1]);
+    const token = projectMatch[2];
+    if (!session || session.language !== 'website' || !tokenMatches(session, token) || Date.now() >= session.expiresAt) return sendJson(response, 410, { error: 'Sesi website tidak ditemukan atau sudah kedaluwarsa.' });
+    const filePath = parts.join('/');
+    const content = session.files?.[filePath];
+    if (typeof content !== 'string') return sendJson(response, 404, { error: 'File website tidak ditemukan.' });
+    response.writeHead(200, {
+      'Cache-Control': 'no-store, no-cache, must-revalidate, private',
+      'X-Content-Type-Options': 'nosniff',
+      'Referrer-Policy': 'no-referrer',
+      'Cross-Origin-Resource-Policy': 'same-origin',
+      'Content-Type': websiteContentType(filePath),
+      'Content-Security-Policy': "default-src 'self' data: blob:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
+    });
+    response.end(content);
+    return;
+  }
+
   const sessionPath = parseSessionPath(url.pathname);
   if (request.method === 'GET' && sessionPath) {
     const session = state.sessions.get(sessionPath.id);
     if (!session || !tokenMatches(session, sessionPath.token) || Date.now() >= session.expiresAt) {
       response.writeHead(410, responseHeaders({ 'Content-Type': 'text/html; charset=utf-8' }));
       response.end('<!doctype html><meta charset="utf-8"><title>Preview expired</title><main style="font:16px system-ui;padding:3rem">Sesi preview tidak tersedia atau sudah kedaluwarsa.</main>');
+      return;
+    }
+    if (session.language === 'website') {
+      if (sessionPath.resourcePath) return sendJson(response, 404, { error: 'Resource website tidak ditemukan.' });
+      response.writeHead(200, responseHeaders({
+        'Content-Type': 'text/html; charset=utf-8',
+        'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+      }));
+      response.end(websiteViewerHtml(session));
       return;
     }
     response.writeHead(200, responseHeaders({
@@ -341,7 +413,15 @@ async function verifyRuntimePrerequisites() {
     state.prerequisites.runtimeError = null;
   } catch (error) {
     state.prerequisites.runtime = null;
-    state.prerequisites.runtimeError = `Code Lab belum siap: ${runtime} daemon atau image runtime tidak tersedia. Jalankan "${runtime} pull ${images[0]}" dan "${runtime} pull ${images[1]}" lalu coba lagi. Detail: ${error.message}`;
+    const detail = String(error.message || error);
+    const daemonUnavailable = /docker\.sock|podman\.sock|no such file or directory|failed to connect to the .*api|cannot connect to the .*daemon/i.test(detail);
+    const permissionDenied = /permission denied|access is denied/i.test(detail);
+    const recovery = daemonUnavailable
+      ? `CLI ${runtime} terpasang, tetapi daemon belum aktif atau socket belum tersedia. Pada VPS Linux dengan systemd jalankan: "sudo systemctl enable --now ${runtime}". Setelah itu pastikan "${runtime} info" berhasil.`
+      : permissionDenied
+        ? `Proses Ocha tidak memiliki izin mengakses socket ${runtime}. Periksa service daemon dan izin socket; jangan memberikan akses Docker socket kepada pengguna/container yang tidak dipercaya.`
+        : `Pastikan image runtime tersedia: "${runtime} pull ${images[0]}" dan "${runtime} pull ${images[1]}".`;
+    state.prerequisites.runtimeError = `Code Lab belum siap: ${recovery} Detail: ${detail}`;
     throw new Error(state.prerequisites.runtimeError);
   }
 }
@@ -470,6 +550,24 @@ async function stopTunnel() {
     child.once('exit', () => { clearTimeout(timer); resolve(); });
     try { child.kill('SIGTERM'); } catch { clearTimeout(timer); resolve(); }
   });
+}
+
+function validateWebsiteFiles(files) {
+  const entries = Object.entries(files || {});
+  const allowedExtensions = new Set(['.html', '.css', '.js', '.mjs', '.svg', '.json', '.txt', '.webmanifest', '.xml']);
+  if (!entries.length || entries.length > 20 || !Object.hasOwn(files || {}, 'index.html')) throw new Error('Proyek website tidak valid atau tidak memiliki index.html.');
+  let totalBytes = 0;
+  const safeFiles = Object.create(null);
+  for (const [filePath, content] of entries) {
+    const extension = path.posix.extname(filePath).toLowerCase();
+    if (typeof content !== 'string' || filePath.length > 140 || filePath.startsWith('/') || filePath.includes('\\') || filePath.includes('\0') || !allowedExtensions.has(extension) || filePath.split('/').some(part => !part || part === '.' || part === '..' || part.startsWith('.'))) throw new Error(`Path/konten website tidak aman: ${filePath}`);
+    const bytes = Buffer.byteLength(content, 'utf8');
+    if (bytes > 64 * 1024) throw new Error(`File ${filePath} melewati batas 64 KB.`);
+    totalBytes += bytes;
+    if (totalBytes > 256 * 1024) throw new Error('Total ukuran website melewati batas 256 KB.');
+    safeFiles[filePath] = content;
+  }
+  return { entries, totalBytes, safeFiles };
 }
 
 function ownerSessionCounts(ownerKey) {
@@ -652,6 +750,7 @@ async function cleanupSession(id, reason = 'expired') {
   session.status = reason;
   session.token = '';
   session.source = '';
+  if (session.files) session.files = Object.create(null);
   logger.info({ sessionId: id, reason }, 'Code Lab session destroyed');
   return true;
 }
@@ -822,6 +921,82 @@ export async function createCodeSession({ ownerId, chatId = '', language = '', s
   }
 }
 
+export async function createWebsiteSession({ ownerId, chatId = '', title = 'Website Preview', summary = '', files = {} }) {
+  if (!setting('enabled', true) || !setting('websiteBuilderEnabled', true)) throw new Error('Nexora Website Builder sedang dinonaktifkan oleh owner.');
+  if (!setting('aiExecutionEnabled', true)) throw new Error('Auto-run Nexora sedang dinonaktifkan oleh owner.');
+  if (!setting('publicTunnelEnabled', true)) throw new Error('Preview publik sedang dinonaktifkan oleh owner.');
+  if (state.closing) throw new Error('Code Lab sedang dihentikan.');
+  if (!state.server?.listening) await startCodeLab();
+  const { entries, totalBytes, safeFiles } = validateWebsiteFiles(files);
+  const ownerKey = crypto.createHash('sha256').update(String(ownerId || 'anonymous')).digest('hex').slice(0, 16);
+  const totalLimit = boundedInt(setting('maxSessionsTotal', 20), 20, 1, 100);
+  const perUserLimit = boundedInt(setting('maxSessionsPerUser', 2), 2, 1, 10);
+  const reservedForUser = state.reservations.get(ownerKey) || 0;
+  if (state.sessions.size + state.pendingReservations >= totalLimit) throw new Error('Kapasitas sesi Code Lab sedang penuh. Coba lagi nanti.');
+  if (ownerSessionCounts(ownerKey) + reservedForUser >= perUserLimit) throw new Error(`Batas ${perUserLimit} sesi aktif per pengguna telah tercapai.`);
+  state.pendingReservations += 1;
+  state.reservations.set(ownerKey, reservedForUser + 1);
+  try {
+    checkRateLimit(ownerKey);
+    await ensureServer();
+    const baseUrl = await startTunnel();
+    if (state.closing) throw new Error('Code Lab sedang dihentikan.');
+    const id = crypto.randomUUID();
+    const token = crypto.randomBytes(SENSITIVE_TOKEN_BYTES).toString('base64url');
+    const ttlMs = boundedInt(setting('ttlMs', 3_600_000), 3_600_000, 60_000, 3_600_000);
+    const createdAt = new Date().toISOString();
+    const session = {
+      id, token, tokenHash: crypto.createHash('sha256').update(token).digest(), ownerKey,
+      chatKey: crypto.createHash('sha256').update(String(chatId)).digest('hex').slice(0, 12),
+      language: 'website', title: String(title || 'Website Preview').slice(0, 80), summary: String(summary || '').slice(0, 240),
+      files: safeFiles, projectVersion: 1, status: 'completed', stdout: `Website siap dipratinjau (${entries.length} file, ${totalBytes} byte).`, stderr: '', exitCode: 0,
+      createdAt, expiresAt: Date.now() + ttlMs, child: null, containerStarted: false, pendingInputs: [],
+      expiryTimer: null, executionTimer: null, startedAt: createdAt, lastOutputAt: Date.now(), lastInputAt: 0, inputCount: 0
+    };
+    state.sessions.set(id, session);
+    session.expiryTimer = setTimeout(() => { void cleanupSession(id, 'expired'); }, ttlMs);
+    session.expiryTimer.unref?.();
+    const previewUrl = `${baseUrl}/s/${id}/${token}`;
+    logger.info({ sessionId: id, ownerKey, fileCount: entries.length, totalBytes, expiresAt: new Date(session.expiresAt).toISOString() }, 'Nexora website project published');
+    return { id, language: 'website', title: session.title, summary: session.summary, fileCount: entries.length, totalBytes, version: session.projectVersion, status: session.status, previewUrl, expiresAt: new Date(session.expiresAt).toISOString(), ttlMs };
+  } finally {
+    state.pendingReservations = Math.max(0, state.pendingReservations - 1);
+    const remaining = (state.reservations.get(ownerKey) || 1) - 1;
+    if (remaining > 0) state.reservations.set(ownerKey, remaining);
+    else state.reservations.delete(ownerKey);
+  }
+}
+
+export function getLatestWebsiteProject({ ownerId, chatId = '' }) {
+  const ownerKey = crypto.createHash('sha256').update(String(ownerId || 'anonymous')).digest('hex').slice(0, 16);
+  const chatKey = crypto.createHash('sha256').update(String(chatId)).digest('hex').slice(0, 12);
+  const session = [...state.sessions.values()]
+    .filter(item => item.language === 'website' && item.ownerKey === ownerKey && item.chatKey === chatKey && Date.now() < item.expiresAt)
+    .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))[0];
+  if (!session) return null;
+  return { id: session.id, title: session.title, summary: session.summary, files: { ...session.files }, version: session.projectVersion, expiresAt: new Date(session.expiresAt).toISOString() };
+}
+
+export async function updateWebsiteSession({ ownerId, chatId = '', sessionId, title, summary, files }) {
+  if (!setting('enabled', true) || !setting('websiteBuilderEnabled', true) || !setting('aiExecutionEnabled', true) || !setting('publicTunnelEnabled', true)) throw new Error('Website Builder, auto-run, atau tunnel sedang dinonaktifkan oleh owner.');
+  const session = state.sessions.get(String(sessionId || ''));
+  const ownerKey = crypto.createHash('sha256').update(String(ownerId || 'anonymous')).digest('hex').slice(0, 16);
+  const chatKey = crypto.createHash('sha256').update(String(chatId)).digest('hex').slice(0, 12);
+  if (!session || session.language !== 'website' || session.ownerKey !== ownerKey || session.chatKey !== chatKey || Date.now() >= session.expiresAt) throw new Error('Proyek website aktif tidak ditemukan atau bukan milik percakapan ini.');
+  const { entries, totalBytes, safeFiles } = validateWebsiteFiles(files);
+  // Swap the complete manifest in one synchronous operation; in-flight requests
+  // see either the previous complete version or the new complete version.
+  session.files = safeFiles;
+  session.title = String(title || session.title || 'Website Preview').slice(0, 80);
+  session.summary = String(summary || '').slice(0, 240);
+  session.projectVersion = (Number(session.projectVersion) || 1) + 1;
+  session.stdout = `Website diperbarui ke versi ${session.projectVersion} (${entries.length} file, ${totalBytes} byte).`;
+  session.lastOutputAt = Date.now();
+  const previewUrl = `${state.tunnelUrl}/s/${session.id}/${session.token}`;
+  logger.info({ sessionId: session.id, ownerKey, projectVersion: session.projectVersion, fileCount: entries.length, totalBytes }, 'Nexora website project updated');
+  return { id: session.id, language: 'website', title: session.title, summary: session.summary, fileCount: entries.length, totalBytes, version: session.projectVersion, status: session.status, previewUrl, expiresAt: new Date(session.expiresAt).toISOString(), ttlMs: session.expiresAt - Date.now(), updated: true };
+}
+
 export async function stopCodeLab() {
   if (state.closing) return;
   state.closing = true;
@@ -861,6 +1036,7 @@ export function getCodeLabStatus() {
     runtimeReady: Boolean(state.prerequisites.runtime),
     runtimeError: state.prerequisites.runtimeError,
     activeSessions: state.sessions.size,
+    activeWebsiteSessions: [...state.sessions.values()].filter(session => session.language === 'website').length,
     pendingReservations: state.pendingReservations,
     maxSessionsTotal: boundedInt(setting('maxSessionsTotal', 20), 20, 1, 100),
     activeWorkers: state.activeWorkers,

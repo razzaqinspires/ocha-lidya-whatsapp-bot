@@ -15,12 +15,26 @@ const transientStatus = new Set([408, 409, 425, 429, 500, 502, 503, 504]);
 const keyStats = new Map();
 const providerMetrics = new Map();
 const providerCircuit = new Map();
+const keyRotationCursor = new Map();
 let vault = {};
 let initialized = false;
 let saveQueue = Promise.resolve();
 let maintenance = { active: false, since: null, notifiedAt: null, reason: null };
 const fingerprint = key => crypto.createHash('sha256').update(key).digest('hex').slice(0, 12);
 const mask = key => key.length < 10 ? `${key.slice(0, 2)}••••` : `${key.slice(0, 5)}••••••${key.slice(-4)}`;
+
+function errorWithMetadata(error, metadata = {}) {
+  // Never mutate provider/native errors: some runtimes expose read-only accessors
+  // (notably `code` on fetch TypeError instances).
+  const wrapped = new Error(String(error?.message || 'Provider request failed'), { cause: error });
+  wrapped.name = String(error?.name || 'Error');
+  for (const [key, value] of Object.entries(metadata)) {
+    Object.defineProperty(wrapped, key, { value, enumerable: true, configurable: true, writable: true });
+  }
+  if (Number.isFinite(Number(error?.status))) wrapped.status = Number(error.status);
+  if (error?.retryAfter) wrapped.retryAfter = error.retryAfter;
+  return wrapped;
+}
 
 export const providerNames = Object.freeze(Object.keys(PROVIDERS));
 export function normalizeProvider(value) { return String(value || '').trim().toLowerCase(); }
@@ -181,8 +195,8 @@ async function postJSON(url, headers, body, timeoutMs, provider) {
     if (!response.ok) providerError(provider, response.status, String(data.error?.message || data.message || data.raw || response.statusText).slice(0, 900), response.headers.get('retry-after'));
     return data;
   } catch (error) {
-    if (error.name === 'AbortError' || controller.signal.aborted) Object.assign(error, { provider, retryable: true, code: 'ETIMEDOUT' });
-    if (error instanceof TypeError) Object.assign(error, { provider, retryable: true });
+    if (error.name === 'AbortError' || controller.signal.aborted) throw errorWithMetadata(error, { provider, retryable: true, code: 'ETIMEDOUT' });
+    if (error instanceof TypeError) throw errorWithMetadata(error, { provider, retryable: true, code: 'NETWORK_ERROR' });
     throw error;
   } finally { clearTimeout(timer); }
 }
@@ -207,10 +221,15 @@ export async function generateWithProvider(name, messages, options = {}) {
   const items = allKeys(name);
   if (!items.length) throw Object.assign(new Error(`No API key for ${name}`), { provider: name, code: 'NO_API_KEY' });
   const eligibleAll = items.filter(item => isEligible(statsFor(item.value)));
-  const eligible = Number.isInteger(options.maxKeyAttempts) && options.maxKeyAttempts > 0 ? eligibleAll.slice(0, options.maxKeyAttempts) : eligibleAll;
+  const cursor = eligibleAll.length ? (keyRotationCursor.get(name) || 0) % eligibleAll.length : 0;
+  const rotated = eligibleAll.length ? [...eligibleAll.slice(cursor), ...eligibleAll.slice(0, cursor)] : [];
+  const attemptLimit = Number.isInteger(options.maxKeyAttempts) && options.maxKeyAttempts > 0 ? options.maxKeyAttempts : rotated.length;
+  const eligible = rotated.slice(0, attemptLimit);
   if (!eligible.length) throw Object.assign(new Error(`All keys for ${name} are cooling down or exhausted`), { provider: name, code: 'ALL_KEYS_UNAVAILABLE', retryable: true });
   let lastError;
+  let attemptsMade = 0;
   for (const item of eligible) {
+    attemptsMade++;
     const stat = statsFor(item.value); stat.source = item.source;
     stat.hits++; stat.lastHitAt = new Date().toISOString();
     const recordEvent = (event, details) => {
@@ -228,6 +247,7 @@ export async function generateWithProvider(name, messages, options = {}) {
       pm.successes++; pm.lastLatencyMs = elapsed; pm.averageLatencyMs = pm.averageLatencyMs == null ? elapsed : Math.round(pm.averageLatencyMs * .75 + elapsed * .25); pm.lastStatus = 'ok'; providerMetrics.set(name, pm);
       await recordEvent('success', { latencyMs: elapsed, tokens: Number(result.usage?.total_tokens || result.usage?.totalTokenCount || 0) });
       providerCircuit.set(name, { failures: 0, openUntil: 0 });
+      if (eligibleAll.length) keyRotationCursor.set(name, (cursor + attemptsMade) % eligibleAll.length);
       return { ...result, provider: name, model: options.publicModel || 'Nexora-2.0-Flash', keyFingerprint: stat.fingerprint, latencyMs: elapsed };
     } catch (error) {
       lastError = error; const classified = classifyFailure(error);
@@ -240,7 +260,13 @@ export async function generateWithProvider(name, messages, options = {}) {
       if (classified.status === 'request_or_model_error') break;
     }
   }
-  throw Object.assign(lastError || new Error(`${name}: no usable API key`), { provider: name, code: lastError?.code || 'PROVIDER_KEYS_EXHAUSTED' });
+  if (eligibleAll.length && attemptsMade) keyRotationCursor.set(name, (cursor + attemptsMade) % eligibleAll.length);
+  const finalError = new Error(String(lastError?.message || `${name}: no usable API key`), { cause: lastError });
+  finalError.provider = name;
+  finalError.code = String(lastError?.code || 'PROVIDER_KEYS_EXHAUSTED');
+  if (Number.isFinite(Number(lastError?.status))) finalError.status = Number(lastError.status);
+  finalError.retryable = Boolean(lastError?.retryable);
+  throw finalError;
 }
 export async function getKeyManagerStatus() {
   const records = await getRecords({ type: 'ai.key.event' });

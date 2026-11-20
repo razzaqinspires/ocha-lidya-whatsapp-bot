@@ -1,8 +1,8 @@
-# Ocha Lidya AI Engine — v1.7.1
+# Ocha Lidya AI Engine — v1.10.0
 
 ## Public identity
 
-The public AI identity exposed in chat is **Nexora-2.0-Flash**. Provider and upstream model identifiers are internal routing details. The engine instructs the assistant not to disclose provider/model vendor names, and a direct question such as “kamu menggunakan model apa?” receives the fixed identity response. This is a product identity/abstraction layer; it does not mean every upstream provider is literally running a model named Nexora.
+The public AI identity exposed in chat is **Nexora-2.0-Flash**. Provider and upstream model identifiers are internal routing details. The engine instructs the assistant not to disclose provider/model vendor names, and a direct question such as “kamu menggunakan model apa?” receives the fixed identity response. The product creator is a separate public identity: Arifi Razzaq, under Razzaq Ventures, configured through the non-secret allowlist in `bot.ownerName`, `bot.creatorName`, `bot.organization`, and `bot.publicCreatorDisclosure`. This is a product identity/abstraction layer; it does not mean every upstream provider is literally running a model named Nexora.
 
 ## Providers and default order
 
@@ -34,7 +34,7 @@ Managed keys are stored in `data/secrets/provider-keys.json`, with directory/fil
 
 ## Key validation and classification
 
-The balanced profile can probe multiple eligible keys per provider. The boost/fast profiles intentionally cap each provider to one eligible key attempt to avoid spending the full timeout on several keys before fallback. A successful request proves that the key worked for that request, not that it has unlimited quota. Every attempt increments the hit counter before the network request and writes an append-only `ai.key.event` event. Counters are reconstructed from the JSONL event history after restart.
+The provider manager rotates eligible keys fairly using a per-provider round-robin cursor. The default Boost profile attempts up to three eligible keys per provider; Fast uses two and Balanced uses up to four. A successful request ends attempts for that provider for the current job. A successful request proves that the key worked for that request, not that it has unlimited quota. Every attempt increments the hit counter before the network request and writes an append-only `ai.key.event` event. Counters are reconstructed from the JSONL event history after restart.
 
 | Observed response | Classification | Retry policy |
 |---|---|---|
@@ -56,11 +56,10 @@ The key counters include total hits, successes, failures, and reported token usa
 ## Fallback and maintenance
 
 1. The engine obtains the configured provider order and its key inventory.
-2. Boost/fast profiles attempt one eligible key for each provider before moving to the next provider.
-3. Balanced mode permits up to four eligible key attempts per provider.
+2. Each provider rotates to the next eligible key on subsequent requests; Boost attempts up to three keys, Fast two, and Balanced up to four when earlier keys fail.
 4. The configured total deadline stops later fallback attempts once its budget is exhausted, preventing cumulative provider timeouts from growing without bound.
 5. If every configured provider/key is unavailable, the AI subsystem enters persisted maintenance mode.
-6. While maintenance is active, incoming AI messages receive no reply. No “busy” or fallback message is sent to the user.
+6. While maintenance is active, generative AI requests receive no reply. Local deterministic identity, greeting, conversation-recall, and profile responses remain available without provider calls.
 7. The owner receives one private report with per-provider/per-key masked identity, fingerprint, hit/success/failure counters, status, reason, last HTTP status, and retry time.
 8. Subsequent AI requests re-evaluate keys whose retry time has elapsed. If a key/provider recovers, AI resumes and maintenance is cleared. If none has recovered, the subsystem stays silent and does not spam the owner with repeated reports.
 
@@ -74,18 +73,20 @@ This is response-driven validation, not a guaranteed external expiry detector. A
 - `.apikey get <provider> <fingerprint>` — detailed status for one key.
 - `.apikey delete <provider> <fingerprint>` — delete a managed key.
 - `.aiset on` / `.aiset off` — enable/disable AI.
-- `.aiset speed boost` — lowest-latency profile: 3.5 s per provider, 14 s overall deadline, one key attempt/provider, 180 output tokens, 3 history turns, and 80 ms coalescing.
+- `.aiset speed boost` — low-latency profile: 3.5 s per provider, 14 s overall deadline, up to three round-robin key attempts/provider, 180 output tokens, 3 history turns, and 80 ms coalescing.
 - `.aiset speed fast` — balanced low-latency profile: 4.5 s/provider, 20 s deadline, 220 output tokens, 4 history turns, and 120 ms coalescing.
 - `.aiset speed balanced` — longer generation and wider key retry allowance.
 - `.aiset order groq,gemini,deepseek,openai` — set provider order.
 - `.aiset model <provider> <model-id>` — override an upstream model ID.
+- `.aiset identity on/off` — allow or suppress public disclosure of creator and organization identity.
+- `.profile` — display XP, level, role, rank, and interaction progress.
 
 ## Runtime notes and limitations
 
 - Requests use Node's built-in `fetch`; no provider SDK is required.
 - Provider adapters currently use non-streaming chat requests.
 - The response-critical path no longer waits for AI job checkpoints, conversation-turn journaling, or provider hit/success telemetry writes. Those records are queued to the append-only journal in the background; in-memory conversation history and reply anchors are updated immediately. Disk failures are logged and do not delay the current user response.
-- The default profile is Boost after schema v12 migration. Only known shipped defaults are migrated; custom owner timeout/output values are preserved. The migration sets one key attempt per provider to reduce key-rotation delay.
+- The default profile is Boost after schema v12 migration. Only known shipped defaults are migrated; custom owner timeout/output values are preserved. The v1.10.0 migration sets up to three attempts per provider and rotates fairly among eligible keys to avoid repeatedly selecting the same key.
 - A provider may reject a model ID even when the API key itself is valid; that is recorded as a request/model issue, not an invalid key.
 - The engine can only count calls made through this bot. It cannot report API-key hits made by other applications or direct dashboard/API calls.
 - Total token counts are based on usage fields returned by the provider. Missing usage metadata is not fabricated.
@@ -102,3 +103,14 @@ The message dispatcher uses two distinct quoted-reply lanes:
 AI answer anchors are persisted as `ai.reply.anchor` records and connect each response to its parent AI job. Startup warms this anchor index before the WhatsApp socket begins accepting messages, avoiding a race where an early quoted group reply could be misclassified. The engine walks the parent chain from root to the quoted answer, then appends the current user reply. The configured bounds are **8 AI answer levels** and **12,000 characters** of accumulated prior context. The quoted message text is also included as a separate reference, capped at 2,500 characters. When the maximum depth is reached, a new answer starts a new bounded branch while still receiving the immediate quoted text. This keeps the prompt bounded and prevents unrelated chat messages or command output from being merged into the chain.
 
 Recovered AI jobs also register a quote anchor after the recovery response is sent. If a send operation does not return a WhatsApp message ID, the answer can still be delivered but cannot become a future quoted-chain anchor. Older bot messages sent before this feature was deployed do not automatically have an AI anchor; new AI answers create them from v1.7.0 onward.
+
+
+## Public identity, conversation familiarity, and user profiles (v1.10.0)
+
+The AI prompt receives only an allowlisted public identity object; it never receives the raw application config or API-key vault. The default public creator disclosure is **Arifi Razzaq** under **Razzaq Ventures**. The owner is verified against the configured WhatsApp PN identity in application code; a user cannot become owner by claiming so in chat. `.aiset identity on/off` controls whether the creator identity may be disclosed publicly. The `.about` response and `.owner` contact card use the same configured identity fields.
+
+Simple greeting-only messages and creator/model identity questions are answered by a local policy layer before provider routing. Greeting variants rotate so a repeated `halo` does not return one fixed sentence. These deterministic responses remain available during provider maintenance.
+
+Each AI participant has a separate persistent profile in the append-only JSONL repository. Eligible AI interactions award 5 XP, with a 10 XP first-active-day bonus and a 100 XP daily cap. Duplicate WhatsApp message IDs cannot award XP twice. Level thresholds use `50 * level * (level - 1)` cumulative XP. Ranks progress at levels 1/5/10/20/35/50/75: Iron, Bronze, Silver, Gold, Platinum, Diamond, and Mythic.
+
+Relationship role is an application familiarity tier, not a claim that the AI has human emotions: Pengunjung, Kenalan, Teman Ngobrol, Teman Akrab, and Sahabat Digital. The owner has the fixed role Owner & Creator. The engine stores aggregate interaction counts, active days, and broad communication-style counters; it does not store raw user messages in the profile record. `.profile` displays XP, level, rank, role, progress, and interaction history. It renders a PNG card when optional `sharp` is available and falls back to a text card otherwise.

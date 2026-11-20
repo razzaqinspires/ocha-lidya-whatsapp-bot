@@ -6,8 +6,8 @@
 import { initializeDatabase, appendRecord, getRecords, getLatestConfigRecord, configureDatabase } from './core/database.js';
 
 const DEFAULTS = Object.freeze({
-  schemaVersion: 16,
-  bot: { name: 'Ocha Lidya', aliases: ['Ocha', 'Lidya'], owner: '6283193905842', expectedNumber: '6282177461231' },
+  schemaVersion: 18,
+  bot: { name: 'Ocha Lidya', aliases: ['Ocha', 'Lidya'], owner: '6283193905842', ownerName: 'Arifi Razzaq', creatorName: 'Arifi Razzaq', organization: 'Razzaq Ventures', publicCreatorDisclosure: true, expectedNumber: '6282177461231' },
   whatsapp: { authMode: 'pairing', pairingNumber: '6282177461231', browserName: 'Chrome', sessionDir: 'sessions/ocha-lidya', recoverInvalidSession: true, connectTimeoutMs: 60000, queryTimeoutMs: 60000, keepAliveIntervalMs: 25000 },
   logging: { level: 'info', color: 'auto', timeZone: 'Asia/Jakarta' },
   mode: 'public',
@@ -32,8 +32,8 @@ const DEFAULTS = Object.freeze({
     verifyOnBoot: true
   },
   features: { autoRead: false, autoTyping: false, selfModeReply: false, groupsMuted: true },
-  ai: { enabled: true, providerOrder: ['groq', 'gemini', 'deepseek', 'openai'], models: { gemini: 'gemini-3.8-flash', groq: 'openai/gpt-oss-20b', deepseek: 'deepseek-flash', openai: 'gpt-6-luna' }, timeoutMs: 3500, totalBudgetMs: 14000, maxOutputTokens: 180, temperature: 0.5, historyMessages: 3, maxInputChars: 3500, coalesceMs: 80, maxKeyAttempts: 1 },
-  codeLab: { enabled: true, aiExecutionEnabled: true, publicTunnelEnabled: true, cloudflaredBin: 'cloudflared', containerRuntime: 'docker', port: 8787, ttlMs: 3600000, maxRuntimeMs: 120000, maxSourceBytes: 65536, maxOutputBytes: 49152, maxConcurrent: 2, maxSessionsTotal: 20, maxSessionsPerUser: 2, maxExecutionsPerMinute: 3, pythonImage: 'python:3.12-alpine', nodeImage: 'node:22-alpine' }
+  ai: { enabled: true, providerOrder: ['groq', 'gemini', 'deepseek', 'openai'], models: { gemini: 'gemini-3.8-flash', groq: 'openai/gpt-oss-20b', deepseek: 'deepseek-flash', openai: 'gpt-6-luna' }, timeoutMs: 3500, totalBudgetMs: 14000, maxOutputTokens: 180, temperature: 0.5, historyMessages: 3, maxInputChars: 3500, coalesceMs: 80, maxKeyAttempts: 3 },
+  codeLab: { enabled: true, aiExecutionEnabled: true, publicTunnelEnabled: true, websiteBuilderEnabled: true, websiteBuilderConcurrency: 2, websiteBuilderQueueLimit: 8, cloudflaredBin: 'cloudflared', containerRuntime: 'docker', port: 8787, ttlMs: 3600000, maxRuntimeMs: 120000, maxSourceBytes: 65536, maxOutputBytes: 49152, maxConcurrent: 2, maxSessionsTotal: 20, maxSessionsPerUser: 2, maxExecutionsPerMinute: 3, pythonImage: 'python:3.12-alpine', nodeImage: 'node:22-alpine' }
 });
 
 let activeConfig = structuredClone(DEFAULTS);
@@ -182,7 +182,7 @@ export async function loadConfig() {
     activeConfig.schemaVersion = 12;
     const ai = activeConfig.ai || (activeConfig.ai = {});
     const shipped = { timeoutMs: 7000, totalBudgetMs: 45000, maxOutputTokens: 320, temperature: 0.6, historyMessages: 6, maxInputChars: 6000, coalesceMs: 350 };
-    const boosted = { timeoutMs: 3500, totalBudgetMs: 14000, maxOutputTokens: 180, temperature: 0.5, historyMessages: 3, maxInputChars: 3500, coalesceMs: 80, maxKeyAttempts: 1 };
+    const boosted = { timeoutMs: 3500, totalBudgetMs: 14000, maxOutputTokens: 180, temperature: 0.5, historyMessages: 3, maxInputChars: 3500, coalesceMs: 80, maxKeyAttempts: 3 };
     for (const [key, oldValue] of Object.entries(shipped)) if (ai[key] === oldValue) ai[key] = boosted[key];
     ai.maxKeyAttempts = 1;
     await appendRecord('config.replace', { config: activeConfig, changedBy: 'system:migration', reason: 'v1.7.1 low-latency AI boost profile' });
@@ -213,6 +213,23 @@ export async function loadConfig() {
     if (activeConfig.codeLab.maxConcurrent === 3) activeConfig.codeLab.maxConcurrent = 2;
     else if (Number(activeConfig.codeLab.maxConcurrent) > 4) activeConfig.codeLab.maxConcurrent = 4;
     await appendRecord('config.replace', { config: activeConfig, changedBy: 'system:migration', reason: 'v1.8.1 persistent single tunnel and bounded low-memory worker pool' });
+  }
+  // v1.9.0 schema v17: enable the multi-file static website builder capability.
+  if (activeConfig.schemaVersion < 17) {
+    activeConfig.schemaVersion = 17;
+    activeConfig.codeLab = { ...DEFAULTS.codeLab, ...(activeConfig.codeLab || {}) };
+    if (typeof activeConfig.codeLab.websiteBuilderEnabled !== 'boolean') activeConfig.codeLab.websiteBuilderEnabled = true;
+    await appendRecord('config.replace', { config: activeConfig, changedBy: 'system:migration', reason: 'v1.9.0 Nexora multi-file website builder capability' });
+  }
+  // v1.10.0 schema v18: public creator identity and relationship/profile engine defaults.
+  if (activeConfig.schemaVersion < 18) {
+    activeConfig.schemaVersion = 18;
+    activeConfig.bot = { ...DEFAULTS.bot, ...(activeConfig.bot || {}) };
+    activeConfig.ai = { ...DEFAULTS.ai, ...(activeConfig.ai || {}) };
+    // v1.7.1 shipped maxKeyAttempts=1 as its fast default; v1.10 rotates up to
+    // three eligible keys per provider to avoid repeatedly selecting one failing key.
+    if (activeConfig.ai.maxKeyAttempts === 1) activeConfig.ai.maxKeyAttempts = 3;
+    await appendRecord('config.replace', { config: activeConfig, changedBy: 'system:migration', reason: 'v1.10.0 public creator identity, relationship profiles, and fair provider key rotation' });
   }
   activeConfig.security = { ...DEFAULTS.security, ...(activeConfig.security || {}) };
   delete activeConfig.security.masterExecEnabled;
@@ -269,6 +286,8 @@ function validateConfig(c) {
   if (typeof c.whatsapp?.sessionDir !== 'string' || !c.whatsapp.sessionDir.trim()) throw new Error('whatsapp.sessionDir wajib diisi');
   if (!['single', 'multi', 'none'].includes(c.prefix?.mode)) throw new Error('prefix.mode tidak valid');
   if (!/^\d{8,15}$/.test(String(c.bot?.owner || ''))) throw new Error('bot.owner harus berupa nomor internasional tanpa +');
+  for (const key of ['ownerName', 'creatorName', 'organization']) if (typeof c.bot?.[key] !== 'string' || !c.bot[key].trim() || c.bot[key].length > 80) throw new Error(`bot.${key} wajib berupa teks 1-80 karakter`);
+  if (typeof c.bot?.publicCreatorDisclosure !== 'boolean') throw new Error('bot.publicCreatorDisclosure harus boolean');
   if (!Number.isInteger(c.database?.segmentMaxBytes) || c.database.segmentMaxBytes < 65536) throw new Error('database.segmentMaxBytes minimal 65536');
   if (!Number.isInteger(c.database?.archiveMaxCount) || c.database.archiveMaxCount < 1) throw new Error('database.archiveMaxCount minimal 1');
   if (c.ai && (!Array.isArray(c.ai.providerOrder) || c.ai.providerOrder.some(name => !['gemini','groq','deepseek','openai'].includes(name)))) throw new Error('ai.providerOrder berisi provider tidak dikenal');
@@ -276,7 +295,9 @@ function validateConfig(c) {
   if (c.ai && (!Number.isInteger(c.ai.totalBudgetMs) || c.ai.totalBudgetMs < 3000 || c.ai.totalBudgetMs > 120000)) throw new Error('ai.totalBudgetMs harus 3000-120000');
   if (c.ai && (!Number.isInteger(c.ai.coalesceMs) || c.ai.coalesceMs < 0 || c.ai.coalesceMs > 2000)) throw new Error('ai.coalesceMs harus 0-2000');
   if (c.ai && (!Number.isInteger(c.ai.maxOutputTokens) || c.ai.maxOutputTokens < 64 || c.ai.maxOutputTokens > 32768)) throw new Error('ai.maxOutputTokens harus 64-32768');
-  for (const key of ['enabled', 'aiExecutionEnabled', 'publicTunnelEnabled']) if (typeof c.codeLab?.[key] !== 'boolean') throw new Error(`codeLab.${key} harus boolean`);
+  for (const key of ['enabled', 'aiExecutionEnabled', 'publicTunnelEnabled', 'websiteBuilderEnabled']) if (typeof c.codeLab?.[key] !== 'boolean') throw new Error(`codeLab.${key} harus boolean`);
+  if (!Number.isInteger(c.codeLab?.websiteBuilderConcurrency) || c.codeLab.websiteBuilderConcurrency < 1 || c.codeLab.websiteBuilderConcurrency > 4) throw new Error('codeLab.websiteBuilderConcurrency harus 1-4');
+  if (!Number.isInteger(c.codeLab?.websiteBuilderQueueLimit) || c.codeLab.websiteBuilderQueueLimit < 0 || c.codeLab.websiteBuilderQueueLimit > 40) throw new Error('codeLab.websiteBuilderQueueLimit harus 0-40');
   if (!Number.isInteger(c.codeLab?.port) || c.codeLab.port < 1024 || c.codeLab.port > 65535) throw new Error('codeLab.port harus 1024-65535');
   if (!Number.isInteger(c.codeLab?.ttlMs) || c.codeLab.ttlMs < 60000 || c.codeLab.ttlMs > 3600000) throw new Error('codeLab.ttlMs harus 60000-3600000');
   if (!Number.isInteger(c.codeLab?.maxRuntimeMs) || c.codeLab.maxRuntimeMs < 5000 || c.codeLab.maxRuntimeMs > 600000) throw new Error('codeLab.maxRuntimeMs harus 5000-600000');
