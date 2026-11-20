@@ -1,3 +1,27 @@
+## [1.10.5] - 2026-11-21
+
+### Added
+- Added Nexora Project Library with persistent per-user website repositories, canonical PN-derived user namespaces, per-chat active repository selection, project memory, task history, file hashes, local Git commits, and bounded version snapshots.
+- Separated permanent website source from temporary Code Lab preview sessions so previews can expire or be republished without deleting project source.
+- Added incremental repository updates using changed-file manifests and explicit deletions; untouched files are preserved. Added static local-reference auditing for HTML assets, CSS URLs, and JavaScript imports before a project version is committed.
+- Added `.project list/status/storage/use/history/memory/zip/export` commands and per-user ZIP preferences (`ask`, `always`, `off`).
+- Added explicit repository-only ZIP exports with secret/symlink/path checks. ZIPs exclude the library parent, other users, `.git`, metadata, history, temporary files, runtime data, and credentials.
+- Added user-private workspace quota accounting for repository source, Git data, and retained snapshots, plus serialized per-user write transactions.
+- Restricted Project Library operations and ZIP delivery to private WhatsApp chats to prevent accidental source disclosure in groups.
+
+### Fixed
+- Metadata-only active-project lookup no longer loads full website source files into the AI request path.
+- A manual ZIP request remains available even when automatic ZIP delivery is set to `off`.
+- Failed project writes roll back the staged repository and do not prune prior history before the new version is committed.
+- Queued same-user edits re-read the latest committed repository only after acquiring the build slot, preventing stale queued source from overwriting an earlier update. ZIP generation is serialized against repository writes.
+- Project storage status measures the same source + Git + snapshot footprint used by quota enforcement.
+- User-facing project status does not disclose the absolute host Project Library root.
+
+### Validation
+- Added unit/integration coverage for user isolation, incremental updates, project memory, version snapshots, local-reference auditing, export allowlisting, and private-chat restrictions.
+- Final local suite: 117 passed, 2 skipped, 0 failed (119 total); syntax check: 115 JavaScript files.
+- Live WhatsApp and public preview delivery still require deployment verification. Project Library is a logical private filesystem workspace, not a dedicated per-user Docker/Podman container.
+
 ## [1.10.3] - 2026-11-21
 
 ### Fixed

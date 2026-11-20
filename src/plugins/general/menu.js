@@ -14,6 +14,10 @@ export default {
       `${prefix}profile · XP, level, role, dan rank`,
       `${prefix}runtime · informasi runtime`,
       `${prefix}run python/node/html · jalankan kode & buat preview web sementara`,
+      `${prefix}project list/status · repository website pribadimu`,
+      `${prefix}project use <slug> · lanjutkan repository`,
+      `${prefix}project zip · ekspor source repository saja`,
+      `${prefix}project export ask/always/off · atur pengiriman ZIP`,
       `${prefix}groupinfo · metadata grup tersimpan`,
       '',
       '*OWNER / DEVELOPER*',
@@ -48,7 +52,8 @@ export default {
         { title: 'My profile', description: 'XP, level, role, dan rank', id: `${prefix}profile` },
         { title: 'Group info', description: 'Metadata grup tersimpan', id: `${prefix}groupinfo` },
         { title: 'Runtime', description: 'Status runtime', id: `${prefix}runtime` },
-        { title: 'Run code', description: 'Jalankan kode pada worker terisolasi', id: `${prefix}run` }
+        { title: 'Run code', description: 'Jalankan kode pada worker terisolasi', id: `${prefix}run` },
+        { title: 'My projects', description: 'Repository website pribadi dan project memory', id: `${prefix}project list` }
       ]},
       { title: 'Owner & developer', rows: [
         { title: 'AI status', description: 'Provider dan fallback AI', id: `${prefix}aistatus` },

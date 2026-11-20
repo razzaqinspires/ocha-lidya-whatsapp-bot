@@ -6,7 +6,7 @@
 import { initializeDatabase, appendRecord, getRecords, getLatestConfigRecord, configureDatabase } from './core/database.js';
 
 const DEFAULTS = Object.freeze({
-  schemaVersion: 20,
+  schemaVersion: 21,
   bot: { name: 'Ocha Lidya', aliases: ['Ocha', 'Lidya'], owner: '6283193905842', ownerName: 'Arifi Razzaq', creatorName: 'Arifi Razzaq', organization: 'Razzaq Ventures', publicCreatorDisclosure: true, expectedNumber: '6282177461231' },
   whatsapp: { authMode: 'pairing', pairingNumber: '6282177461231', browserName: 'Chrome', sessionDir: 'sessions/ocha-lidya', recoverInvalidSession: true, connectTimeoutMs: 60000, queryTimeoutMs: 60000, keepAliveIntervalMs: 25000 },
   logging: { level: 'info', color: 'auto', timeZone: 'Asia/Jakarta' },
@@ -33,7 +33,7 @@ const DEFAULTS = Object.freeze({
   },
   features: { autoRead: false, autoTyping: false, selfModeReply: false, groupsMuted: true },
   ai: { enabled: true, providerOrder: ['groq', 'gemini', 'deepseek', 'openai'], models: { gemini: 'gemini-3.8-flash', groq: 'openai/gpt-oss-20b', deepseek: 'deepseek-flash', openai: 'gpt-6-luna' }, timeoutMs: 3500, totalBudgetMs: 14000, maxOutputTokens: 180, temperature: 0.5, historyMessages: 3, maxInputChars: 3500, coalesceMs: 80, maxKeyAttempts: 3 },
-  codeLab: { enabled: true, aiExecutionEnabled: true, publicTunnelEnabled: true, websiteBuilderEnabled: true, websiteBuilderConcurrency: 2, websiteBuilderQueueLimit: 8, tunnelIdleMs: 300000, cloudflaredBin: 'cloudflared', containerRuntime: 'auto', port: 8787, ttlMs: 3600000, maxRuntimeMs: 120000, maxSourceBytes: 65536, maxOutputBytes: 49152, maxConcurrent: 2, maxSessionsTotal: 20, maxSessionsPerUser: 2, maxExecutionsPerMinute: 3, pythonImage: 'python:3.12-alpine', nodeImage: 'node:22-alpine' }
+  codeLab: { enabled: true, aiExecutionEnabled: true, publicTunnelEnabled: true, websiteBuilderEnabled: true, websiteBuilderConcurrency: 2, websiteBuilderQueueLimit: 8, tunnelIdleMs: 300000, projectLibraryRoot: '', cloudflaredBin: 'cloudflared', containerRuntime: 'auto', port: 8787, ttlMs: 3600000, maxRuntimeMs: 120000, maxSourceBytes: 65536, maxOutputBytes: 49152, maxConcurrent: 2, maxSessionsTotal: 20, maxSessionsPerUser: 2, maxExecutionsPerMinute: 3, pythonImage: 'python:3.12-alpine', nodeImage: 'node:22-alpine' }
 });
 
 let activeConfig = structuredClone(DEFAULTS);
@@ -245,6 +245,14 @@ export async function loadConfig() {
     activeConfig.codeLab = { ...DEFAULTS.codeLab, ...(activeConfig.codeLab || {}) };
     await appendRecord('config.replace', { config: activeConfig, changedBy: 'system:migration', reason: 'v1.10.2 adaptive container runtime discovery and fallback' });
   }
+  // v1.10.4 schema v21: persistent per-user website repositories, task memory,
+  // local version history, and configurable project-library root.
+  if (activeConfig.schemaVersion < 21) {
+    activeConfig.schemaVersion = 21;
+    activeConfig.codeLab = { ...DEFAULTS.codeLab, ...(activeConfig.codeLab || {}) };
+    if (typeof activeConfig.codeLab.projectLibraryRoot !== 'string') activeConfig.codeLab.projectLibraryRoot = '';
+    await appendRecord('config.replace', { config: activeConfig, changedBy: 'system:migration', reason: 'v1.10.4 persistent isolated user project repositories and project memory' });
+  }
   activeConfig.security = { ...DEFAULTS.security, ...(activeConfig.security || {}) };
   delete activeConfig.security.masterExecEnabled;
   activeConfig.features = { ...DEFAULTS.features, ...(activeConfig.features || {}) };
@@ -322,6 +330,7 @@ function validateConfig(c) {
   if (!Number.isInteger(c.codeLab?.maxSourceBytes) || c.codeLab.maxSourceBytes < 1024 || c.codeLab.maxSourceBytes > 262144) throw new Error('codeLab.maxSourceBytes harus 1024-262144');
   if (!Number.isInteger(c.codeLab?.maxOutputBytes) || c.codeLab.maxOutputBytes < 2048 || c.codeLab.maxOutputBytes > 49152) throw new Error('codeLab.maxOutputBytes harus 2048-49152');
   if (!['auto', 'docker', 'podman'].includes(c.codeLab?.containerRuntime)) throw new Error('codeLab.containerRuntime harus auto, docker, atau podman');
+  if (typeof c.codeLab?.projectLibraryRoot !== 'string' || c.codeLab.projectLibraryRoot.length > 500) throw new Error('codeLab.projectLibraryRoot harus berupa path teks maksimal 500 karakter');
   for (const key of ['cloudflaredBin', 'pythonImage', 'nodeImage']) if (typeof c.codeLab?.[key] !== 'string' || !c.codeLab[key].trim()) throw new Error(`codeLab.${key} wajib diisi`);
 }
 

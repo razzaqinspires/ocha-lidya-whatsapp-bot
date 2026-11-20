@@ -5,7 +5,7 @@ import { createWebsiteSession, updateWebsiteSession } from '../../runtime/code-l
 registerAICapability({
   name: 'website_builder',
   label: 'Nexora Website Builder',
-  description: 'Generate a bounded multi-file static website project and publish it through the shared temporary preview gateway.',
+  description: 'Publish a persistent per-user static website repository through the shared temporary preview gateway.',
   isEnabled: () => {
     const config = getConfig();
     const lab = config.codeLab || {};

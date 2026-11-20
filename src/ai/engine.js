@@ -1,11 +1,13 @@
 import crypto from 'node:crypto';
+import fs from 'node:fs/promises';
 import { appendRecord, getRecords } from '../core/database.js';
 import { getConfig } from '../core/config.js';
 import { logger } from '../core/logger.js';
 import { generateWithProvider, getProviderInventory, initializeProviderKeys, getAIMaintenance, setAIMaintenance, providerNames } from './providers.js';
 import { AIReplyChainStore, AI_REPLY_CHAIN_LIMITS } from './reply-chain.js';
 import { handleCodeExecutionIntent } from './code-execution.js';
-import { isWebsiteBuildIntent, createWebsiteGenerationMessages, normalizeWebsiteProject, runWebsiteBuildSlot } from './website-project.js';
+import { isWebsiteBuildIntent, isExplicitNewWebsiteProject, isProjectExportIntent, createWebsiteGenerationMessages, normalizeWebsiteProject, runWebsiteBuildSlot } from './website-project.js';
+import { getActiveWebsiteProject, getWebsiteProject, saveWebsiteProject, projectUserKey, getProjectExportPreference, setProjectExportPreference, createProjectArchive, removeProjectArchive } from './project-library.js';
 import { invokeAICapability } from './capability-manager.js';
 import './capabilities/code-runner.js';
 import './capabilities/website-builder.js';
@@ -224,81 +226,201 @@ export function resolveAIReplyContext(chat, quotedMessageId) {
   return aiReplyChain.resolve(chat, quotedMessageId);
 }
 
+async function sendWebsiteProjectArchive(sock, message, savedProject) {
+  let archive = null;
+  try {
+    archive = await createProjectArchive({ ownerId: message.sender, projectId: savedProject.projectId });
+    const document = await fs.readFile(archive.path);
+    await sock.sendMessage(message.chat, {
+      document,
+      mimetype: 'application/zip',
+      fileName: archive.fileName,
+      caption: `NEXORA PROJECT LIBRARY\n${archive.project.name}\nVersi ${archive.project.version} · ${archive.files} file\nRepository source saja; folder induk, data pengguna lain, dan kredensial tidak disertakan.`
+    }, { quoted: message });
+    return true;
+  } catch (error) {
+    logger.warn({ projectId: savedProject.projectId, code: error.code, message: error.message }, 'Project ZIP delivery failed; persistent repository remains available');
+    await message.reply(`Repository sudah tersimpan, tetapi ZIP belum dapat dikirim: ${error.message}`);
+    return false;
+  } finally {
+    if (archive?.path) await removeProjectArchive(archive.path).catch(() => {});
+  }
+}
+
 async function handleWebsiteBuild(sock, message, userText, history) {
-  if (!isWebsiteBuildIntent(userText, history)) return { handled: false };
+  let activeProjectRef = null;
+  let lookupError = null;
+  try {
+    activeProjectRef = await getActiveWebsiteProject({ ownerId: message.sender, chatId: message.chat, includeFiles: false });
+  } catch (error) {
+    lookupError = error;
+    logger.warn({ code: error.code, message: error.message }, 'Persistent project lookup failed');
+  }
+  const groupChat = Boolean(message.isGroup || String(message.chat || '').endsWith('@g.us'));
+  const zipPreferenceRequest = /\b(?:zip|arsip|export|ekspor)\b/i.test(userText) && /\b(?:selalu|setiap\s+kali|setiap\s+update|tiap\s+update|hanya|cuma|jangan|tidak|matikan|nonaktifkan)\b/i.test(userText);
+  const websiteIntent = isWebsiteBuildIntent(userText, history, { hasActiveProject: Boolean(activeProjectRef) });
+  const exportIntent = isProjectExportIntent(userText);
+  if (groupChat && (websiteIntent || exportIntent || zipPreferenceRequest)) {
+    await message.reply('Project Library menyimpan source dan memori proyek pribadi per pengguna. Untuk mencegah source atau ZIP terkirim ke anggota grup, buat/kelola website melalui chat pribadi Ocha.');
+    return { handled: true, privateChatRequired: true };
+  }
+  const wantsAlwaysZip = /\b(?:selalu|setiap\s+kali|setiap\s+update|tiap\s+update)\b/i.test(userText) && /\b(?:zip|arsip|export|ekspor)\b/i.test(userText);
+  const wantsDisableZip = /\b(?:jangan|tidak|matikan|nonaktifkan)\b.{0,35}\b(?:zip|arsip|export|ekspor)\b/i.test(userText);
+  const wantsAskZip = /\b(?:hanya|cuma)\b.{0,30}\b(?:kalau|saat|ketika)\b.{0,30}\b(?:minta|diminta)\b.{0,20}\b(?:zip|arsip)\b/i.test(userText);
+  let requestedExportMode = null;
+  if (wantsAlwaysZip || wantsDisableZip || wantsAskZip) {
+    requestedExportMode = wantsDisableZip ? 'off' : wantsAlwaysZip ? 'always' : 'ask';
+    await setProjectExportPreference({ ownerId: message.sender, mode: requestedExportMode });
+    const concreteWebsiteTask = /\b(?:buatkan|buat|bikinkan|bikin|bangun|rancang)\b.{0,90}\b(?:website|web\s*site|situs|landing\s*page)\b/i.test(userText)
+      || /\b(?:fitur|bagian|section|komponen|tombol|form|cart|checkout|keranjang|header|footer|hero|layout|navigasi|warna|font|produk|katalog|bug|error)\b/i.test(userText);
+    if (!concreteWebsiteTask) {
+      const detail = requestedExportMode === 'always' ? 'Ocha akan mengirim ZIP setelah setiap website dibuat atau diperbarui.' : requestedExportMode === 'off' ? 'Pengiriman ZIP otomatis dimatikan; ekspor manual tetap tersedia.' : 'Ocha hanya mengirim ZIP ketika kamu memintanya.';
+      await message.reply(`Preferensi Project Library disimpan: ${requestedExportMode.toUpperCase()}. ${detail}`);
+      return { handled: true, preferenceUpdated: true, mode: requestedExportMode };
+    }
+  }
+  if (!websiteIntent) {
+    if (exportIntent && activeProjectRef) {
+      await message.reply(`Menyiapkan ZIP repository ${activeProjectRef.slug} v${activeProjectRef.version}.`);
+      await sendWebsiteProjectArchive(sock, message, activeProjectRef);
+      return { handled: true, exported: true, projectId: activeProjectRef.projectId };
+    }
+    return { handled: false };
+  }
+  if (lookupError) {
+    await message.reply(`Project Library belum dapat dibaca: ${lookupError.message}`);
+    return { handled: true, error: lookupError };
+  }
+
   const config = getConfig();
   const lab = config.codeLab || {};
-  if (!lab.websiteBuilderEnabled) {
+  if (!lab.enabled || !lab.websiteBuilderEnabled) {
     await message.reply('Nexora Website Builder sedang dinonaktifkan oleh owner.');
     return { handled: true, disabled: true };
   }
   if (!lab.aiExecutionEnabled) {
-    await message.reply('Website Builder tersedia, tetapi Auto-run sedang OFF. Owner perlu mengaktifkan `.nexora auto-run on` agar proyek dapat dibuat dan dipratinjau otomatis.');
-    return { handled: true, disabled: true };
-  }
-  if (!lab.publicTunnelEnabled) {
-    await message.reply('Website Builder tidak dapat menerbitkan preview karena tunnel publik sedang OFF.');
+    await message.reply('Website Builder tersedia, tetapi Auto-run sedang OFF. Owner perlu mengaktifkan `.nexora auto-run on` agar Ocha dapat membangun dan memperbarui repository secara otomatis.');
     return { handled: true, disabled: true };
   }
 
+  const explicitCreate = /\b(?:buatkan|buat|bikinkan|bikin|bangun|rancang)\b.{0,65}\b(?:website|web\s*site|situs|landing\s*page)\b/i.test(userText);
+  const referencesCurrent = /\b(?:website|proyek|project|repo|repository)\s+(?:ini|tadi|sebelumnya|yang\s+aktif)\b|\b(?:lanjutkan|teruskan|revisi|perbarui|update)\b/i.test(userText);
+  const describesFeature = /\b(?:fitur|bagian|section|komponen|tombol|form|cart|checkout|keranjang|header|footer|hero|layout|navigasi|warna|font|halaman)\b/i.test(userText);
+  const createNew = !activeProjectRef || isExplicitNewWebsiteProject(userText) || (explicitCreate && !referencesCurrent && !describesFeature);
+  // Resolve the repository snapshot only after this job obtains its per-user
+  // execution slot. Otherwise two queued edits can both read v1 and the later
+  // job can overwrite changes committed by the earlier job.
+  let existingProject = null;
+  let previewSession = null;
   const key = conversationKey(message.chat, message.sender);
   const id = crypto.randomUUID();
-  const existingProject = getLatestWebsiteProject({ ownerId: message.sender, chatId: message.chat });
   const job = {
     id, chat: message.chat, sender: message.sender, key,
-    messages: createWebsiteGenerationMessages(userText, history, existingProject),
-    userText, maxOutputTokens: 8192, providerTimeoutMs: 45_000, totalBudgetMs: 90_000,
+    messages: [],
+    userText, maxOutputTokens: 12288, providerTimeoutMs: 60_000, totalBudgetMs: 120_000,
     createdAt: new Date().toISOString()
   };
-  void checkpoint(id, 'queued', { job, task: 'website_build', createdAt: job.createdAt }, { defer: true });
+  void checkpoint(id, 'queued', { job, task: 'website_build', existingProjectId: createNew ? null : activeProjectRef?.projectId || null, createdAt: job.createdAt }, { defer: true });
   await persistTurn(job, 'user', userText, {}, { defer: true });
   void setComposing(sock, message.chat, 'composing');
   try {
-    const { generated, result } = await runWebsiteBuildSlot(async () => {
-    const generated = await executeWithFallback(job);
-    let project;
-    try { project = normalizeWebsiteProject(generated.text); }
-    catch (firstError) {
-      const repairJob = {
-        ...job,
-        id: crypto.randomUUID(),
-        messages: [
-          { role: 'system', content: 'Perbaiki keluaran berikut menjadi JSON proyek website valid sesuai schema {"title":"...","summary":"...","files":[{"path":"index.html","content":"..."}]}. Kembalikan JSON saja. Pertahankan isi dan desain sejauh mungkin. Wajib index.html. Jangan sertakan Markdown.' },
-          { role: 'user', content: String(generated.text || '').slice(0, 24_000) }
-        ],
-        maxOutputTokens: 8192
-      };
-      const repaired = await executeWithFallback(repairJob);
-      try { project = normalizeWebsiteProject(repaired.text); }
-      catch { throw new Error(`Manifest website tidak lolos validasi: ${firstError.message}`); }
+    const { generated, project, savedProject } = await runWebsiteBuildSlot(async () => {
+      existingProject = createNew ? null : await getWebsiteProject({ ownerId: message.sender, projectId: activeProjectRef.projectId });
+      if (!createNew && !existingProject) throw new Error('Repository aktif tidak ditemukan saat giliran build dimulai. Tidak ada source yang diubah.');
+      previewSession = existingProject ? getLatestWebsiteProject({ ownerId: message.sender, chatId: message.chat }) : null;
+      job.messages = createWebsiteGenerationMessages(userText, history, existingProject);
+      const generated = await executeWithFallback(job);
+      let project;
+      try { project = normalizeWebsiteProject(generated.text, existingProject); }
+      catch (firstError) {
+        const repairSchema = existingProject
+          ? 'JSON update repository dengan schema {"title":"...","summary":"...","changes":[{"path":"...","content":"SELURUH FILE"}],"deletedFiles":[],"projectMemory":{"summary":"...","architecture":"...","features":[],"decisions":[],"nextSteps":[]}}. File tidak disebut harus dipertahankan. Path aman dan index.html harus tetap ada.'
+          : 'JSON proyek baru dengan schema {"title":"...","summary":"...","files":[{"path":"index.html","content":"..."}],"projectMemory":{"summary":"...","architecture":"...","features":[],"decisions":[],"nextSteps":[]}}.';
+        const repairJob = {
+          ...job,
+          id: crypto.randomUUID(),
+          messages: [
+            { role: 'system', content: `Perbaiki keluaran model agar menjadi JSON valid sesuai schema berikut: ${repairSchema} Kembalikan JSON saja tanpa Markdown. Jangan menambah kredensial atau external network.` },
+            { role: 'user', content: `Konteks validasi: ${firstError.message}\nKeluaran yang perlu diperbaiki:\n${String(generated.text || '').slice(0, 48_000)}` }
+          ],
+          maxOutputTokens: 12288
+        };
+        const repaired = await executeWithFallback(repairJob);
+        try { project = normalizeWebsiteProject(repaired.text, existingProject); }
+        catch { throw new Error(`Manifest website tidak lolos validasi: ${firstError.message}`); }
+      }
+      const savedProject = await saveWebsiteProject({
+        ownerId: message.sender,
+        chatId: message.chat,
+        projectId: existingProject?.projectId || null,
+        title: project.title,
+        summary: project.summary,
+        files: project.files,
+        projectMemory: project.projectMemory,
+        task: userText
+      });
+      return { generated, project, savedProject };
+    }, {
+      concurrency: lab.websiteBuilderConcurrency,
+      queueLimit: lab.websiteBuilderQueueLimit,
+      userKey: projectUserKey(message.sender),
+      perUserConcurrency: 1,
+      perUserQueueLimit: 2
+    });
+
+    let previewResult = null;
+    let previewError = '';
+    if (lab.publicTunnelEnabled) {
+      try {
+        previewResult = await invokeAICapability('website_builder', {
+          ...project,
+          existingSessionId: previewSession?.id || null
+        }, { message });
+      } catch (error) {
+        previewError = String(error.message || 'Preview gateway belum siap').slice(0, 500);
+        logger.warn({ projectId: savedProject.projectId, code: error.code, message: previewError }, 'Website saved but public preview could not be published');
+      }
+    } else {
+      previewError = 'Public preview tunnel sedang OFF. Source tetap tersimpan di Project Library.';
     }
-    const result = await invokeAICapability('website_builder', { ...project, existingSessionId: existingProject?.id }, { message });
-    return { generated, result };
-    }, { concurrency: lab.websiteBuilderConcurrency, queueLimit: lab.websiteBuilderQueueLimit });
-    const expires = new Date(result.expiresAt).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
+
+    const exportMode = requestedExportMode || await getProjectExportPreference({ ownerId: message.sender });
+    const shouldExport = exportMode === 'always' || (isProjectExportIntent(userText) && !zipPreferenceRequest);
+    const taskStatus = createNew ? 'repository baru dibuat' : 'repository diperbarui';
     const response = [
-      existingProject ? '*NEXORA WEBSITE BUILDER · PROYEK DIPERBARUI*' : '*NEXORA WEBSITE BUILDER · PREVIEW SIAP*',
-      `Proyek: ${result.title}`,
-      `File: ${result.fileCount} · ${result.totalBytes} byte · versi ${result.version || 1}`,
-      `Status: ${result.status.toUpperCase()}`,
+      createNew ? '*NEXORA PROJECT LIBRARY · REPOSITORY BARU*' : '*NEXORA PROJECT LIBRARY · REPOSITORY DIPERBARUI*',
+      `Proyek: ${savedProject.name}`,
+      `Repository: ${savedProject.slug}`,
+      `Versi: v${savedProject.version} · ${savedProject.fileCount} file · ${savedProject.totalBytes} byte`,
+      `Penyimpanan: ${taskStatus} secara permanen`,
+      `Git lokal: ${savedProject.gitEnabled ? `aktif · ${savedProject.gitCommit || 'commit tersimpan'}` : 'tidak tersedia; source tetap tersimpan dan versi dicatat'}`,
+      `Project memory: ${savedProject.tasks.length} task tercatat · ${savedProject.projectMemory.nextSteps?.length || 0} tindak lanjut`,
       '',
-      result.previewUrl,
+      `Workspace: private/${savedProject.slug}/ (terisolasi per pengguna)`,
       '',
-      result.summary,
+      previewResult?.previewUrl || `Preview: belum diterbitkan. ${previewError}`,
+      ...(previewResult ? [`Preview sementara berakhir: ${new Date(previewResult.expiresAt).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })} WIB.`] : []),
       '',
-      `Preview sementara berakhir: ${expires} WIB (maksimal 60 menit).`,
-      'Ini adalah website frontend statis. Backend, login sungguhan, database, pembayaran, dan API belum dibuat kecuali dikonfigurasi terpisah.'
+      savedProject.summary || project.summary,
+      '',
+      'Website saat ini berupa frontend statis. Login produksi, database, backend, pembayaran, dan API sungguhan memerlukan layanan backend terpisah.',
+      shouldExport ? 'ZIP repository sedang dikirim sebagai dokumen terpisah.' : `ZIP: mode ${exportMode}. Gunakan ".project zip" untuk ekspor kapan saja.`
     ].join('\n');
     await persistTurn(job, 'assistant', response, { provider: generated.provider, model: generated.model }, { defer: true });
-    void checkpoint(id, 'delivered', { task: 'website_build', provider: generated.provider, model: generated.model, previewUrl: result.previewUrl, projectFiles: result.fileCount }, { defer: true });
+    void checkpoint(id, 'delivered', {
+      task: 'website_build', projectId: savedProject.projectId, version: savedProject.version,
+      provider: generated.provider, model: generated.model, previewUrl: previewResult?.previewUrl || null,
+      projectFiles: savedProject.fileCount, totalBytes: savedProject.totalBytes
+    }, { defer: true });
     await setComposing(sock, message.chat, 'paused');
     await message.reply(response);
-    logger.info({ jobId: id, provider: generated.provider, fileCount: result.fileCount, totalBytes: result.totalBytes, projectVersion: result.version || 1, updated: Boolean(result.updated), chat: message.chat }, 'Nexora website project generated or updated');
-    return { handled: true, result };
+    if (shouldExport) await sendWebsiteProjectArchive(sock, message, savedProject);
+    logger.info({ jobId: id, projectId: savedProject.projectId, projectVersion: savedProject.version, fileCount: savedProject.fileCount, totalBytes: savedProject.totalBytes, updated: !createNew, previewPublished: Boolean(previewResult), chat: message.chat }, 'Nexora persistent website project generated or updated');
+    return { handled: true, result: { savedProject, previewResult, project } };
   } catch (error) {
     await setComposing(sock, message.chat, 'paused');
-    logger.warn({ jobId: id, code: error.code, message: error.message }, 'Nexora website build failed');
-    const response = `NEXORA WEBSITE BUILDER\nPembuatan website gagal: ${error.message}\n\nPastikan provider AI, Code Lab, dan TryCloudflare siap melalui .nexora status.`;
+    logger.warn({ jobId: id, code: error.code, message: error.message }, 'Nexora website project build failed');
+    const response = `NEXORA PROJECT LIBRARY\nPembuatan atau pembaruan repository gagal: ${error.message}\n\nRepository lama tidak dihapus. Periksa provider AI, kuota Project Library, dan .nexora status.`;
     await persistTurn(job, 'assistant', response, {}, { defer: true });
     await message.reply(response);
     return { handled: true, error };

@@ -1,57 +1,84 @@
-# Nexora Website Builder (v1.9.0)
+# Nexora Website Builder (v1.10.5)
 
 ## Purpose
 
-Nexora Website Builder turns a natural-language website request into a complete, multi-file static frontend project and publishes a temporary preview through the existing shared Code Lab gateway and its single persistent TryCloudflare process.
+Nexora Website Builder converts a natural-language request into a static multi-file website, saves the source in a durable per-user Project Library, and publishes a separate temporary preview through the existing shared Code Lab gateway and Quick Tunnel. The source repository is no longer tied to the in-memory preview session or its TTL.
 
 ## Request flow
 
-1. The AI engine detects a website creation request in a private chat or an explicitly addressed/replied group conversation.
-2. The existing provider manager selects configured API keys and providers using its existing health, retry, and failover policies.
-3. Nexora asks the selected model for a strict JSON project manifest.
-4. The manifest validator enforces the file count, extension allowlist, path safety, per-file size, total size, and `index.html` requirement.
-5. If the same sender and chat already have a live website project, the builder includes its current files as revision context and atomically updates that session; otherwise it creates a new short-lived in-memory session.
-6. The shared gateway serves the project under a tokenized URL. A revision preserves the same preview URL and increments the project version. The website is rendered inside a sandboxed iframe without `allow-same-origin`.
-7. The session expires within the configured TTL (maximum 60 minutes) and its in-memory files and token are cleared.
+1. Website creation and project operations are accepted in a private WhatsApp chat only.
+2. The message pipeline resolves the sender from Baileys PN metadata. Project Library derives a non-reversible per-user directory key from that canonical sender identity.
+3. Nexora reads the active project pointer for that sender/chat. If the user asks for a new project, it creates a separate repository; otherwise follow-up requests target the selected repository.
+4. The provider manager generates a strict JSON manifest. For a new project, it returns a file list. For an update, it returns complete changed files and explicit deletions; files not included in the change list are retained.
+5. The validator enforces paths, extensions, file count and byte limits, index.html, secret-pattern screening, and basic local-reference checks across HTML, CSS, and JavaScript imports.
+6. Project Library writes to a staging directory, snapshots the previous version, commits to a local Git repository when Git is available, checks the real per-user storage quota, then atomically installs metadata and source. Failed writes restore the previous repository.
+7. Nexora separately requests a preview session. Preview failure or TTL expiry does not delete the permanent repository.
+8. ZIP delivery follows each user's persisted `ask`, `always`, or `off` preference. Archives are built from the selected repository's explicit allowlist, never from `/root` or the Project Library parent.
+
+## Project storage
+
+The default root when running as root is `/root/ocha-project-library/<user-hash>/<repository-slug>/`. Metadata, per-chat active pointers, user ZIP preferences, version snapshots, and temporary archives are stored in separate internal directories outside the repository. The user-facing assistant reports a logical `private/<repository-slug>/` workspace label, not the complete host root.
+
+This is a private filesystem workspace scoped by canonical WhatsApp sender, not an individual Docker/Podman container for each user. Static website projects do not start their own terminals, processes, or tunnels. Code execution remains in Code Lab's temporary isolated workers.
+
+See `docs/PROJECT_LIBRARY.md` for quotas, layout, permissions, memory, Git/history, and recovery details.
+
+## Project memory and iterative updates
+
+Every repository keeps a project summary, architecture notes, features, decisions, next steps, the latest 24 task records, file hashes, and version metadata. The AI prompt treats existing source as untrusted data and asks the model to map the requested change to affected files, preserve unrelated features, maintain the existing design system, audit dependencies, and avoid guessing at files omitted from context. Common local asset references are validated before persistence. Invalid manifests and reference errors can be sent through one bounded repair attempt; an invalid repair is not saved.
+
+A project can be continued after Ocha restarts by selecting it with `.project use <slug>`. Preview sessions are independent and may need a new URL after expiry or tunnel recreation.
+
+## User commands
+
+```text
+.project help
+.project list
+.project status
+.project storage
+.project use <slug|id>
+.project history
+.project memory
+.project zip [slug|id]
+.project export ask
+.project export always
+.project export off
+```
+
+`ask` is the default. `always` sends a ZIP after every successful build or update. `off` disables automatic exports but does not prohibit a manual ZIP request. Preferences are per user and persist across restarts. All commands are private-chat-only; group members cannot access another participant's repository or receive its ZIP.
+
+## Limits and scheduling
+
+- Up to 80 files per project, 512 KiB per file, and 4 MiB of current source per project.
+- Up to 40 projects and 256 MiB combined source/Git/snapshot storage per user.
+- Up to 12 retained snapshots per project, limited by the shared user quota.
+- Maximum ZIP size 16 MiB.
+- Website generation uses a fair bounded queue, up to four global concurrent builds, one active build per user, and up to two waiting builds per user.
 
 ## Supported project format
 
 - Static HTML, CSS, browser JavaScript, SVG, JSON, TXT, Web Manifest, and XML.
-- Up to 20 files.
-- Up to 64 KiB per file and 256 KiB total.
-- `index.html` must exist at the project root.
-- No npm/pip install, CDN, external script, external font, external API, database, server-side runtime, analytics, tracking, or service worker.
-- The preview CSP disables network connections (`connect-src 'none'`) and form submissions. The iframe sandbox omits `allow-same-origin`.
+- Relative, validated local paths only; no hidden folders, `.git`, `.env`, sessions, data, or node_modules.
+- No npm/pip install, CDN, external scripts/fonts/images/APIs, tracking, or outbound network dependencies in preview.
+- The preview CSP blocks outbound connections. The iframe is sandboxed without `allow-same-origin`.
 
 ## Backend limitation
 
-This release creates static frontend websites and interactive prototypes. Real authentication, payments, databases, private APIs, server-side rendering, and persistent production hosting are not implemented by this builder. If a user asks for those, Nexora must label the generated result as a frontend demo and must not claim that backend services exist.
+The builder creates static frontend websites and interactive prototypes. Real authentication, payment processing, databases, private APIs, server-side rendering, production hosting, and persistent application workers are not implemented by the static builder. If requested, Nexora must label such behavior as a frontend demo or identify the additional backend work; it must not claim that a real backend exists.
 
-## Owner controls
+## Cloudflare preview limitation
 
-- `.nexora builder on/off` enables or disables the Website Builder globally.
-- `.nexora builder-workers 1-4` controls simultaneous AI website generations.
-- The default generation queue is bounded to eight waiting jobs; overflow is rejected with a retry message.
-- `.nexora auto-run on/off` controls automatic generation-to-preview execution.
-- `.nexora tunnel on/off` controls the one shared public tunnel.
-- `.nexora all on/off` toggles AI, Code Lab, auto-run, tunnel, and Website Builder together.
-- `.nexora status` displays the registered capability state.
+The public preview is a temporary bearer link served through the one shared Quick Tunnel. It can expire and its hostname can change when the tunnel is recreated. Quick Tunnel is for development/testing, not production hosting. No project repository depends on the preview hostname or tunnel process.
 
-All controls are owner-only and global across bot users.
+## Security and privacy
 
-## Resource behavior
-
-Website projects are served from bounded in-memory file maps. They do not create one process, terminal, tab, tunnel, or container per file. Static site sessions consume no Code Lab execution worker. Website generation uses a separate bounded in-process queue (default two concurrent generations and eight waiting jobs); it does not spawn background terminals or per-job daemons. They share the existing global session cap and per-user session cap. The configured TTL is capped at 60 minutes.
-
-## Security notes
-
-- Paths are validated and traversal/hidden paths are rejected.
-- File types are allowlisted and content is served with `nosniff`.
-- The project iframe is sandboxed without same-origin privileges.
-- CSP blocks outbound connections, external scripts/styles/fonts/images, object embeds, and form submissions.
-- Preview URLs are bearer links: anyone who obtains the URL can view the preview until expiration.
-- Do not place credentials, personal data, or secrets in generated websites.
+- Project data is namespaced by the canonical PN sender supplied by the WhatsApp message pipeline; display names and message claims are not identity.
+- Repository files and internal metadata use restrictive local permissions.
+- Users can only list, select, update, inspect, and export projects under their own user key.
+- Project operations are rejected in group chats.
+- Exports contain only validated files from one selected repository and a generated README. They exclude the library root, other users, Git metadata, internal metadata, snapshots, temporary files, environment files, sessions, and runtime data.
+- Export rechecks symlinks and common credential patterns. Do not store credentials or personal secrets in frontend source.
 
 ## Validation
 
-The unit tests validate intent detection, manifest parsing, path traversal rejection, extension restrictions, file-size limits, and the generation prompt. They do not prove that a real external AI provider will always return valid JSON, nor do they replace VPS tests with Docker/Podman and a live Quick Tunnel.
+Unit/integration tests cover per-user isolation, active project selection, incremental updates, task memory, version snapshots, local-reference validation, queue fairness, ZIP allowlisting, traversal rejection, and preference isolation. A local mocked provider verifies the application flow; a real provider, WhatsApp private chat, disk quota, and live Quick Tunnel still need VPS verification.

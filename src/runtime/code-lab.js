@@ -916,16 +916,16 @@ function stopTunnel() {
 function validateWebsiteFiles(files) {
   const entries = Object.entries(files || {});
   const allowedExtensions = new Set(['.html', '.css', '.js', '.mjs', '.svg', '.json', '.txt', '.webmanifest', '.xml']);
-  if (!entries.length || entries.length > 20 || !Object.hasOwn(files || {}, 'index.html')) throw new Error('Proyek website tidak valid atau tidak memiliki index.html.');
+  if (!entries.length || entries.length > 80 || !Object.hasOwn(files || {}, 'index.html')) throw new Error('Proyek website tidak valid atau tidak memiliki index.html.');
   let totalBytes = 0;
   const safeFiles = Object.create(null);
   for (const [filePath, content] of entries) {
     const extension = path.posix.extname(filePath).toLowerCase();
-    if (typeof content !== 'string' || filePath.length > 140 || filePath.startsWith('/') || filePath.includes('\\') || filePath.includes('\0') || !allowedExtensions.has(extension) || filePath.split('/').some(part => !part || part === '.' || part === '..' || part.startsWith('.'))) throw new Error(`Path/konten website tidak aman: ${filePath}`);
+    if (typeof content !== 'string' || filePath.length > 180 || filePath.startsWith('/') || filePath.includes('\\') || filePath.includes('\0') || !allowedExtensions.has(extension) || filePath.split('/').some(part => !part || part === '.' || part === '..' || part.startsWith('.') || ['node_modules', 'sessions', 'data'].includes(part.toLowerCase()))) throw new Error(`Path/konten website tidak aman: ${filePath}`);
     const bytes = Buffer.byteLength(content, 'utf8');
-    if (bytes > 64 * 1024) throw new Error(`File ${filePath} melewati batas 64 KB.`);
+    if (bytes > 512 * 1024) throw new Error(`File ${filePath} melewati batas 512 KB.`);
     totalBytes += bytes;
-    if (totalBytes > 256 * 1024) throw new Error('Total ukuran website melewati batas 256 KB.');
+    if (totalBytes > 4 * 1024 * 1024) throw new Error('Total ukuran website melewati batas 4 MB.');
     safeFiles[filePath] = content;
   }
   return { entries, totalBytes, safeFiles };

@@ -9,6 +9,8 @@ test('natural-language website request generates a validated project and returns
   const original = process.cwd();
   const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'ocha-website-builder-test-'));
   const previousFetch = globalThis.fetch;
+  const previousProjectRoot = process.env.OCHA_PROJECT_LIBRARY_ROOT;
+  process.env.OCHA_PROJECT_LIBRARY_ROOT = path.join(temp, 'persistent-project-library');
   const previousKey = process.env.GROQ_API_KEY;
   const previousKeys = Object.fromEntries(['GEMINI_API_KEY', 'DEEPSEEK_API_KEY', 'OPENAI_API_KEY'].map(key => [key, process.env[key]]));
   process.chdir(temp);
@@ -55,15 +57,21 @@ test('natural-language website request generates a validated project and returns
     };
     const result = await engine.answerMessage(sock, message);
     assert.equal(result.capability, 'website_builder');
-    assert.equal(capturedBody.max_tokens, 8192);
-    assert.match(capturedBody.messages[0].content, /Nexora Website Builder/);
-    assert.match(replyText, /NEXORA WEBSITE BUILDER/);
+    assert.equal(capturedBody.max_tokens, 12288);
+    assert.match(capturedBody.messages[0].content, /Nexora Website Engineer/);
+    assert.match(replyText, /NEXORA PROJECT LIBRARY/);
     assert.match(replyText, /https:\/\/sample\.trycloudflare\.com/);
     assert.match(replyText, /frontend statis/);
+    assert.match(replyText, /Repository: demo-portfolio/);
+    assert.match(replyText, /secara permanen/);
+    const projects = await (await import(pathToFileURL(path.resolve(original, 'src/ai/project-library.js')).href)).listUserProjects({ ownerId: message.sender });
+    assert.equal(projects.length, 1);
+    assert.equal(projects[0].slug, 'demo-portfolio');
     await new Promise(resolve => setTimeout(resolve, 100));
     unregister();
   } finally {
     globalThis.fetch = previousFetch;
+    if (previousProjectRoot === undefined) delete process.env.OCHA_PROJECT_LIBRARY_ROOT; else process.env.OCHA_PROJECT_LIBRARY_ROOT = previousProjectRoot;
     if (previousKey === undefined) delete process.env.GROQ_API_KEY; else process.env.GROQ_API_KEY = previousKey;
     for (const [key, value] of Object.entries(previousKeys)) {
       if (value === undefined) delete process.env[key]; else process.env[key] = value;
