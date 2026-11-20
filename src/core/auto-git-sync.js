@@ -138,8 +138,7 @@ async function reconcileRemote(authEnv) {
   if (remoteIsAncestor.code === 0) return;
   const localIsAncestor = await run('git', ['merge-base', '--is-ancestor', 'HEAD', `origin/${BRANCH}`], { allowFailure: true });
   if (localIsAncestor.code === 0) {
-    await run('git', ['rebase', `origin/${BRANCH}`]);
-    return;
+    throw new Error(`origin/${BRANCH} lebih maju dari HEAD lokal. Auto Git Sync hanya boleh mendorong perubahan lokal; rebase otomatis dinonaktifkan karena dapat mengganti src/*.js ketika bot sedang berjalan dan memicu controlled process restart. Hentikan bot, lalu lakukan git pull --rebase origin ${BRANCH} secara manual.`);
   }
   throw new Error('Branch lokal dan origin/main bercabang. Auto-push dihentikan agar tidak menimpa riwayat GitHub. Selesaikan merge/rebase secara manual.');
 }

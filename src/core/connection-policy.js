@@ -14,9 +14,25 @@ export function getReconnectDelay(attempt, code, { baseMs = 1500, maxMs = 30000,
   return Math.min(maxMs, Math.round(exponential * jitter));
 }
 
-export function shouldStopReconnect(code, { loggedOutCode = 401, badSessionCode = 500 } = {}) {
-  return Number(code) === Number(loggedOutCode) || Number(code) === Number(badSessionCode);
+export function shouldStopReconnect(code, {
+  loggedOutCode = 401,
+  forbiddenCode = 403,
+  multideviceMismatchCode = 411,
+  connectionReplacedCode = 440,
+  badSessionCode = 500
+} = {}) {
+  // Do not enter a reconnect loop when WhatsApp says this session was
+  // replaced by another connection or requires user/session intervention.
+  const terminalCodes = [
+    loggedOutCode,
+    forbiddenCode,
+    multideviceMismatchCode,
+    connectionReplacedCode,
+    badSessionCode
+  ];
+  return terminalCodes.some(value => Number(code) === Number(value));
 }
+
 
 export function shouldRequestPairingCode({ authMode, registered, qr, pairingRequested }) {
   return authMode === 'pairing' && !registered && Boolean(qr) && !pairingRequested;

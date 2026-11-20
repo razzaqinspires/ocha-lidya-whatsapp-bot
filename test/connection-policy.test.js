@@ -17,11 +17,16 @@ test('uses bounded exponential backoff with jitter', () => {
   assert.equal(getReconnectDelay(5, 408, { random: () => 1 }), 30000);
 });
 
-test('stops reconnecting only for invalidated sessions', () => {
-  assert.equal(shouldStopReconnect(401), true);
-  assert.equal(shouldStopReconnect(500), true);
-  assert.equal(shouldStopReconnect(408), false);
-  assert.equal(shouldStopReconnect(515), false);
+test('stops on invalid, replaced, or user-action-required sessions', () => {
+  assert.equal(shouldStopReconnect(401), true); // loggedOut
+  assert.equal(shouldStopReconnect(403), true); // forbidden
+  assert.equal(shouldStopReconnect(411), true); // multideviceMismatch
+  assert.equal(shouldStopReconnect(440), true); // connectionReplaced
+  assert.equal(shouldStopReconnect(500), true); // badSession
+  assert.equal(shouldStopReconnect(408), false); // connectionLost / timeout
+  assert.equal(shouldStopReconnect(428), false); // connectionClosed
+  assert.equal(shouldStopReconnect(503), false); // service unavailable
+  assert.equal(shouldStopReconnect(515), false); // restartRequired
 });
 
 test('pairing-code request waits for the initial QR readiness event', () => {

@@ -36,10 +36,12 @@ To pair a different account, stop the bot first and back up the session director
 
 - A successful connection resets the retry counter.
 - Baileys `restartRequired` (515), which can occur after a successful pairing handshake, triggers a short-delay socket recreation.
-- Other transient disconnects use exponential backoff with jitter, capped at 30 seconds.
-- In pairing mode, a registered session rejected with `401` is preserved as a timestamped `.invalid-*` backup and one fresh pairing attempt is started when `whatsapp.recoverInvalidSession` is enabled. A second 401 in that process stops, preventing an infinite reset loop. QR mode and bad-session `500` continue to stop without automatic session replacement.
-- A single reconnect timer and a single socket-start guard prevent duplicate socket creation.
-- Credential writes are serialized to avoid overlapping multi-file auth writes.
+- Other transient disconnects (`408`, `428`, `503`, and unknown transient errors) use exponential backoff with jitter, capped at 30 seconds.
+- `515` (`restartRequired`) is an expected post-pairing restart signal and recreates the socket after a 500 ms delay, in the same Node.js process. The next socket waits for pending credential writes before loading the auth state.
+- In pairing mode, a registered session rejected with `401` is preserved as a timestamped `.invalid-*` backup and one fresh pairing attempt is started when `whatsapp.recoverInvalidSession` is enabled. A second 401 in that process stops, preventing an infinite reset loop.
+- `401` (logged out), `403` (forbidden), `411` (multi-device mismatch), `440` (connection replaced), and `500` (bad session) stop automatic reconnect. In particular, `440` is treated as a conflict: inspect and stop any other bot process using this WhatsApp account/session before starting this process again. This stricter local rule avoids two instances repeatedly replacing one another.
+- A single reconnect timer, an active-socket check, a start-in-flight guard, and stale-socket callback checks prevent duplicate socket creation. A late pairing-code response/rejection from a retired socket is ignored.
+- Credential writes are serialized, and reconnect waits for the queue to settle before reloading multi-file auth state.
 
 ## Troubleshooting
 
@@ -64,3 +66,11 @@ The project pins the Baileys dependency version in `package.json` and no longer 
 A saved auth directory with `creds.me` is treated by Baileys as an existing login session, even when a partial/corrupt auth state has `registered: false`. In that case Baileys sends a login handshake (`logging in...`) rather than creating a new registration flow, so no pairing code is requested. If WhatsApp rejects that stored session with `401`, v1.4.4 can quarantine the old directory (preserving it) and make one clean pairing attempt. A transient WebSocket error such as `408` is handled separately with reconnect backoff and does not itself trigger session reset.
 
 Pairing success still needs to be confirmed on the phone and by `connection: open`. Upstream Baileys `7.0.0-rc14` has the documented outstanding issue where the pairing-code method may return a generated code before a server-side error is fully surfaced. The main application therefore does not claim that printing the code proves the server accepted it.
+
+## Socket reconnect versus operating-system process restart
+
+A `connection.update` with `connection: 'close'` does **not** spawn another Node.js process. It detaches the closed socket and schedules `start()` in the existing process; the PID remains the same. The application logs the PID on the connected/closed events so this can be verified.
+
+A second Ocha Lidya bot process (`node src/index.js`) is created only by the controlled source-restart path in `src/index.js`. `watchSourceFiles()` invokes it when a non-plugin JavaScript file under `src/` changes; plugin files are hot-reloaded in place. Auto Git Sync previously rebased `origin/main` automatically when the remote was ahead, which could replace a watched core JavaScript file and trigger that process restart without a manual edit. Auto Git Sync is now push-only: when the remote is ahead, it stops and asks for a manual `git pull --rebase` while the bot is stopped.
+
+The `connection.update` event remains attached with `sock.ev.on(...)`, which is supported by Baileys. The current Baileys event guide recommends `sock.ev.process(...)` for batching multiple event types in one tick, but it is not a requirement for handling `connection.update`; the dedicated listener is valid.

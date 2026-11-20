@@ -66,9 +66,11 @@ await startAutoGitSync();
 let reconnectTimer;
 let restartTimer;
 let activeSocket;
+let socketGeneration = 0;
 let reconnectAttempt = 0;
 let startInFlight = false;
 let restarting = false;
+let shutdownInProgress = false;
 let credsSaveQueue = Promise.resolve();
 let invalidSessionRecoveryUsed = false;
 const processedIncoming = new Map();
@@ -91,20 +93,26 @@ function isDuplicateIncoming(key) {
 }
 
 function requestControlledRestart({ file, event }) {
-  if (restarting) return;
+  if (restarting || shutdownInProgress) return;
   restarting = true;
-  logger.warn({ file, event }, 'Perubahan source inti terdeteksi; proses akan dimulai ulang secara terkontrol');
+  logger.warn({ pid: process.pid, file, event }, 'Perubahan source inti terdeteksi; proses akan dimulai ulang secara terkontrol');
   clearTimeout(restartTimer);
   restartTimer = setTimeout(async () => {
     try { await stopCodeLab(); }
     catch (error) { logger.warn({ message: error.message }, 'Code Lab cleanup before restart failed'); }
-    try { activeSocket?.end?.(new Error(`Source changed: ${file}`)); }
+    const socketToClose = activeSocket;
+    activeSocket = undefined;
+    try { socketToClose?.end?.(new Error(`Source changed: ${file}`)); }
     catch (error) { logger.warn({ err: error }, 'Tidak dapat menutup socket sebelum restart'); }
 
     const child = spawn(process.execPath, process.argv.slice(1), {
       cwd: process.cwd(), env: process.env, detached: true, stdio: 'inherit'
     });
-    child.once('spawn', () => { child.unref(); process.exit(0); });
+    child.once('spawn', () => {
+      logger.warn({ oldPid: process.pid, replacementPid: child.pid, file }, 'Proses pengganti berhasil dibuat oleh source watcher; proses lama akan keluar');
+      child.unref();
+      process.exit(0);
+    });
     child.once('error', error => {
       restarting = false;
       logger.error({ err: error }, 'Gagal menjalankan proses pengganti; proses tetap aktif dan mencoba pulih');
@@ -121,6 +129,7 @@ async function quarantineInvalidSessionAndReconnect() {
   // Finish pending auth writes before moving the directory. The old session is
   // kept as a timestamped backup; it is never recursively deleted.
   await credsSaveQueue;
+  if (restarting || shutdownInProgress || activeSocket) return;
   const source = path.resolve(AUTH_DIR);
   let backup;
   try {
@@ -138,12 +147,15 @@ async function quarantineInvalidSessionAndReconnect() {
 }
 
 function scheduleReconnect(code) {
-  if (restarting || reconnectTimer) return;
+  // A reconnect is permitted only after the previous socket has been detached.
+  // This also blocks late callbacks from a retired socket from creating a second one.
+  if (restarting || shutdownInProgress || activeSocket || reconnectTimer) return;
   const delay = getReconnectDelay(reconnectAttempt, code, { restartRequiredCode: DisconnectReason.restartRequired ?? 515 });
   reconnectAttempt += 1;
   logger.warn({ code, attempt: reconnectAttempt, delayMs: delay }, 'Menjadwalkan koneksi ulang WhatsApp');
   reconnectTimer = setTimeout(() => {
     reconnectTimer = undefined;
+    if (restarting || shutdownInProgress || activeSocket) return;
     start().catch(error => {
       logger.error({ err: error }, 'Koneksi ulang gagal');
       scheduleReconnect(error?.output?.statusCode);
@@ -153,11 +165,17 @@ function scheduleReconnect(code) {
 }
 
 async function start() {
-  if (restarting || startInFlight) return;
+  if (restarting || shutdownInProgress || startInFlight || activeSocket) return;
   startInFlight = true;
+  let sock;
   try {
+    // A 515 restart can arrive just after creds.update. Never load auth state
+    // while a preceding saveCreds() write is still pending.
+    await credsSaveQueue;
+    if (restarting || shutdownInProgress || activeSocket) return;
     const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
-    const sock = makeWASocket({
+    if (restarting || shutdownInProgress || activeSocket) return;
+    sock = makeWASocket({
       auth: state,
       // Baileys expects a recognized browser name here, not the bot's display name.
       // WhatsApp's phone-number pairing flow accepts canonical values such as Chrome (Ubuntu).
@@ -173,8 +191,14 @@ async function start() {
       retryRequestDelayMs: 250,
       getMessage: async () => undefined
     });
-    activeSocket = sock;
     extendSocket(sock);
+    if (restarting || shutdownInProgress) {
+      try { sock.end?.(new Error('Runtime is shutting down or restarting')); } catch {}
+      return;
+    }
+    activeSocket = sock;
+    const generation = ++socketGeneration;
+    logger.info({ pid: process.pid, generation }, 'WhatsApp socket dibuat dalam proses yang sedang berjalan');
 
     let pairingRequested = false;
     sock.ev.on('creds.update', () => {
@@ -185,6 +209,10 @@ async function start() {
     });
 
     sock.ev.on('connection.update', update => {
+      if (activeSocket !== sock) {
+        logger.debug({ pid: process.pid, generation }, 'Mengabaikan update dari socket WhatsApp yang sudah tidak aktif');
+        return;
+      }
       const { connection, lastDisconnect, qr } = update;
 
       if (qr && AUTH_MODE === 'qr') {
@@ -199,24 +227,36 @@ async function start() {
         logger.debug('Baileys pairing readiness signal received; requesting phone-number code');
         void sock.requestPairingCode(PAIRING_NUMBER)
           .then(code => {
+            if (activeSocket !== sock || restarting || shutdownInProgress) {
+              logger.debug('Mengabaikan respons kode pairing dari socket yang sudah tidak aktif');
+              return;
+            }
             logger.info({ phone: `${PAIRING_NUMBER.slice(0, 3)}••••${PAIRING_NUMBER.slice(-3)}` }, 'Kode pairing Ocha Lidya siap');
             process.stdout.write(`\n\n OCHA LIDYA PAIRING CODE: ${code}\n`);
             process.stdout.write('Buka WhatsApp > Perangkat tertaut > Tautkan perangkat > Tautkan dengan nomor telepon.\n\n');
           })
           .catch(error => {
+            // The same socket may already have closed and a replacement may be
+            // connecting. A late rejection from this old request must be inert.
+            if (activeSocket !== sock || restarting || shutdownInProgress) {
+              logger.debug('Mengabaikan kegagalan pairing dari socket yang sudah tidak aktif');
+              return;
+            }
             pairingRequested = false;
             logger.error({ err: error }, 'Gagal meminta kode pairing WhatsApp');
-            // Do not spin on the same socket; a fresh socket is required for another attempt.
-            if (activeSocket === sock) activeSocket = undefined;
+            activeSocket = undefined;
             try { sock.end?.(error); } catch {}
             scheduleReconnect(0);
           });
       }
 
       if (connection === 'open') {
+        if (activeSocket !== sock || restarting || shutdownInProgress) return;
+        clearTimeout(reconnectTimer);
+        reconnectTimer = undefined;
         reconnectAttempt = 0;
         const actual = sock.user?.id?.split(':')[0]?.split('@')[0];
-        logger.info({ bot: actual, expected: getConfig().bot.expectedNumber, groupMute: getConfig().features.groupsMuted ? 'ON' : 'OFF', messageMonitor: getMessageMonitorStats() }, 'Ocha Lidya connected');
+        logger.info({ pid: process.pid, generation, bot: actual, expected: getConfig().bot.expectedNumber, groupMute: getConfig().features.groupsMuted ? 'ON' : 'OFF', messageMonitor: getMessageMonitorStats() }, 'Ocha Lidya connected');
         void resumePendingAI(sock).catch(error => logger.error({ err: error }, 'AI checkpoint recovery failed'));
         void hydrateParticipatingGroupsOnce(sock).catch(error => logger.warn({ err: error }, 'Group cache bootstrap failed'));
         if (actual && actual !== getConfig().bot.expectedNumber) {
@@ -225,10 +265,10 @@ async function start() {
       }
 
       if (connection === 'close') {
-        if (activeSocket !== sock || restarting) return;
         activeSocket = undefined;
+        if (restarting || shutdownInProgress) return;
         const code = lastDisconnect?.error?.output?.statusCode;
-        logger.warn({ code, error: lastDisconnect?.error?.message }, 'Koneksi WhatsApp terputus');
+        logger.warn({ pid: process.pid, generation, code, error: lastDisconnect?.error?.message }, 'Koneksi WhatsApp terputus');
 
         const registeredSession = Boolean(state.creds.registered || state.creds.me?.id);
         if (shouldRecoverInvalidSession({
@@ -245,8 +285,17 @@ async function start() {
           return;
         }
 
-        if (shouldStopReconnect(code, { loggedOutCode: DisconnectReason.loggedOut ?? 401, badSessionCode: DisconnectReason.badSession ?? 500 })) {
-          logger.error({ authDir: AUTH_DIR, registered: registeredSession }, 'Sesi WhatsApp ditolak atau sudah logout. Tidak ada retry otomatis untuk mencegah loop login.');
+        if (shouldStopReconnect(code, {
+          loggedOutCode: DisconnectReason.loggedOut ?? 401,
+          forbiddenCode: DisconnectReason.forbidden ?? 403,
+          multideviceMismatchCode: DisconnectReason.multideviceMismatch ?? 411,
+          connectionReplacedCode: DisconnectReason.connectionReplaced ?? 440,
+          badSessionCode: DisconnectReason.badSession ?? 500
+        })) {
+          const message = Number(code) === Number(DisconnectReason.connectionReplaced ?? 440)
+            ? 'Sesi WhatsApp digantikan koneksi lain (440). Reconnect otomatis dihentikan agar dua instance tidak saling merebut sesi; periksa proses bot lain.'
+            : 'Sesi WhatsApp ditolak atau memerlukan tindakan pengguna. Reconnect otomatis dihentikan untuk mencegah loop login.';
+          logger.error({ code, authDir: AUTH_DIR, registered: registeredSession }, message);
           return;
         }
         // 515 is expected after a successful QR/pairing handshake; reconnect immediately.
@@ -295,19 +344,25 @@ async function start() {
     sock.ev.on('message-receipt.update', updates => {
       observeGroupReceipts(updates);
     });
+  } catch (error) {
+    if (activeSocket === sock) activeSocket = undefined;
+    try { sock?.end?.(error); } catch {}
+    throw error;
   } finally {
     startInFlight = false;
   }
 }
 
-let shutdownInProgress = false;
 async function shutdownRuntime(signal, exitCode = 0) {
   if (shutdownInProgress) return;
   shutdownInProgress = true;
   logger.warn({ signal }, 'Shutting down Ocha runtime and temporary Code Lab sessions');
   clearTimeout(reconnectTimer);
+  reconnectTimer = undefined;
   clearTimeout(restartTimer);
-  try { activeSocket?.end?.(new Error(`Process shutdown: ${signal}`)); } catch {}
+  const socketToClose = activeSocket;
+  activeSocket = undefined;
+  try { socketToClose?.end?.(new Error(`Process shutdown: ${signal}`)); } catch {}
   try { await stopCodeLab(); }
   catch (error) { logger.error({ message: error.message }, 'Code Lab shutdown cleanup failed'); }
   process.exit(exitCode);
