@@ -1,6 +1,6 @@
 {
   "name": "ocha-lidya-whatsapp-bot",
-  "version": "1.10.0",
+  "version": "1.10.1",
   "private": true,
   "type": "module",
   "description": "Ocha Lidya WhatsApp bot with resilient WhatsApp reconnection, QR/pairing-code login, cached group metadata, PN contact indexing, and multi-key provider validation, Nexora multi-file static website builder with same-session revisions, quoted AI reply chains, boosted low-latency inference, prioritized command reply sessions, group metadata navigation, message test lab, independent master runners with AI workload confirmation guard, secure redacted logs, runtime-safe filesystem watchers, global group mute, and message receipt monitoring, public creator identity, adaptive greetings, persistent XP and relationship profile engine, profile card rendering, and fair multi-key provider rotation",

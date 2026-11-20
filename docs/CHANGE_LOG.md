@@ -1,3 +1,20 @@
+## [1.10.1] - 2026-11-21
+
+### Changed
+- Changed the free Cloudflare Quick Tunnel from bot-startup/persistent operation to on-demand startup: the first public preview starts one shared tunnel and all concurrent users reuse that same process and hostname.
+- Added serialized tunnel lifecycle operations and a cross-process exclusive lease with PID/start-time verification, token-bound cleanup, and orphan recovery. A replacement process is not started until the prior `cloudflared` process has closed and its lease has been reconciled.
+- Removed unattended reconnect loops. An unexpected tunnel exit revokes preview sessions tied to the old hostname, applies bounded exponential backoff, and waits for a subsequent user preview request before starting a replacement.
+- Added configurable idle shutdown (five minutes by default), request admission control at 160 concurrent requests to preserve headroom under Cloudflare Quick Tunnel's documented 200 in-flight limit, and richer tunnel status telemetry.
+- Added parallel-start, cross-process lease, idle-shutdown, and forced-exit recovery tests. Bumped the package version and config schema to 1.10.1 / 19.
+
+### Cloudflare limitations
+- Quick Tunnels remain temporary development previews, not production hosting: no uptime guarantee, a random hostname on each creation, a 200 in-flight request limit, and no Server-Sent Events. Use a named Cloudflare Tunnel for stable production hostnames and multi-connector availability.
+
+### Validation
+- Syntax check: 107 JavaScript files checked.
+- Offline test suite: 100 passed, 2 skipped, 0 failed (102 total).
+- Tunnel lifecycle tests use a controlled local fake `cloudflared` executable. A live public Quick Tunnel and the target VPS networking/runtime still require deployment verification.
+
 ## [1.8.1] - 2026-11-20
 
 - Added `.nexora all on/off` as a global owner-only master switch for AI chat, Code Lab, AI auto-run, and the shared public preview tunnel.

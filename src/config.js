@@ -6,7 +6,7 @@
 import { initializeDatabase, appendRecord, getRecords, getLatestConfigRecord, configureDatabase } from './core/database.js';
 
 const DEFAULTS = Object.freeze({
-  schemaVersion: 18,
+  schemaVersion: 19,
   bot: { name: 'Ocha Lidya', aliases: ['Ocha', 'Lidya'], owner: '6283193905842', ownerName: 'Arifi Razzaq', creatorName: 'Arifi Razzaq', organization: 'Razzaq Ventures', publicCreatorDisclosure: true, expectedNumber: '6282177461231' },
   whatsapp: { authMode: 'pairing', pairingNumber: '6282177461231', browserName: 'Chrome', sessionDir: 'sessions/ocha-lidya', recoverInvalidSession: true, connectTimeoutMs: 60000, queryTimeoutMs: 60000, keepAliveIntervalMs: 25000 },
   logging: { level: 'info', color: 'auto', timeZone: 'Asia/Jakarta' },
@@ -33,7 +33,7 @@ const DEFAULTS = Object.freeze({
   },
   features: { autoRead: false, autoTyping: false, selfModeReply: false, groupsMuted: true },
   ai: { enabled: true, providerOrder: ['groq', 'gemini', 'deepseek', 'openai'], models: { gemini: 'gemini-3.8-flash', groq: 'openai/gpt-oss-20b', deepseek: 'deepseek-flash', openai: 'gpt-6-luna' }, timeoutMs: 3500, totalBudgetMs: 14000, maxOutputTokens: 180, temperature: 0.5, historyMessages: 3, maxInputChars: 3500, coalesceMs: 80, maxKeyAttempts: 3 },
-  codeLab: { enabled: true, aiExecutionEnabled: true, publicTunnelEnabled: true, websiteBuilderEnabled: true, websiteBuilderConcurrency: 2, websiteBuilderQueueLimit: 8, cloudflaredBin: 'cloudflared', containerRuntime: 'docker', port: 8787, ttlMs: 3600000, maxRuntimeMs: 120000, maxSourceBytes: 65536, maxOutputBytes: 49152, maxConcurrent: 2, maxSessionsTotal: 20, maxSessionsPerUser: 2, maxExecutionsPerMinute: 3, pythonImage: 'python:3.12-alpine', nodeImage: 'node:22-alpine' }
+  codeLab: { enabled: true, aiExecutionEnabled: true, publicTunnelEnabled: true, websiteBuilderEnabled: true, websiteBuilderConcurrency: 2, websiteBuilderQueueLimit: 8, tunnelIdleMs: 300000, cloudflaredBin: 'cloudflared', containerRuntime: 'docker', port: 8787, ttlMs: 3600000, maxRuntimeMs: 120000, maxSourceBytes: 65536, maxOutputBytes: 49152, maxConcurrent: 2, maxSessionsTotal: 20, maxSessionsPerUser: 2, maxExecutionsPerMinute: 3, pythonImage: 'python:3.12-alpine', nodeImage: 'node:22-alpine' }
 });
 
 let activeConfig = structuredClone(DEFAULTS);
@@ -231,6 +231,14 @@ export async function loadConfig() {
     if (activeConfig.ai.maxKeyAttempts === 1) activeConfig.ai.maxKeyAttempts = 3;
     await appendRecord('config.replace', { config: activeConfig, changedBy: 'system:migration', reason: 'v1.10.0 public creator identity, relationship profiles, and fair provider key rotation' });
   }
+  // v1.10.1 schema v19: on-demand shared Quick Tunnel lifecycle with
+  // cross-process lease protection and configurable idle shutdown.
+  if (activeConfig.schemaVersion < 19) {
+    activeConfig.schemaVersion = 19;
+    activeConfig.codeLab = { ...DEFAULTS.codeLab, ...(activeConfig.codeLab || {}) };
+    if (!Number.isInteger(activeConfig.codeLab.tunnelIdleMs)) activeConfig.codeLab.tunnelIdleMs = DEFAULTS.codeLab.tunnelIdleMs;
+    await appendRecord('config.replace', { config: activeConfig, changedBy: 'system:migration', reason: 'v1.10.1 on-demand shared Quick Tunnel, exclusive process lease, and idle shutdown lifecycle' });
+  }
   activeConfig.security = { ...DEFAULTS.security, ...(activeConfig.security || {}) };
   delete activeConfig.security.masterExecEnabled;
   activeConfig.features = { ...DEFAULTS.features, ...(activeConfig.features || {}) };
@@ -298,6 +306,7 @@ function validateConfig(c) {
   for (const key of ['enabled', 'aiExecutionEnabled', 'publicTunnelEnabled', 'websiteBuilderEnabled']) if (typeof c.codeLab?.[key] !== 'boolean') throw new Error(`codeLab.${key} harus boolean`);
   if (!Number.isInteger(c.codeLab?.websiteBuilderConcurrency) || c.codeLab.websiteBuilderConcurrency < 1 || c.codeLab.websiteBuilderConcurrency > 4) throw new Error('codeLab.websiteBuilderConcurrency harus 1-4');
   if (!Number.isInteger(c.codeLab?.websiteBuilderQueueLimit) || c.codeLab.websiteBuilderQueueLimit < 0 || c.codeLab.websiteBuilderQueueLimit > 40) throw new Error('codeLab.websiteBuilderQueueLimit harus 0-40');
+  if (!Number.isInteger(c.codeLab?.tunnelIdleMs) || c.codeLab.tunnelIdleMs < 0 || c.codeLab.tunnelIdleMs > 3600000) throw new Error('codeLab.tunnelIdleMs harus 0-3600000');
   if (!Number.isInteger(c.codeLab?.port) || c.codeLab.port < 1024 || c.codeLab.port > 65535) throw new Error('codeLab.port harus 1024-65535');
   if (!Number.isInteger(c.codeLab?.ttlMs) || c.codeLab.ttlMs < 60000 || c.codeLab.ttlMs > 3600000) throw new Error('codeLab.ttlMs harus 60000-3600000');
   if (!Number.isInteger(c.codeLab?.maxRuntimeMs) || c.codeLab.maxRuntimeMs < 5000 || c.codeLab.maxRuntimeMs > 600000) throw new Error('codeLab.maxRuntimeMs harus 5000-600000');

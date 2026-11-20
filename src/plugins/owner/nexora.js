@@ -30,7 +30,8 @@ function statusText() {
     `Session reservations: ${lab.pendingReservations}`,
     `Sessions per user: ${config.codeLab.maxSessionsPerUser}`,
     `Session TTL: ${Math.round(lab.ttlMs / 60000)} minutes`,
-    'Tunnel process: one shared instance for the lifetime of Ocha',
+    `Tunnel process: shared on-demand · idle shutdown ${Math.round((lab.tunnelIdleMs ?? 300000) / 60000)} min · PID ${lab.tunnelPid || 'none'} · generation ${lab.tunnelGeneration}`,
+    `Preview HTTP load: ${lab.activeHttpRequests}/${lab.maxInFlightRequests} in-flight · retry cooldown ${lab.tunnelRetryInSeconds || 0}s`,
     '',
     '*REGISTERED CAPABILITIES*',
     ...capabilities.map(item => `• ${item.label}: ${item.enabled ? 'ENABLED' : 'DISABLED'}`),
@@ -70,7 +71,7 @@ export default {
         try {
           await runNexoraBootstrap(getConfig().codeLab);
           const status = await startCodeLab();
-          if (status.tunnel === 'error' || status.tunnel === 'connecting/offline') {
+          if (status.tunnel === 'error') {
             return m.reply(`Semua fitur Nexora diset ON, tetapi preview publik belum siap. Periksa cloudflared melalui .nexora status. ${status.tunnelError || ''}`.trim());
           }
           if (!status.runtimeReady) {
@@ -109,7 +110,7 @@ export default {
       } else if (command === 'auto-run') {
         await updateConfig(config => { config.codeLab.aiExecutionEnabled = enabled; }, { actor: m.sender, reason: `Nexora auto code execution ${value}` });
       } else {
-        await updateConfig(config => { config.codeLab.publicTunnelEnabled = enabled; }, { actor: m.sender, reason: `Nexora persistent tunnel ${value}` });
+        await updateConfig(config => { config.codeLab.publicTunnelEnabled = enabled; }, { actor: m.sender, reason: `Nexora on-demand public tunnel ${value}` });
         if (enabled && getConfig().codeLab.enabled) {
           try { await runNexoraBootstrap(getConfig().codeLab); await startCodeLab(); }
           catch (error) { return m.reply(`Tunnel diset ON, tetapi gagal dimulai: ${error.message}`); }

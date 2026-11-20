@@ -76,7 +76,7 @@ test('schema v11 defaults all group interaction to muted and removes the global 
     const line = result.stdout.split(/\r?\n/).find(value => value.startsWith('MIGRATED:'));
     assert.ok(line, result.stdout);
     const migrated = JSON.parse(line.slice('MIGRATED:'.length));
-    assert.deepEqual(migrated, { schemaVersion: 18, groupsMuted: true, masterCliEnabled: true });
+    assert.deepEqual(migrated, { schemaVersion: 19, groupsMuted: true, masterCliEnabled: true });
     assert.equal(migrated.masterExecEnabled, undefined);
   });
 });
