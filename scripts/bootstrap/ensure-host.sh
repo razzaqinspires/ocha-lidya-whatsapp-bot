@@ -13,7 +13,7 @@ log() { printf '[NEXORA BOOTSTRAP] %s\n' "$*"; }
 warn() { printf '[NEXORA BOOTSTRAP] WARNING: %s\n' "$*" >&2; }
 fail() { warn "$*"; exit 1; }
 
-[[ "$RUNTIME" == "docker" || "$RUNTIME" == "podman" ]] || fail "Runtime tidak didukung: $RUNTIME (pilih docker atau podman)."
+[[ "$RUNTIME" == "docker" || "$RUNTIME" == "podman" || "$RUNTIME" == "auto" ]] || fail "Runtime tidak didukung: $RUNTIME (pilih auto, docker, atau podman)."
 for image in "$PYTHON_IMAGE" "$NODE_IMAGE"; do
   [[ "$image" =~ ^[A-Za-z0-9._/:@-]+$ ]] || fail "Nama image tidak valid: $image"
 done
@@ -23,36 +23,34 @@ if [[ "$DRY_RUN" == "1" ]]; then
   log "DRY RUN aktif; tidak ada perubahan host yang dilakukan."
 fi
 
-SUDO=()
+ADMIN=()
 ROOT_READY=1
 if (( EUID != 0 )); then
-  if ! command -v sudo >/dev/null 2>&1; then
-    ROOT_READY=0
-    warn "sudo tidak tersedia. Paket host yang memerlukan hak root tidak dapat dipasang otomatis."
-  elif [[ "$DRY_RUN" != "1" ]]; then
-    if [[ -t 0 ]]; then
-      sudo -v || { ROOT_READY=0; warn "Otorisasi sudo gagal."; }
-    else
-      sudo -n true >/dev/null 2>&1 || { ROOT_READY=0; warn "Tidak ada sudo non-interaktif. Jalankan npm start dari sesi yang dapat meminta sudo atau atur service dengan hak instalasi."; }
-    fi
-    (( ROOT_READY == 0 )) || SUDO=(sudo -n)
+  if command -v doas >/dev/null 2>&1 && doas -n true >/dev/null 2>&1; then
+    ADMIN=(doas -n)
+  elif command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
+    ADMIN=(sudo -n)
   else
-    SUDO=(sudo)
+    ROOT_READY=0
+    warn "Proses berjalan sebagai UID $(id -u) tanpa hak admin non-interaktif. Paket host/service sistem tidak akan diubah; runtime rootless yang tersedia tetap akan dicoba."
   fi
 fi
 
 root_run() {
-  if [[ "$DRY_RUN" != "1" && "$EUID" != "0" && "$ROOT_READY" == "0" ]]; then
-    warn "Hak root/sudo tidak tersedia untuk: $*"
-    return 1
-  fi
   if [[ "$DRY_RUN" == "1" ]]; then
-    printf '[NEXORA BOOTSTRAP] DRY RUN root command:'
+    printf '[NEXORA BOOTSTRAP] DRY RUN admin command:'
     printf ' %q' "$@"
     printf '\n'
     return 0
   fi
-  if (( EUID == 0 )); then "$@"; else "${SUDO[@]}" "$@"; fi
+  if (( EUID == 0 )); then
+    "$@"
+  elif (( ROOT_READY == 1 )); then
+    "${ADMIN[@]}" "$@"
+  else
+    warn "Tidak ada hak admin untuk menjalankan: $*"
+    return 1
+  fi
 }
 
 OS_ID="unknown"
@@ -145,84 +143,210 @@ ensure_cloudflared() {
   log "cloudflared berhasil disiapkan."
 }
 
-ensure_docker_service() {
-  if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
-    log "Docker daemon sudah aktif dan dapat diakses oleh user Ocha; tidak perlu mengubah service."
+pid1_name() {
+  ps -p 1 -o comm= 2>/dev/null | tr -d '[:space:]'
+}
+
+has_systemd_pid1() {
+  [[ "$(pid1_name)" == "systemd" && -d /run/systemd/system ]] && command -v systemctl >/dev/null 2>&1
+}
+
+wait_for_docker() {
+  local attempts="${1:-25}"
+  for ((i=0; i<attempts; i++)); do
+    if docker info >/dev/null 2>&1; then return 0; fi
+    sleep 1
+  done
+  return 1
+}
+
+start_dockerd_without_init() {
+  command -v dockerd >/dev/null 2>&1 || { warn "dockerd tidak tersedia untuk startup manual."; return 1; }
+  (( EUID == 0 )) || { warn "Startup dockerd manual memerlukan root. Runtime rootless/Podman akan dicoba sebagai fallback."; return 1; }
+  command -v nohup >/dev/null 2>&1 || { warn "nohup tidak tersedia; tidak dapat menjalankan dockerd terlepas dari bootstrap."; return 1; }
+
+  local lock_dir="/run/lock"
+  local lock_file="${lock_dir}/nexora-dockerd-bootstrap.lock"
+  local log_dir="${TMPDIR:-/tmp}/nexora-runtime"
+  local log_file="${log_dir}/dockerd.log"
+  local pid_file="${log_dir}/dockerd.pid"
+  mkdir -p "$lock_dir" "$log_dir" 2>/dev/null || return 1
+  chmod 700 "$log_dir" 2>/dev/null || true
+
+  if command -v flock >/dev/null 2>&1; then
+    exec 9>"$lock_file"
+    if ! flock -n 9; then
+      log "Startup dockerd lain sedang berjalan; menunggu daemon yang sama."
+      wait_for_docker 25
+      return $?
+    fi
+  else
+    local mkdir_lock="${lock_file}.d"
+    if ! mkdir "$mkdir_lock" 2>/dev/null; then
+      log "Lock startup dockerd sudah ada; menunggu daemon yang sama."
+      wait_for_docker 25
+      return $?
+    fi
+    trap 'rmdir "${mkdir_lock}" 2>/dev/null || true' RETURN
+  fi
+
+  if docker info >/dev/null 2>&1; then
+    log "Docker daemon menjadi siap sebelum startup manual; tidak membuat daemon baru."
     return 0
   fi
-  if ! command -v docker >/dev/null 2>&1 || ! command -v dockerd >/dev/null 2>&1; then
-    log "Docker Engine belum lengkap; memasang paket daemon Docker."
-    case "$PKG_FAMILY" in
-      apt) install_packages docker.io ;;
-      dnf) install_packages docker ;;
-      yum) install_packages docker ;;
-      apk) install_packages docker docker-cli ;;
-      *) warn "Tidak dapat memasang Docker otomatis pada package manager $PKG_FAMILY."; return 1 ;;
-    esac || return 1
-  else
-    log "Docker CLI dan dockerd ditemukan, tetapi daemon belum dapat diakses; mencoba mengaktifkan service."
-  fi
-  if command -v systemctl >/dev/null 2>&1; then
-    if [[ "$DRY_RUN" == "1" ]]; then
-      log "DRY RUN: systemctl enable --now docker"
-    else
-      root_run systemctl enable --now docker || { warn "Gagal mengaktifkan docker.service."; return 1; }
+
+  if [[ -f "$pid_file" ]]; then
+    local old_pid old_cmd
+    old_pid="$(cat "$pid_file" 2>/dev/null || true)"
+    old_cmd="$(tr '\0' ' ' < "/proc/${old_pid}/cmdline" 2>/dev/null || true)"
+    if [[ "$old_pid" =~ ^[0-9]+$ ]] && kill -0 "$old_pid" 2>/dev/null && [[ "$old_cmd" == *dockerd* ]]; then
+      log "dockerd bootstrap sebelumnya masih hidup (PID $old_pid); menunggu socket."
+      wait_for_docker 25
+      return $?
     fi
-  elif command -v rc-service >/dev/null 2>&1; then
-    if [[ "$DRY_RUN" == "1" ]]; then log "DRY RUN: rc-update add docker default && rc-service docker start"
-    else root_run rc-update add docker default || true; root_run rc-service docker start || return 1; fi
-  elif command -v service >/dev/null 2>&1; then
-    if [[ "$DRY_RUN" == "1" ]]; then log "DRY RUN: service docker start"
-    else root_run service docker start || return 1; fi
+    rm -f "$pid_file"
+  fi
+
+  log "Tidak ada init/service manager aktif. Mencoba menjalankan satu dockerd host secara terkontrol (tanpa sudo karena proses sudah root)."
+  : > "$log_file"
+  chmod 600 "$log_file" 2>/dev/null || true
+  nohup dockerd </dev/null >>"$log_file" 2>&1 9>&- &
+  local daemon_pid=$!
+  printf '%s\n' "$daemon_pid" > "$pid_file"
+  chmod 600 "$pid_file" 2>/dev/null || true
+
+  if wait_for_docker 30; then
+    log "Docker daemon siap melalui startup manual (PID $daemon_pid)."
+    return 0
+  fi
+  if ! kill -0 "$daemon_pid" 2>/dev/null; then
+    warn "dockerd keluar sebelum socket siap. Diagnostik terakhir: $(tail -n 12 "$log_file" 2>/dev/null | tr '\n' ' ' | cut -c1-1000)"
   else
-    warn "Service manager tidak ditemukan; daemon Docker tidak dapat dijalankan otomatis."
-    return 1
+    warn "dockerd masih berjalan tetapi Docker API belum siap. Diagnostik terakhir: $(tail -n 12 "$log_file" 2>/dev/null | tr '\n' ' ' | cut -c1-1000)"
   fi
-  if [[ "$DRY_RUN" != "1" ]]; then
-    docker info >/dev/null 2>&1 || { warn "Docker daemon belum dapat diakses oleh user proses Ocha. Periksa docker info dan izin socket; skrip tidak mengubah permission socket atau menambahkan user ke grup docker secara otomatis."; return 1; }
+  return 1
+}
+
+ensure_docker_service() {
+  command -v docker >/dev/null 2>&1 || {
+    log "Docker CLI belum tersedia; mencoba memasang Docker Engine dari package manager $PKG_FAMILY."
+    case "$PKG_FAMILY" in
+      apt) install_packages docker.io || return 1 ;;
+      dnf) install_packages docker || return 1 ;;
+      yum) install_packages docker || return 1 ;;
+      apk) install_packages docker docker-cli || return 1 ;;
+      *) warn "Package manager $PKG_FAMILY tidak didukung untuk instalasi Docker."; return 1 ;;
+    esac
+  }
+
+  if docker info >/dev/null 2>&1; then
+    log "Docker daemon sudah aktif dan dapat diakses oleh user Ocha."
+    return 0
   fi
+
+  if has_systemd_pid1; then
+    log "systemd benar-benar menjadi PID 1; mencoba systemctl start docker."
+    if root_run systemctl start docker; then
+      wait_for_docker 20 && return 0
+    fi
+    warn "systemctl start docker tidak membuat Docker API siap; akan mencoba fallback lain."
+  elif command -v rc-service >/dev/null 2>&1 && [[ -e /run/openrc/softlevel ]]; then
+    log "OpenRC aktif; mencoba rc-service docker start."
+    root_run rc-service docker start || true
+    wait_for_docker 20 && return 0
+  elif [[ "$(pid1_name)" == "init" ]] && command -v service >/dev/null 2>&1; then
+    log "SysV init aktif; mencoba service docker start."
+    root_run service docker start || true
+    wait_for_docker 20 && return 0
+  else
+    log "systemctl tersedia/tidak tersedia, tetapi systemd bukan PID 1. Tidak akan menjalankan systemctl palsu pada container non-systemd."
+  fi
+
+  if command -v dockerd >/dev/null 2>&1 && (( EUID == 0 )); then
+    start_dockerd_without_init && return 0
+  fi
+
+  warn "Docker daemon masih tidak dapat diakses. Pemeriksaan fallback Podman akan dilanjutkan."
+  return 1
+}
+
+ensure_images() {
+  local runtime="$1"
+  for image in "$PYTHON_IMAGE" "$NODE_IMAGE"; do
+    if "$runtime" image inspect "$image" >/dev/null 2>&1; then
+      log "Image tersedia pada $runtime: $image"
+    else
+      log "Image belum tersedia pada $runtime; menarik $image."
+      "$runtime" pull "$image" || { warn "Gagal menarik image $image menggunakan $runtime."; return 1; }
+      "$runtime" image inspect "$image" >/dev/null 2>&1 || { warn "Image $image belum lolos verifikasi setelah pull."; return 1; }
+    fi
+  done
+}
+
+ensure_docker_runtime() {
+  ensure_docker_service || return 1
+  docker info >/dev/null 2>&1 || return 1
+  ensure_images docker || return 1
+  docker info >/dev/null 2>&1 || return 1
+  return 0
+}
+
+ensure_podman_runtime() {
+  if ! command -v podman >/dev/null 2>&1; then
+    log "Podman belum tersedia; mencoba instalasi paket Podman tanpa mengasumsikan systemd atau sudo."
+    install_packages podman || return 1
+  fi
+  # Podman CLI is daemonless for normal run/pull commands. Do not require podman.socket.
+  podman info >/dev/null 2>&1 || { warn "Podman tersedia tetapi host/storage/cgroup tidak mengizinkan podman info."; return 1; }
+  ensure_images podman || return 1
+  podman info >/dev/null 2>&1 || return 1
+  return 0
 }
 
 ensure_runtime() {
-  if [[ "$RUNTIME" == "docker" ]]; then
-    ensure_docker_service || return 1
-    if [[ "$DRY_RUN" == "1" ]]; then
-      log "DRY RUN: akan memeriksa dan menarik image Docker yang belum tersedia."
-      log "DRY RUN: docker pull $PYTHON_IMAGE"
-      log "DRY RUN: docker pull $NODE_IMAGE"
-      return 0
-    fi
-    for image in "$PYTHON_IMAGE" "$NODE_IMAGE"; do
-      if docker image inspect "$image" >/dev/null 2>&1; then log "Image tersedia: $image"
-      else log "Image belum tersedia; menarik $image"; docker pull "$image" || return 1; fi
-    done
-    docker info >/dev/null 2>&1 || { warn "Docker daemon tidak siap setelah image diperiksa."; return 1; }
-  else
-    if [[ "$DRY_RUN" == "1" ]]; then
-      if ! command -v podman >/dev/null 2>&1; then log "DRY RUN: akan memasang paket Podman."; fi
-      log "DRY RUN: akan memeriksa dan menarik image Podman yang belum tersedia."
-      log "DRY RUN: podman pull $PYTHON_IMAGE"
-      log "DRY RUN: podman pull $NODE_IMAGE"
-      return 0
-    fi
-    if ! command -v podman >/dev/null 2>&1; then
-      log "Podman belum tersedia; memasang paket Podman."
-      install_packages podman || return 1
-    fi
-    podman info >/dev/null 2>&1 || { warn "Podman tidak dapat diakses oleh user proses Ocha."; return 1; }
-    for image in "$PYTHON_IMAGE" "$NODE_IMAGE"; do
-      if podman image exists "$image"; then log "Image tersedia: $image"
-      else log "Image belum tersedia; menarik $image"; podman pull "$image" || return 1; fi
-    done
+  if [[ "$DRY_RUN" == "1" ]]; then
+    log "DRY RUN: runtime preference=$RUNTIME; Docker service/manual dockerd dan Podman daemonless akan dinilai tanpa menjalankan daemon."
+    log "DRY RUN: akan memeriksa image $PYTHON_IMAGE dan $NODE_IMAGE untuk kandidat runtime yang tersedia."
+    return 0
   fi
-  log "$RUNTIME dan image runtime siap."
+  local candidates=()
+  case "$RUNTIME" in
+    docker) candidates=(docker podman) ;;
+    podman) candidates=(podman docker) ;;
+    auto)
+      if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then candidates=(docker podman)
+      elif command -v podman >/dev/null 2>&1; then candidates=(podman docker)
+      else candidates=(docker podman)
+      fi
+      ;;
+  esac
+
+  local selected=""
+  for candidate in "${candidates[@]}"; do
+    log "Menguji kandidat runtime: $candidate."
+    if [[ "$candidate" == "docker" ]]; then
+      if ensure_docker_runtime; then selected="docker"; break; fi
+    elif [[ "$candidate" == "podman" ]]; then
+      if ensure_podman_runtime; then selected="podman"; break; fi
+    fi
+    warn "Kandidat $candidate tidak siap; beralih ke kandidat berikutnya."
+  done
+
+  if [[ -n "$selected" ]]; then
+    printf '[NEXORA_RUNTIME_SELECTED] %s\n' "$selected"
+    log "Runtime aktif tervalidasi: $selected."
+    return 0
+  fi
+  printf '[NEXORA_RUNTIME_SELECTED] none\n'
+  warn "Docker dan Podman tidak dapat dijalankan pada host ini. Tidak akan mengubah permission socket atau memakai mode privileged secara otomatis."
+  return 1
 }
 
 log "Memeriksa host: OS=$OS_ID runtime=$RUNTIME"
 cloudflared_ok=0
 runtime_ok=0
 ensure_cloudflared && cloudflared_ok=1 || warn "Cloudflare tunnel belum siap; bot tetap dapat berjalan tanpa preview publik."
-ensure_runtime && runtime_ok=1 || warn "Code execution runtime belum siap; Python/Node akan tetap dinonaktifkan sampai pemeriksaan berikutnya."
+ensure_runtime && runtime_ok=1 || warn "Code execution runtime belum siap; Python/Node tetap fail-closed dan akan diuji ulang pada permintaan eksekusi berikutnya."
 if [[ "$DRY_RUN" == "1" ]]; then
   log "Dry-run selesai. Ini adalah rencana tindakan, bukan konfirmasi bahwa dependensi sudah terpasang."
 elif (( cloudflared_ok && runtime_ok )); then

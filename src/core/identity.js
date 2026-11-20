@@ -32,8 +32,19 @@ export function isOwner(sender, ownerNumber) {
 export function getSenderJids(message) {
   const key = message?.key || {};
   return [...new Set([
+    message?.senderPn, message?.sender,
     key.senderPn, key.remoteJidPn, key.participantPn,
     key.remoteJidAlt, key.participantAlt,
     key.participant, key.remoteJid
-  ].filter(Boolean))];
+  ].filter(value => typeof value === 'string' && value))];
+}
+
+/**
+ * Verify an incoming message against the configured owner number using only
+ * server-generated Baileys sender metadata. Chat text, pushName, history, and
+ * a caller-provided `isOwner` boolean are deliberately ignored.
+ */
+export function isVerifiedOwnerMessage(message, ownerNumber) {
+  if (!message || message.fromMe === true) return false;
+  return isOwner(getSenderJids(message), ownerNumber);
 }

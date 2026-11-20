@@ -22,7 +22,7 @@ function statusText() {
     `Gateway: ${lab.gateway}`,
     `TryCloudflare: ${lab.tunnel}`,
     `cloudflared: ${lab.cloudflaredVersion || 'not verified'}`,
-    `Container runtime: ${lab.runtimeReady ? 'READY' : 'NOT READY'}`,
+    `Container runtime: ${lab.runtimeReady ? `READY · ${lab.runtime || 'unknown'} (preferred ${lab.runtimePreference || config.codeLab.containerRuntime})` : `NOT READY · preferred ${lab.runtimePreference || config.codeLab.containerRuntime}`}`,
     ...(lab.runtimeError ? [`Runtime detail: ${lab.runtimeError.slice(0, 240)}`] : []),
     ...(lab.tunnelError ? [`Tunnel detail: ${lab.tunnelError.slice(0, 240)}`] : []),
     `Workers: ${lab.activeWorkers}/${lab.maxConcurrent} running · ${lab.queued} queued`,
@@ -44,7 +44,7 @@ function statusText() {
     '.nexora builder-workers 1-4 · simultaneous website generations',
     '.nexora tunnel on/off · one shared public tunnel',
     '.nexora workers 1-4 · simultaneous running jobs',
-    '.nexora runtime docker/podman',
+    '.nexora runtime auto/docker/podman · automatic OS-aware fallback',
     '.nexora status'
   ].join('\n');
 }
@@ -125,7 +125,7 @@ export default {
 
     if (command === 'runtime') {
       const runtime = String(value || '').toLowerCase();
-      if (!['docker', 'podman'].includes(runtime)) return m.reply('Runtime hanya boleh docker atau podman. Contoh: .nexora runtime podman');
+      if (!['auto', 'docker', 'podman'].includes(runtime)) return m.reply('Runtime: auto, docker, atau podman. Rekomendasi: .nexora runtime auto agar Ocha memilih runtime yang benar-benar siap pada host.');
       const current = getCodeLabStatus();
       if (current.activeSessions || current.activeWorkers || current.queued) return m.reply('Runtime tidak dapat diganti saat ada sesi/worker aktif. Hentikan Code Lab dahulu.');
       await stopCodeLab();

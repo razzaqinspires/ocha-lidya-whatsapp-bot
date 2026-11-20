@@ -14,15 +14,25 @@ const SENSITIVE_TOKEN_BYTES = 32;
 const OUTPUT_HARD_LIMIT = 48 * 1024;
 const INPUT_HARD_LIMIT = 4096;
 const URL_PATTERN = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/i;
+const QUICK_TUNNEL_LOCK_NAME = '.cloudflared-quick-tunnel.lock';
+const QUICK_TUNNEL_MAX_IN_FLIGHT = 160;
 
 const state = {
   server: null,
   serverPromise: null,
   tunnel: null,
   tunnelPromise: null,
+  tunnelOperation: Promise.resolve(),
   tunnelUrl: null,
+  tunnelLease: null,
+  tunnelGeneration: 0,
+  tunnelStartedAt: null,
+  tunnelIdleTimer: null,
+  tunnelRetryAfter: 0,
+  activeHttpRequests: 0,
   tunnelError: null,
   watchdog: null,
+  watchdogPromise: null,
   rootDir: null,
   instanceDir: null,
   heartbeatPath: null,
@@ -36,9 +46,9 @@ const state = {
   rateHistory: new Map(),
   queue: [],
   activeWorkers: 0,
-  tunnelRestartTimer: null,
   tunnelFailures: 0,
   prerequisites: { cloudflared: null, runtime: null, runtimeError: null },
+  runtimeName: null,
   startedAt: null,
   closing: false
 };
@@ -346,13 +356,21 @@ function ensureServer() {
   if (state.serverPromise) return state.serverPromise;
   state.serverPromise = new Promise((resolve, reject) => {
     const server = http.createServer((request, response) => {
+      if (state.activeHttpRequests >= QUICK_TUNNEL_MAX_IN_FLIGHT) {
+        response.writeHead(503, responseHeaders({ 'Content-Type': 'application/json; charset=utf-8', 'Retry-After': '2' }));
+        response.end(JSON.stringify({ error: 'Preview sedang menerima banyak permintaan. Coba kembali dalam beberapa detik.' }));
+        return;
+      }
+      state.activeHttpRequests += 1;
       void routeRequest(request, response).catch(error => {
         logger.warn({ code: error?.code, statusCode: error?.statusCode, message: error?.message }, 'Code Lab HTTP request failed');
         if (!response.headersSent) sendJson(response, error?.statusCode || 500, { error: error?.statusCode ? error.message : 'Permintaan preview gagal.' });
         else response.destroy();
+      }).finally(() => {
+        state.activeHttpRequests = Math.max(0, state.activeHttpRequests - 1);
       });
     });
-    server.maxConnections = 256;
+    server.maxConnections = QUICK_TUNNEL_MAX_IN_FLIGHT;
     server.headersTimeout = 10_000;
     server.requestTimeout = 10_000;
     server.keepAliveTimeout = 5_000;
@@ -405,25 +423,67 @@ function probeCommand(binary, args, timeoutMs = 8000) {
 }
 
 async function verifyRuntimePrerequisites() {
-  const runtime = String(setting('containerRuntime', 'docker'));
+  const preference = String(setting('containerRuntime', 'auto')).toLowerCase();
+  const candidates = preference === 'podman'
+    ? ['podman', 'docker']
+    : preference === 'docker'
+      ? ['docker', 'podman']
+      : ['docker', 'podman'];
   const images = [String(setting('pythonImage', 'python:3.12-alpine')), String(setting('nodeImage', 'node:22-alpine'))];
-  try {
-    state.prerequisites.runtime = await probeCommand(runtime, ['info']);
-    await probeCommand(runtime, ['image', 'inspect', ...images], 12_000);
-    state.prerequisites.runtimeError = null;
-  } catch (error) {
-    state.prerequisites.runtime = null;
-    const detail = String(error.message || error);
-    const daemonUnavailable = /docker\.sock|podman\.sock|no such file or directory|failed to connect to the .*api|cannot connect to the .*daemon/i.test(detail);
-    const permissionDenied = /permission denied|access is denied/i.test(detail);
-    const recovery = daemonUnavailable
-      ? `CLI ${runtime} terpasang, tetapi daemon belum aktif atau socket belum tersedia. Pada VPS Linux dengan systemd jalankan: "sudo systemctl enable --now ${runtime}". Setelah itu pastikan "${runtime} info" berhasil.`
-      : permissionDenied
-        ? `Proses Ocha tidak memiliki izin mengakses socket ${runtime}. Periksa service daemon dan izin socket; jangan memberikan akses Docker socket kepada pengguna/container yang tidak dipercaya.`
-        : `Pastikan image runtime tersedia: "${runtime} pull ${images[0]}" dan "${runtime} pull ${images[1]}".`;
-    state.prerequisites.runtimeError = `Code Lab belum siap: ${recovery} Detail: ${detail}`;
-    throw new Error(state.prerequisites.runtimeError);
+  const failures = [];
+
+  for (const runtime of candidates) {
+    try {
+      await probeCommand(runtime, ['info'], 15_000);
+      for (const image of images) {
+        try {
+          await probeCommand(runtime, ['image', 'inspect', image], 15_000);
+        } catch {
+          // Startup bootstrap normally pre-pulls these. If the runtime became
+          // available later, recover lazily instead of requiring manual repair.
+          await probeCommand(runtime, ['pull', image], 5 * 60_000);
+          await probeCommand(runtime, ['image', 'inspect', image], 20_000);
+        }
+      }
+      await probeCommand(runtime, ['info'], 15_000);
+      state.runtimeName = runtime;
+      state.prerequisites.runtime = true;
+      state.prerequisites.runtimeError = null;
+      logger.info({ preferred: preference, selected: runtime, images }, 'Nexora container runtime validated');
+      return runtime;
+    } catch (error) {
+      failures.push(`${runtime}: ${String(error.message || error).slice(0, 500)}`);
+    }
   }
+
+  state.runtimeName = null;
+  state.prerequisites.runtime = null;
+  const detail = failures.join(' | ').slice(0, 1800) || 'Tidak ada runtime yang dapat diverifikasi.';
+  state.prerequisites.runtimeError = `Code Lab belum siap: Docker dan Podman belum dapat menjalankan container. Bootstrap sudah mencoba service manager yang sesuai, startup dockerd terkontrol saat root, dan fallback Podman. ${detail}`;
+  throw new Error(state.prerequisites.runtimeError);
+}
+
+async function ensureRuntimePrerequisites({ force = false } = {}) {
+  if (state.prerequisites.runtime && state.runtimeName) return state.runtimeName;
+  if (runtimeProbePromise) return runtimeProbePromise;
+  if (!force && runtimeProbeRetryAfter > Date.now()) {
+    throw new Error(state.prerequisites.runtimeError || `Pemeriksaan runtime ditunda ${Math.ceil((runtimeProbeRetryAfter - Date.now()) / 1000)} detik untuk menghindari probe berulang.`);
+  }
+  runtimeProbePromise = verifyRuntimePrerequisites();
+  try {
+    const selected = await runtimeProbePromise;
+    runtimeProbeRetryAfter = 0;
+    return selected;
+  } catch (error) {
+    runtimeProbeRetryAfter = Date.now() + 15_000;
+    throw error;
+  } finally {
+    runtimeProbePromise = null;
+  }
+}
+
+function selectedRuntime(fallback = 'docker') {
+  return state.runtimeName || (String(setting('containerRuntime', 'auto')) === 'podman' ? 'podman' : fallback);
 }
 
 async function verifyTunnelPrerequisites() {
@@ -436,120 +496,421 @@ async function verifyTunnelPrerequisites() {
   }
 }
 
-function scheduleTunnelRestart() {
-  if (state.tunnelRestartTimer || state.closing || !setting('enabled', true) || !setting('publicTunnelEnabled', true)) return;
-  const delay = Math.min(60_000, 5000 * (2 ** Math.min(state.tunnelFailures, 4)));
-  state.tunnelFailures += 1;
-  state.tunnelRestartTimer = setTimeout(() => {
-    state.tunnelRestartTimer = null;
-    if (state.closing || !setting('enabled', true) || !setting('publicTunnelEnabled', true)) return;
-    void startTunnel().catch(error => {
-      state.tunnelError = error;
-      logger.error({ message: error.message }, 'TryCloudflare reconnect failed; supervisor will retry');
-      scheduleTunnelRestart();
-    });
-  }, delay);
-  state.tunnelRestartTimer.unref?.();
+function serializeTunnelOperation(operation) {
+  const previous = state.tunnelOperation || Promise.resolve();
+  const current = previous.catch(() => {}).then(operation);
+  state.tunnelOperation = current.catch(() => {});
+  return current;
+}
+
+async function inspectLinuxProcess(pid) {
+  if (!Number.isSafeInteger(Number(pid)) || Number(pid) <= 1) return { alive: false };
+  const numericPid = Number(pid);
+  if (process.platform !== 'linux') {
+    try { process.kill(numericPid, 0); return { alive: true, startTicks: null, commandLine: '' }; }
+    catch (error) { return { alive: error?.code === 'EPERM', startTicks: null, commandLine: '' }; }
+  }
+  try {
+    const [stat, commandLine] = await Promise.all([
+      fs.readFile(`/proc/${numericPid}/stat`, 'utf8'),
+      fs.readFile(`/proc/${numericPid}/cmdline`, 'utf8')
+    ]);
+    const close = stat.lastIndexOf(')');
+    const fields = close >= 0 ? stat.slice(close + 1).trim().split(/\s+/) : [];
+    return { alive: !['Z', 'X'].includes(fields[0]), state: fields[0] || null, startTicks: fields[19] || null, commandLine: commandLine.replaceAll('\0', ' ').trim() };
+  } catch (error) {
+    return { alive: error?.code === 'EACCES' || error?.code === 'EPERM', startTicks: null, commandLine: '' };
+  }
+}
+
+function processMatches(record, info, executable = '') {
+  if (!info?.alive) return false;
+  if (record?.startTicks && info.startTicks && String(record.startTicks) !== String(info.startTicks)) return false;
+  if (process.platform !== 'linux') return false;
+  const commandLine = String(info.commandLine || '');
+  const expected = String(executable || record?.executable || 'cloudflared');
+  return commandLine.includes(expected) && /\btunnel\b/.test(commandLine) && commandLine.includes('--url');
+}
+
+async function terminateVerifiedOrphan(record) {
+  const pid = Number(record?.pid);
+  if (!Number.isSafeInteger(pid) || pid <= 1) return;
+  const info = await inspectLinuxProcess(pid);
+  if (!info.alive) return;
+  if (!processMatches(record, info)) {
+    throw new Error(`PID ${pid} masih hidup tetapi identitas proses tidak cocok; lock Quick Tunnel dipertahankan demi keamanan.`);
+  }
+  try { process.kill(pid, 'SIGTERM'); } catch (error) { if (error?.code !== 'ESRCH') throw error; }
+  const wait = async milliseconds => {
+    const deadline = Date.now() + milliseconds;
+    while (Date.now() < deadline) {
+      const current = await inspectLinuxProcess(pid);
+      if (!current.alive || (record.startTicks && current.startTicks && String(record.startTicks) !== String(current.startTicks))) return true;
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    return false;
+  };
+  if (await wait(1800)) return;
+  const current = await inspectLinuxProcess(pid);
+  if (current.alive && processMatches(record, current)) {
+    try { process.kill(pid, 'SIGKILL'); } catch (error) { if (error?.code !== 'ESRCH') throw error; }
+  }
+  if (!(await wait(1800))) throw new Error(`Proses cloudflared yatim PID ${pid} tidak berhenti setelah SIGKILL; tidak membuat tunnel pengganti.`);
+}
+
+async function readJsonFile(filePath) {
+  try { return JSON.parse(await fs.readFile(filePath, 'utf8')); }
+  catch { return null; }
+}
+
+async function writeJsonAtomically(filePath, value) {
+  const temporary = `${filePath}.${process.pid}.${crypto.randomBytes(5).toString('hex')}.tmp`;
+  await fs.writeFile(temporary, JSON.stringify(value), { mode: 0o600, flag: 'wx' });
+  await fs.rename(temporary, filePath);
+}
+
+async function acquireTunnelLease(binary) {
+  if (state.tunnelLease) {
+    const current = await readJsonFile(state.tunnelLease.path);
+    if (current?.token === state.tunnelLease.token) return state.tunnelLease;
+    state.tunnelLease = null;
+  }
+  if (!state.rootDir) throw new Error('Code Lab belum memiliki direktori runtime untuk lock tunnel.');
+  await fs.mkdir(state.rootDir, { recursive: true, mode: 0o700 });
+  const lockPath = path.join(state.rootDir, QUICK_TUNNEL_LOCK_NAME);
+  const token = crypto.randomBytes(24).toString('base64url');
+  const ownerInfo = await inspectLinuxProcess(process.pid);
+  const baseRecord = {
+    token,
+    instanceId: state.instanceId,
+    ownerPid: process.pid,
+    ownerStartTicks: ownerInfo.startTicks || null,
+    pid: null,
+    startTicks: null,
+    executable: path.basename(binary),
+    createdAt: new Date().toISOString()
+  };
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    let handle;
+    try {
+      handle = await fs.open(lockPath, 'wx', 0o600);
+      await handle.writeFile(JSON.stringify(baseRecord));
+      await handle.sync().catch(() => {});
+      await handle.close();
+      state.tunnelLease = { path: lockPath, token, instanceId: state.instanceId };
+      return state.tunnelLease;
+    } catch (error) {
+      await handle?.close().catch(() => {});
+      if (error?.code !== 'EEXIST') throw error;
+      const raw = await fs.readFile(lockPath, 'utf8').catch(() => '');
+      const existing = (() => { try { return JSON.parse(raw); } catch { return null; } })();
+      if (!existing) {
+        const stat = await fs.stat(lockPath).catch(() => null);
+        if (stat && Date.now() - stat.mtimeMs < 5000) throw new Error('Lock Quick Tunnel sedang dibuat proses lain; coba kembali sebentar lagi.');
+        await fs.rm(lockPath, { force: true }).catch(() => {});
+        continue;
+      }
+
+      const owner = await inspectLinuxProcess(Number(existing.ownerPid));
+      const ownerMatches = owner.alive && (!existing.ownerStartTicks || !owner.startTicks || String(existing.ownerStartTicks) === String(owner.startTicks));
+      const tunnelInfo = existing.pid ? await inspectLinuxProcess(Number(existing.pid)) : null;
+      const tunnelAlive = Boolean(tunnelInfo?.alive);
+      const tunnelMatches = tunnelAlive && processMatches(existing, tunnelInfo);
+
+      // A live, verified child belongs to a healthy owner and blocks a second
+      // tunnel. If its owner PID/start-time is stale, reap that verified orphan
+      // before replacing the lease; never kill an unverified PID.
+      if (tunnelAlive && tunnelMatches && ownerMatches) {
+        throw new Error(`Quick Tunnel masih aktif pada PID ${existing.pid} (owner PID ${existing.ownerPid}, instance ${existing.instanceId || 'unknown'}). Proses kedua diblokir.`);
+      }
+      if (tunnelAlive && tunnelMatches && !ownerMatches) await terminateVerifiedOrphan(existing);
+      if (tunnelAlive && !tunnelMatches) {
+        throw new Error(`PID ${existing.pid} masih hidup tetapi bukan proses cloudflared yang dapat diverifikasi; lock dipertahankan demi keamanan.`);
+      }
+      // pid:null means another process may be between acquiring the lease and
+      // publishing the child PID. Keep that short startup window exclusive.
+      if (!existing.pid && ownerMatches) {
+        throw new Error(`Quick Tunnel sedang disiapkan instance Ocha lain (owner PID ${existing.ownerPid}, instance ${existing.instanceId || 'unknown'}). Proses kedua diblokir.`);
+      }
+
+      // A recorded child that no longer exists is a stale lease even when the
+      // Ocha parent is still alive (for example, cloudflared exited unexpectedly).
+      // The old owner must reacquire the lock before creating another child.
+      const latest = await fs.readFile(lockPath, 'utf8').catch(() => '');
+      if (latest !== raw) continue;
+      await fs.rm(lockPath, { force: true });
+    }
+  }
+  throw new Error('Tidak dapat memperoleh lock eksklusif Quick Tunnel setelah beberapa percobaan.');
+}
+
+async function updateTunnelLease(child, binary, generation) {
+  const lease = state.tunnelLease;
+  if (!lease) return;
+  const identity = child.pid ? await inspectLinuxProcess(child.pid) : { startTicks: null };
+  const current = await readJsonFile(lease.path);
+  if (!current || current.token !== lease.token) throw new Error('Kepemilikan lock Quick Tunnel berubah sebelum proses siap.');
+  const updated = {
+    ...current,
+    pid: child.pid || null,
+    startTicks: identity.startTicks || null,
+    executable: path.basename(binary),
+    generation,
+    updatedAt: new Date().toISOString()
+  };
+  await writeJsonAtomically(lease.path, updated);
+  if (state.tunnelPidPath) await writeJsonAtomically(state.tunnelPidPath, updated);
+}
+
+async function releaseTunnelLease(expectedToken = null) {
+  const lease = state.tunnelLease;
+  if (!lease || (expectedToken && lease.token !== expectedToken)) return;
+  // Detach local ownership before awaiting I/O. The tunnel operation queue
+  // prevents a replacement from starting until this removal is complete.
+  if (state.tunnelLease?.token === lease.token) state.tunnelLease = null;
+  const current = await readJsonFile(lease.path);
+  if (current?.token === lease.token) await fs.rm(lease.path, { force: true }).catch(() => {});
+}
+
+function waitForChildClose(child, timeoutMs) {
+  return new Promise(resolve => {
+    // `exitCode` is set on the `exit` event, which can precede `close` while
+    // stdio handles are still draining. Wait for `close` before lease release.
+    if (child.__ochaClosed) return resolve(true);
+    let settled = false;
+    const finish = closed => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.removeListener('close', onClose);
+      resolve(closed);
+    };
+    const onClose = () => finish(true);
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    child.once('close', onClose);
+  });
+}
+
+async function stopTunnelProcess(child) {
+  if (!child) return;
+  if (!child.__ochaClosed && child.exitCode === null && child.signalCode === null) child.__ochaIntentionalStop = true;
+  if (!(await waitForChildClose(child, 0))) {
+    try { child.kill('SIGTERM'); } catch {}
+    if (!(await waitForChildClose(child, 2200))) {
+      try { child.kill('SIGKILL'); } catch {}
+      if (!(await waitForChildClose(child, 2200))) {
+        throw new Error(`cloudflared PID ${child.pid || 'unknown'} tidak mengonfirmasi proses close; proses pengganti tidak akan dibuat.`);
+      }
+    }
+  }
+  if (child.__ochaExitCleanup) await child.__ochaExitCleanup;
+  if (state.tunnel === child) state.tunnel = null;
+  if (state.tunnelPidPath) {
+    const record = await readJsonFile(state.tunnelPidPath);
+    if (record?.token === child.__ochaLeaseToken && Number(record.pid) === Number(child.pid) && Number(record.generation) === Number(child.__ochaGeneration)) {
+      await fs.rm(state.tunnelPidPath, { force: true }).catch(() => {});
+    }
+  }
+  await releaseTunnelLease(child.__ochaLeaseToken);
+}
+
+function clearTunnelIdleTimer() {
+  if (state.tunnelIdleTimer) clearTimeout(state.tunnelIdleTimer);
+  state.tunnelIdleTimer = null;
+}
+
+function scheduleTunnelIdleStop() {
+  clearTunnelIdleTimer();
+  const idleMs = boundedInt(setting('tunnelIdleMs', 300_000), 300_000, 0, 3_600_000);
+  if (idleMs === 0 || !state.tunnel || state.closing || state.sessions.size || state.pendingReservations) return;
+  state.tunnelIdleTimer = setTimeout(() => {
+    state.tunnelIdleTimer = null;
+    void serializeTunnelOperation(async () => {
+      if (state.closing || state.sessions.size || state.pendingReservations) return;
+      await stopTunnelInternal();
+      logger.info({ idleMs }, 'Quick Tunnel stopped after preview sessions became idle');
+    }).catch(error => logger.warn({ message: error.message }, 'Quick Tunnel idle shutdown failed'));
+  }, idleMs);
+  state.tunnelIdleTimer.unref?.();
+}
+
+function recordTunnelFailure(error) {
+  state.tunnelError = error instanceof Error ? error : new Error(String(error));
+  state.tunnelFailures = Math.min(10, state.tunnelFailures + 1);
+  const delay = Math.min(60_000, 2000 * (2 ** Math.min(state.tunnelFailures - 1, 5)));
+  state.tunnelRetryAfter = Date.now() + delay;
+  return state.tunnelError;
 }
 
 async function handleUnexpectedTunnelExit(child, code, signal) {
-  if (state.closing) return;
-  state.tunnel = null;
-  state.tunnelUrl = null;
-  state.tunnelError = new Error(`TryCloudflare berhenti (exit ${code ?? signal}).`);
-  logger.error({ code, signal }, 'Persistent TryCloudflare tunnel stopped unexpectedly');
-  // Old hostnames cannot be assumed to survive a Quick Tunnel restart. Revoke
-  // affected sessions and free worker/container resources before reconnecting.
+  if (state.closing || child.__ochaIntentionalStop) return;
+  if (state.tunnel === child) {
+    state.tunnel = null;
+    state.tunnelUrl = null;
+    state.tunnelPromise = null;
+    state.tunnelStartedAt = null;
+  }
+  const error = recordTunnelFailure(new Error(`TryCloudflare berhenti (exit ${code ?? signal}).`));
+  logger.error({ pid: child.pid, generation: child.__ochaGeneration, code, signal, retryAfter: state.tunnelRetryAfter }, 'Quick Tunnel process stopped unexpectedly');
   for (const session of [...state.sessions.values()]) await cleanupSession(session.id, 'tunnel-lost');
-  scheduleTunnelRestart();
+  // The next real preview request performs one fresh start. Never keep an
+  // otherwise-unused Quick Tunnel running in the background after a failure.
 }
 
-function startTunnel() {
-  if (state.tunnelUrl && state.tunnel && state.tunnel.exitCode === null && state.tunnel.signalCode === null) return Promise.resolve(state.tunnelUrl);
-  if (state.tunnelPromise) return state.tunnelPromise;
-  if (state.tunnel) return stopTunnel().then(() => startTunnel());
-  if (!setting('publicTunnelEnabled', true)) return Promise.reject(new Error('Public TryCloudflare tunnel dinonaktifkan oleh owner.'));
+async function startTunnelInternal() {
+  if (state.closing) throw new Error('Code Lab sedang dihentikan.');
+  if (!setting('publicTunnelEnabled', true)) throw new Error('Public TryCloudflare tunnel dinonaktifkan oleh owner.');
+  if (state.tunnelUrl && state.tunnel && state.tunnel.exitCode === null && state.tunnel.signalCode === null) return state.tunnelUrl;
+  if (state.tunnel) await stopTunnelProcess(state.tunnel);
+
+  if (state.tunnelRetryAfter > Date.now()) {
+    const seconds = Math.ceil((state.tunnelRetryAfter - Date.now()) / 1000);
+    throw new Error(`Quick Tunnel sedang dalam jeda pemulihan. Coba kembali dalam ${seconds} detik.`);
+  }
+  if (!state.prerequisites.cloudflared) {
+    try { await verifyTunnelPrerequisites(); }
+    catch (error) { recordTunnelFailure(error); throw error; }
+  }
+
   const binary = String(setting('cloudflaredBin', 'cloudflared'));
   const port = state.server?.address()?.port || boundedInt(setting('port', 8787), 8787, 1024, 65535);
-  state.tunnelPromise = new Promise((resolve, reject) => {
-    let settled = false;
-    let output = '';
-    const child = spawn(binary, ['tunnel', '--url', `http://127.0.0.1:${port}`, '--no-autoupdate'], {
+  await acquireTunnelLease(binary);
+  const generation = ++state.tunnelGeneration;
+  let child;
+  try {
+    child = spawn(binary, ['tunnel', '--url', `http://127.0.0.1:${port}`, '--no-autoupdate'], {
       stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, detached: false,
       env: { PATH: process.env.PATH || '', HOME: process.env.HOME || os.tmpdir(), NO_COLOR: '1' }
     });
-    state.tunnel = child;
-    const tunnelPidPath = state.tunnelPidPath;
-    const pidWritePromise = tunnelPidPath ? fs.writeFile(tunnelPidPath, String(child.pid || '')).catch(() => {}) : Promise.resolve();
-    const removePidFile = () => {
-      if (!tunnelPidPath) return;
-      void pidWritePromise.then(async () => {
-        const recordedPid = await fs.readFile(tunnelPidPath, 'utf8').catch(() => '');
-        if (recordedPid.trim() === String(child.pid || '')) await fs.rm(tunnelPidPath, { force: true }).catch(() => {});
-      }).catch(() => {});
-    };
+  } catch (error) {
+    await releaseTunnelLease(state.tunnelLease?.token);
+    const failure = new Error(`cloudflared tidak dapat dijalankan (${error.code || error.message}). Pasang cloudflared pada VPS.`);
+    recordTunnelFailure(failure);
+    throw failure;
+  }
+
+  child.__ochaGeneration = generation;
+  child.__ochaLeaseToken = state.tunnelLease?.token || null;
+  child.__ochaClosed = false;
+  child.__ochaIntentionalStop = false;
+  state.tunnel = child;
+  state.tunnelStartedAt = new Date().toISOString();
+  const pidWritePromise = updateTunnelLease(child, binary, generation).catch(async error => {
+    logger.error({ pid: child.pid, message: error.message }, 'Failed to persist Quick Tunnel process identity');
+    try { child.kill('SIGTERM'); } catch {}
+  });
+
+  let timer;
+  let settled = false;
+  let output = '';
+  const readyPromise = new Promise((resolve, reject) => {
     const fail = error => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      state.tunnelUrl = null;
-      state.tunnelError = error;
       state.tunnelPromise = null;
-      removePidFile();
       reject(error);
     };
     const inspect = chunk => {
       output = `${output}${chunk.toString()}`.slice(-16_000);
       const match = output.match(URL_PATTERN);
-      if (match && !settled) {
+      if (match && !settled && state.tunnel === child && !child.__ochaIntentionalStop) {
         settled = true;
         clearTimeout(timer);
         state.tunnelUrl = match[0].replace(/\/$/, '');
         state.tunnelError = null;
         state.tunnelFailures = 0;
+        state.tunnelRetryAfter = 0;
         state.tunnelPromise = null;
-        logger.info({ tunnel: new URL(state.tunnelUrl).host }, 'Persistent TryCloudflare tunnel ready');
+        logger.info({ tunnel: new URL(state.tunnelUrl).host, pid: child.pid, generation, mode: 'on-demand' }, 'Shared on-demand TryCloudflare tunnel ready');
         resolve(state.tunnelUrl);
       }
     };
     child.stdout.on('data', inspect);
     child.stderr.on('data', inspect);
     child.once('error', error => fail(new Error(`cloudflared tidak dapat dijalankan (${error.code || error.message}). Pasang cloudflared pada VPS.`)));
-    child.once('exit', (code, signal) => {
+    child.once('close', (code, signal) => {
+      child.__ochaClosed = true;
+      clearTimeout(timer);
       const wasCurrent = state.tunnel === child;
-      if (wasCurrent) {
-        state.tunnel = null;
-        state.tunnelUrl = null;
-      }
-      removePidFile();
+      const wasReady = settled && Boolean(state.tunnelUrl);
       if (!settled) fail(new Error(`Quick Tunnel berhenti sebelum URL siap (exit ${code ?? signal}). ${output.slice(-900)}`));
-      else if (wasCurrent && !state.closing) void handleUnexpectedTunnelExit(child, code, signal);
-      else logger.info({ code, signal }, 'TryCloudflare process exited');
+      child.__ochaExitCleanup = (async () => {
+        // Do not clear the active child or release its lease until the PID and
+        // lock records are reconciled. A subsequent start must await this work.
+        await pidWritePromise;
+        if (state.tunnelPidPath) {
+          const record = await readJsonFile(state.tunnelPidPath);
+          if (record?.token === child.__ochaLeaseToken && Number(record.pid) === Number(child.pid) && Number(record.generation) === generation) {
+            await fs.rm(state.tunnelPidPath, { force: true }).catch(() => {});
+          }
+        }
+        await releaseTunnelLease(child.__ochaLeaseToken);
+        if (state.tunnel === child) {
+          state.tunnel = null;
+          state.tunnelUrl = null;
+          state.tunnelPromise = null;
+          state.tunnelStartedAt = null;
+        }
+        if (wasCurrent && wasReady && !state.closing && !child.__ochaIntentionalStop) {
+          await handleUnexpectedTunnelExit(child, code, signal);
+        } else {
+          logger.info({ pid: child.pid, generation, code, signal, intentional: child.__ochaIntentionalStop }, 'Quick Tunnel process closed');
+        }
+      })().catch(error => {
+        logger.error({ pid: child.pid, generation, message: error.message }, 'Quick Tunnel exit cleanup failed; replacement is blocked until lock recovery');
+        throw error;
+      });
+      child.__ochaExitCleanup.catch(() => {});
     });
-    const timer = setTimeout(() => {
+    timer = setTimeout(() => {
       fail(new Error(`TryCloudflare belum memberikan URL dalam 25 detik. ${output.slice(-900)}`));
       try { child.kill('SIGTERM'); } catch {}
     }, 25_000);
     timer.unref?.();
   });
-  return state.tunnelPromise;
+  state.tunnelPromise = readyPromise;
+  await pidWritePromise;
+  try {
+    const url = await readyPromise;
+    if (state.tunnel !== child || child.__ochaClosed || child.exitCode !== null || state.tunnelUrl !== url) {
+      throw new Error('Quick Tunnel terputus sebelum sesi preview selesai disiapkan. Coba ulang setelah jeda pemulihan.');
+    }
+    return url;
+  } catch (error) {
+    recordTunnelFailure(error);
+    throw error;
+  }
 }
 
-async function stopTunnel() {
-  clearTimeout(state.tunnelRestartTimer);
-  state.tunnelRestartTimer = null;
+async function stopTunnelInternal() {
+  clearTunnelIdleTimer();
   const child = state.tunnel;
-  state.tunnel = null;
   state.tunnelUrl = null;
   state.tunnelPromise = null;
-  if (state.tunnelPidPath) await fs.rm(state.tunnelPidPath, { force: true }).catch(() => {});
-  if (!child || child.exitCode !== null || child.signalCode !== null) return;
-  await new Promise(resolve => {
-    const timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch {} resolve(); }, 1800);
-    timer.unref?.();
-    child.once('exit', () => { clearTimeout(timer); resolve(); });
-    try { child.kill('SIGTERM'); } catch { clearTimeout(timer); resolve(); }
+  if (child) await stopTunnelProcess(child);
+  else {
+    if (state.tunnelPidPath) await fs.rm(state.tunnelPidPath, { force: true }).catch(() => {});
+    await releaseTunnelLease();
+  }
+  state.tunnelStartedAt = null;
+}
+
+function startTunnel() {
+  clearTunnelIdleTimer();
+  return serializeTunnelOperation(async () => {
+    if (!setting('publicTunnelEnabled', true)) throw new Error('Public TryCloudflare tunnel dinonaktifkan oleh owner.');
+    if (state.tunnelUrl && state.tunnel && !state.tunnel.__ochaClosed && state.tunnel.exitCode === null && state.tunnel.signalCode === null) return state.tunnelUrl;
+    return startTunnelInternal();
+  }).catch(error => {
+    if (setting('publicTunnelEnabled', true) && !state.tunnelUrl) state.tunnelError = error;
+    throw error;
   });
+}
+
+function stopTunnel() {
+  return serializeTunnelOperation(stopTunnelInternal);
 }
 
 function validateWebsiteFiles(files) {
@@ -614,7 +975,7 @@ function touchExecutionDeadline(session) {
 }
 
 function containerArgs(session) {
-  const runtime = String(setting('containerRuntime', 'docker'));
+  const runtime = selectedRuntime();
   const isPodman = /podman/i.test(runtime);
   const image = session.language === 'python'
     ? String(setting('pythonImage', 'python:3.12-alpine'))
@@ -665,6 +1026,7 @@ export function rescheduleCodeWorkers() {
 async function runWorker(session) {
   if (!state.sessions.has(session.id)) return;
   const { runtime, args } = containerArgs(session);
+  session.runtime = runtime;
   session.status = 'running';
   session.startedAt = new Date().toISOString();
   logger.info({ sessionId: session.id, language: session.language, ownerKey: session.ownerKey, runtime }, 'Code Lab worker started');
@@ -723,7 +1085,7 @@ async function runHtmlSession(session) {
 async function cleanupContainer(session) {
   if (!session.containerName || !session.containerStarted) return;
   session.containerStarted = false;
-  const runtime = String(setting('containerRuntime', 'docker'));
+  const runtime = session.runtime || selectedRuntime();
   await new Promise(resolve => {
     let settled = false;
     const done = () => { if (settled) return; settled = true; clearTimeout(timer); resolve(); };
@@ -752,6 +1114,7 @@ async function cleanupSession(id, reason = 'expired') {
   session.source = '';
   if (session.files) session.files = Object.create(null);
   logger.info({ sessionId: id, reason }, 'Code Lab session destroyed');
+  scheduleTunnelIdleStop();
   return true;
 }
 
@@ -764,20 +1127,31 @@ async function ensureWorkspace(session) {
 }
 
 async function ensureWatchdog() {
-  if (state.watchdog) return;
-  const instanceDir = state.instanceDir;
-  state.heartbeatPath = path.join(instanceDir, 'heartbeat');
-  state.shutdownPath = path.join(instanceDir, 'shutdown');
-  state.tunnelPidPath = path.join(instanceDir, 'cloudflared.pid');
-  await fs.mkdir(instanceDir, { recursive: true, mode: 0o700 });
-  await fs.writeFile(state.heartbeatPath, String(Date.now()), { mode: 0o600 });
-  const child = spawn(process.execPath, [WATCHDOG_FILE, String(process.pid), state.instanceId, instanceDir, String(setting('containerRuntime', 'docker'))], {
-    detached: true, stdio: 'ignore', windowsHide: true,
-    env: { PATH: process.env.PATH || '', HOME: process.env.HOME || os.tmpdir() }
-  });
-  state.watchdog = child;
-  child.unref();
-  child.once('error', error => logger.warn({ code: error.code, message: error.message }, 'Code Lab orphan watchdog failed to start'));
+  if (state.watchdog) return state.watchdog;
+  if (state.watchdogPromise) return state.watchdogPromise;
+  if (state.closing) throw new Error('Code Lab sedang dihentikan; watchdog tidak boleh dibuat.');
+  state.watchdogPromise = (async () => {
+    const instanceDir = state.instanceDir;
+    state.heartbeatPath = path.join(instanceDir, 'heartbeat');
+    state.shutdownPath = path.join(instanceDir, 'shutdown');
+    state.tunnelPidPath = path.join(instanceDir, 'cloudflared.pid');
+    await fs.mkdir(instanceDir, { recursive: true, mode: 0o700 });
+    await fs.writeFile(state.heartbeatPath, String(Date.now()), { mode: 0o600 });
+    const child = spawn(process.execPath, [WATCHDOG_FILE, String(process.pid), state.instanceId, instanceDir, String(state.runtimeName || selectedRuntime())], {
+      detached: true, stdio: 'ignore', windowsHide: true,
+      env: { PATH: process.env.PATH || '', HOME: process.env.HOME || os.tmpdir() }
+    });
+    state.watchdog = child;
+    child.unref();
+    child.once('error', error => {
+      if (state.watchdog === child) state.watchdog = null;
+      logger.warn({ code: error.code, message: error.message }, 'Code Lab orphan watchdog failed to start');
+    });
+    child.once('exit', () => { if (state.watchdog === child) state.watchdog = null; });
+    return child;
+  })();
+  try { return await state.watchdogPromise; }
+  finally { state.watchdogPromise = null; }
 }
 
 function startHeartbeat() {
@@ -790,57 +1164,30 @@ function startHeartbeat() {
 }
 
 let heartbeatTimer;
+let runtimeProbePromise;
+let runtimeProbeRetryAfter = 0;
 
 export async function startCodeLab() {
   if (!setting('enabled', true)) return { enabled: false, reason: 'disabled' };
   if (state.startPromise) return state.startPromise;
-  if (state.server?.listening) {
-    state.closing = false;
-    if (!state.prerequisites.runtime) {
-      try { await verifyRuntimePrerequisites(); }
-      catch (error) { logger.error({ message: error.message }, 'Container runtime preflight is not ready'); }
-    }
-    if (setting('publicTunnelEnabled', true) && !state.tunnelUrl) {
-      try {
-        await verifyTunnelPrerequisites();
-        await startTunnel();
-      } catch (error) {
-        state.tunnelError = error;
-        logger.error({ message: error.message }, 'TryCloudflare startup/reconnect failed');
-      }
-    }
-    return getCodeLabStatus();
-  }
   state.startPromise = (async () => {
     state.closing = false;
-    state.startedAt = new Date().toISOString();
-    // Verify the tunnel and container backend independently. A missing Docker
-    // image must not prevent the single preview gateway/tunnel from starting;
-    // Python/Node sessions fail closed until the runtime check passes.
-    const checks = [
-      verifyRuntimePrerequisites().catch(error => logger.error({ message: error.message }, 'Container runtime preflight is not ready'))
-    ];
-    if (setting('publicTunnelEnabled', true)) {
-      checks.push(verifyTunnelPrerequisites().catch(error => {
-        state.tunnelError = error;
-        logger.error({ message: error.message }, 'Cloudflare preflight is not ready');
-      }));
-    }
-    await Promise.all(checks);
-    state.rootDir = path.resolve(String(setting('tempDir', path.join(os.tmpdir(), 'ocha-code-lab'))));
-    state.instanceId = `${process.pid}-${crypto.randomBytes(6).toString('hex')}`;
-    state.instanceDir = path.join(state.rootDir, `instance-${state.instanceId}`);
+    if (!state.startedAt) state.startedAt = new Date().toISOString();
+    if (!state.rootDir) state.rootDir = path.resolve(String(setting('tempDir', path.join(os.tmpdir(), 'ocha-code-lab'))));
+    if (!state.instanceId) state.instanceId = `${process.pid}-${crypto.randomBytes(6).toString('hex')}`;
+    if (!state.instanceDir) state.instanceDir = path.join(state.rootDir, `instance-${state.instanceId}`);
     await fs.mkdir(state.instanceDir, { recursive: true, mode: 0o700 });
-    await ensureServer();
-    await ensureWatchdog();
-    heartbeatTimer = startHeartbeat();
-    if (setting('publicTunnelEnabled', true) && state.prerequisites.cloudflared) {
-      try { await startTunnel(); }
-      catch (error) {
-        state.tunnelError = error;
-        logger.error({ message: error.message }, 'TryCloudflare did not become ready; Code Lab will reject public preview requests');
-      }
+
+    if (!state.prerequisites.runtime) {
+      try { await ensureRuntimePrerequisites({ force: true }); }
+      catch (error) { logger.warn({ message: error.message }, 'Container runtime unavailable; Python/Node execution remains fail-closed'); }
     }
+
+    await ensureServer();
+
+    // Quick Tunnel is deliberately lazy. Bot startup never opens a public URL
+    // or leaves cloudflared running until a user actually asks for a preview.
+    logger.info({ mode: 'on-demand', gateway: `127.0.0.1:${state.server.address()?.port}` }, 'Code Lab initialized; public tunnel will start on first preview request');
     return getCodeLabStatus();
   })();
   try { return await state.startPromise; }
@@ -857,7 +1204,10 @@ export async function createCodeSession({ ownerId, chatId = '', language = '', s
   if (Buffer.byteLength(code, 'utf8') > maxBytes) throw new Error(`Kode melewati batas ${maxBytes} byte.`);
   const normalizedLanguage = normalizeCodeLanguage(language, code);
   if (normalizedLanguage !== 'html' && !state.prerequisites.runtime) {
-    throw new Error(state.prerequisites.runtimeError || 'Container runtime belum lolos pemeriksaan. Periksa Docker/Podman dan image runtime, lalu jalankan .nexora runtime docker untuk memeriksa ulang.');
+    try { await ensureRuntimePrerequisites(); }
+    catch (error) {
+      throw new Error(`${state.prerequisites.runtimeError || 'Container runtime belum lolos pemeriksaan.'} Pemeriksaan otomatis akan dicoba lagi pada permintaan eksekusi setelah cooldown. Detail: ${error.message}`);
+    }
   }
   const ownerKey = crypto.createHash('sha256').update(String(ownerId || 'anonymous')).digest('hex').slice(0, 16);
   const totalLimit = boundedInt(setting('maxSessionsTotal', 20), 20, 1, 100);
@@ -873,6 +1223,8 @@ export async function createCodeSession({ ownerId, chatId = '', language = '', s
   try {
     checkRateLimit(ownerKey);
     await ensureServer();
+    await ensureWatchdog();
+    if (!heartbeatTimer) heartbeatTimer = startHeartbeat();
     const baseUrl = await startTunnel();
     if (state.closing) throw new Error('Code Lab sedang dihentikan.');
 
@@ -907,6 +1259,10 @@ export async function createCodeSession({ ownerId, chatId = '', language = '', s
       throw error;
     }
 
+    if (!state.sessions.has(id) || state.tunnelUrl !== baseUrl || !state.tunnel || state.tunnel.__ochaClosed || state.tunnel.exitCode !== null) {
+      await cleanupSession(id, 'tunnel-lost');
+      throw new Error('Quick Tunnel terputus saat sesi disiapkan. Minta Ocha membuat preview baru.');
+    }
     const previewUrl = `${baseUrl}/s/${id}/${token}`;
     logger.info({ sessionId: id, language: normalizedLanguage, ownerKey, expiresAt: new Date(session.expiresAt).toISOString() }, 'Code Lab session created');
     return {
@@ -918,6 +1274,7 @@ export async function createCodeSession({ ownerId, chatId = '', language = '', s
     const remaining = (state.reservations.get(ownerKey) || 1) - 1;
     if (remaining > 0) state.reservations.set(ownerKey, remaining);
     else state.reservations.delete(ownerKey);
+    scheduleTunnelIdleStop();
   }
 }
 
@@ -939,6 +1296,8 @@ export async function createWebsiteSession({ ownerId, chatId = '', title = 'Webs
   try {
     checkRateLimit(ownerKey);
     await ensureServer();
+    await ensureWatchdog();
+    if (!heartbeatTimer) heartbeatTimer = startHeartbeat();
     const baseUrl = await startTunnel();
     if (state.closing) throw new Error('Code Lab sedang dihentikan.');
     const id = crypto.randomUUID();
@@ -956,6 +1315,10 @@ export async function createWebsiteSession({ ownerId, chatId = '', title = 'Webs
     state.sessions.set(id, session);
     session.expiryTimer = setTimeout(() => { void cleanupSession(id, 'expired'); }, ttlMs);
     session.expiryTimer.unref?.();
+    if (!state.sessions.has(id) || state.tunnelUrl !== baseUrl || !state.tunnel || state.tunnel.__ochaClosed || state.tunnel.exitCode !== null) {
+      await cleanupSession(id, 'tunnel-lost');
+      throw new Error('Quick Tunnel terputus saat website preview disiapkan. Minta Ocha membuat preview baru.');
+    }
     const previewUrl = `${baseUrl}/s/${id}/${token}`;
     logger.info({ sessionId: id, ownerKey, fileCount: entries.length, totalBytes, expiresAt: new Date(session.expiresAt).toISOString() }, 'Nexora website project published');
     return { id, language: 'website', title: session.title, summary: session.summary, fileCount: entries.length, totalBytes, version: session.projectVersion, status: session.status, previewUrl, expiresAt: new Date(session.expiresAt).toISOString(), ttlMs };
@@ -964,6 +1327,7 @@ export async function createWebsiteSession({ ownerId, chatId = '', title = 'Webs
     const remaining = (state.reservations.get(ownerKey) || 1) - 1;
     if (remaining > 0) state.reservations.set(ownerKey, remaining);
     else state.reservations.delete(ownerKey);
+    scheduleTunnelIdleStop();
   }
 }
 
@@ -983,6 +1347,7 @@ export async function updateWebsiteSession({ ownerId, chatId = '', sessionId, ti
   const ownerKey = crypto.createHash('sha256').update(String(ownerId || 'anonymous')).digest('hex').slice(0, 16);
   const chatKey = crypto.createHash('sha256').update(String(chatId)).digest('hex').slice(0, 12);
   if (!session || session.language !== 'website' || session.ownerKey !== ownerKey || session.chatKey !== chatKey || Date.now() >= session.expiresAt) throw new Error('Proyek website aktif tidak ditemukan atau bukan milik percakapan ini.');
+  if (!state.tunnelUrl || !state.tunnel || state.tunnel.__ochaClosed || state.tunnel.exitCode !== null) throw new Error('Quick Tunnel sedang tidak tersedia. Buat preview baru untuk menerbitkan URL publik yang aktif.');
   const { entries, totalBytes, safeFiles } = validateWebsiteFiles(files);
   // Swap the complete manifest in one synchronous operation; in-flight requests
   // see either the previous complete version or the new complete version.
@@ -1000,10 +1365,15 @@ export async function updateWebsiteSession({ ownerId, chatId = '', sessionId, ti
 export async function stopCodeLab() {
   if (state.closing) return;
   state.closing = true;
+  clearTunnelIdleTimer();
   if (state.startPromise) {
     try { await state.startPromise; } catch {}
   }
+  if (runtimeProbePromise) {
+    try { await runtimeProbePromise; } catch {}
+  }
   if (heartbeatTimer) clearInterval(heartbeatTimer);
+  heartbeatTimer = null;
   for (const session of [...state.sessions.values()]) await cleanupSession(session.id, 'stopped');
   state.queue.length = 0;
   await stopTunnel();
@@ -1012,15 +1382,27 @@ export async function stopCodeLab() {
     state.server = null;
   }
   if (state.shutdownPath) await fs.writeFile(state.shutdownPath, 'clean', { mode: 0o600 }).catch(() => {});
-  if (state.watchdog?.pid) {
-    try { process.kill(state.watchdog.pid, 'SIGTERM'); } catch {}
+  const watchdog = state.watchdog;
+  if (watchdog) {
+    try { watchdog.kill('SIGTERM'); } catch {}
+    if (!(await waitForChildClose(watchdog, 1200))) {
+      try { watchdog.kill('SIGKILL'); } catch {}
+      await waitForChildClose(watchdog, 800);
+    }
   }
   state.watchdog = null;
-  if (state.heartbeatPath) await fs.rm(path.dirname(state.heartbeatPath), { recursive: true, force: true }).catch(() => {});
+  state.watchdogPromise = null;
+  if (state.instanceDir) await fs.rm(state.instanceDir, { recursive: true, force: true }).catch(() => {});
   state.instanceDir = null;
+  state.instanceId = null;
   state.tunnelPidPath = null;
   state.heartbeatPath = null;
   state.shutdownPath = null;
+  state.startedAt = null;
+  state.runtimeName = null;
+  state.prerequisites.runtime = null;
+  state.prerequisites.runtimeError = null;
+  runtimeProbeRetryAfter = 0;
   logger.info('Code Lab gateway, workers, tunnel, and temporary sessions stopped');
 }
 
@@ -1030,11 +1412,23 @@ export function getCodeLabStatus() {
     aiExecutionEnabled: Boolean(setting('aiExecutionEnabled', true)),
     publicTunnelEnabled: Boolean(setting('publicTunnelEnabled', true)),
     gateway: state.server?.listening ? `127.0.0.1:${state.server.address()?.port}` : 'offline',
-    tunnel: !setting('publicTunnelEnabled', true) ? 'OFF' : (state.tunnelUrl || (state.tunnelError ? 'error' : 'connecting/offline')),
+    tunnel: !setting('publicTunnelEnabled', true) ? 'OFF' : (state.tunnelUrl || (state.tunnelError ? 'error' : (state.tunnel ? 'starting' : 'idle/on-demand'))),
+    tunnelMode: 'on-demand-shared',
+    tunnelPid: state.tunnel?.pid || null,
+    tunnelGeneration: state.tunnelGeneration,
+    tunnelStartedAt: state.tunnelStartedAt,
+    tunnelIdleMs: boundedInt(setting('tunnelIdleMs', 300_000), 300_000, 0, 3_600_000),
+    tunnelRetryAfter: state.tunnelRetryAfter > Date.now() ? state.tunnelRetryAfter : null,
+    activeHttpRequests: state.activeHttpRequests,
+    maxInFlightRequests: QUICK_TUNNEL_MAX_IN_FLIGHT,
+    tunnelRetryInSeconds: state.tunnelRetryAfter > Date.now() ? Math.ceil((state.tunnelRetryAfter - Date.now()) / 1000) : 0,
     tunnelError: state.tunnelError?.message || null,
     cloudflaredVersion: state.prerequisites.cloudflared,
     runtimeReady: Boolean(state.prerequisites.runtime),
+    runtime: state.runtimeName || 'none',
+    runtimePreference: String(setting('containerRuntime', 'auto')),
     runtimeError: state.prerequisites.runtimeError,
+    runtimeRetryInSeconds: runtimeProbeRetryAfter > Date.now() ? Math.ceil((runtimeProbeRetryAfter - Date.now()) / 1000) : 0,
     activeSessions: state.sessions.size,
     activeWebsiteSessions: [...state.sessions.values()].filter(session => session.language === 'website').length,
     pendingReservations: state.pendingReservations,
@@ -1047,9 +1441,16 @@ export function getCodeLabStatus() {
   };
 }
 
+let tunnelRestartPromise = null;
+
 export async function restartCodeLabTunnel() {
-  await stopTunnel();
-  if (!setting('enabled', true) || !setting('publicTunnelEnabled', true)) return getCodeLabStatus();
-  const url = await startTunnel();
-  return { ...getCodeLabStatus(), tunnel: url };
+  if (tunnelRestartPromise) return tunnelRestartPromise;
+  tunnelRestartPromise = serializeTunnelOperation(async () => {
+    await stopTunnelInternal();
+    if (!setting('enabled', true) || !setting('publicTunnelEnabled', true)) return getCodeLabStatus();
+    const url = await startTunnelInternal();
+    return { ...getCodeLabStatus(), tunnel: url };
+  });
+  try { return await tunnelRestartPromise; }
+  finally { tunnelRestartPromise = null; }
 }

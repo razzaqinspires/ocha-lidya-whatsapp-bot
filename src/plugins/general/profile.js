@@ -1,7 +1,7 @@
 import { getUserProfile } from '../../ai/user-profiles.js';
 import { renderProfileCard } from '../../ai/profile-card.js';
 import { getPublicIdentity } from '../../core/public-identity.js';
-import { isOwner as verifyOwner } from '../../core/identity.js';
+import { isVerifiedOwnerMessage } from '../../core/identity.js';
 
 function progressBar(percent, width = 16) {
   const filled = Math.max(0, Math.min(width, Math.round((Number(percent) || 0) / 100 * width)));
@@ -32,7 +32,7 @@ export default {
   name: 'profile', aliases: ['me', 'level', 'xp'], category: 'general',
   description: 'Lihat XP, level, rank, dan tingkat familiaritas interaksi AI',
   async execute({ sock, m, config }) {
-    const owner = Boolean(m.isOwner || verifyOwner(m.sender, config.bot.owner));
+    const owner = isVerifiedOwnerMessage(m, config.bot.owner);
     const profile = await getUserProfile(m.sender, { displayName: m.pushName, isOwner: owner });
     const identity = getPublicIdentity();
     const caption = profileText(profile, identity);

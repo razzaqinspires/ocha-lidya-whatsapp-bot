@@ -13,7 +13,8 @@ export async function runNexoraBootstrap(codeLabConfig = {}) {
     logger.warn({ platform: process.platform }, 'Nexora host bootstrap supports Linux only; skipping automatic package installation');
     return { skipped: true, reason: 'unsupported platform' };
   }
-  const runtime = codeLabConfig.containerRuntime === 'podman' ? 'podman' : 'docker';
+  const configuredRuntime = String(codeLabConfig.containerRuntime || 'auto').toLowerCase();
+  const runtime = ['auto', 'docker', 'podman'].includes(configuredRuntime) ? configuredRuntime : 'auto';
   const args = [
     SCRIPT,
     runtime,
@@ -47,7 +48,7 @@ export async function runNexoraBootstrap(codeLabConfig = {}) {
       else finish(new Error(`Nexora bootstrap exited with code ${code ?? 'null'} (${signal || 'no signal'})`));
     });
   });
-  logger.info('Nexora dependency manager host preflight completed');
+  logger.info('Nexora host preflight finished; Code Lab will verify runtime readiness independently');
   return { skipped: false, runtime };
 }
 

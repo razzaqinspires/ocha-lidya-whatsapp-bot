@@ -1,3 +1,19 @@
+## [1.10.3] - 2026-11-21
+
+### Fixed
+- Repaired schema migration ordering: schema v20 now runs after migrations v11–v19 rather than being nested inside the v11 block, so older installations no longer skip intermediate migrations.
+- Changed host bootstrap to pass the configured `auto` runtime preference through to the host script. It now uses direct administrative commands when already root, checks the actual PID 1/init manager, starts Docker without `sudo` when appropriate, and falls back to daemonless Podman.
+- Corrected manual `dockerd` PID/log file newline handling and retained the single-daemon lock. Bootstrap remains non-interactive for non-root users and does not weaken socket permissions or enable privileged containers.
+- Persisted only Baileys-verified LID→PN mappings for the configured owner, so subsequent messages remain verifiable if alternate PN fields are omitted. Mappings are stored with restrictive file permissions.
+- Centralized owner verification in the dispatcher and permission layer; stale `isOwner` flags, display names, and chat claims cannot authorize administrative commands.
+- Added deterministic private-chat owner configuration inspection. Non-secret config is available to the verified owner; API keys, tokens, passwords, embedded database URL credentials, sessions, and private keys are redacted. Config snapshots are not sent to the LLM or persisted in AI history.
+
+### Validation
+- Syntax check: 111 JavaScript files checked.
+- Offline test suite: 108 passed, 2 skipped, 0 failed (110 total).
+- Added owner identity, LID mapping persistence, configuration intent, secret-redaction, bootstrap dry-run, root-without-sudo Podman fallback, Code Lab runtime fallback, and owner configuration-flow tests.
+- Live Docker/Podman provisioning and real WhatsApp LID metadata still require validation on the target VPS; this environment cannot prove the host kernel permits nested containers.
+
 ## [1.10.1] - 2026-11-21
 
 ### Changed

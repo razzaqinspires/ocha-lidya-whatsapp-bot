@@ -2,6 +2,12 @@
 
 Ocha Lidya is a modular WhatsApp automation framework built with native Node.js ESM and `@whiskeysockets/baileys`. The project separates WhatsApp transport, message serialization, command dispatch, plugin execution, persistent configuration, and durable JSONL storage.
 
+## Runtime and owner-security hardening (v1.10.3)
+
+The Nexora host preflight now defaults to `containerRuntime: 'auto'`: it validates an existing Docker daemon, starts Docker through the service manager that is actually PID 1, uses a single locked manual `dockerd` only when running as root without an init manager, and falls back to daemonless Podman. Root processes execute administrative commands directly; `sudo` is not required for UID 0. Non-root startup never opens an interactive privilege prompt. If the host kernel/container policy blocks all available engines, Code Lab remains fail-closed while WhatsApp and AI continue normally.
+
+Owner verification is recalculated by the backend for each message using Baileys PN metadata or a previously verified owner-only LID→PN mapping. Chat claims, display names, conversation history, and stale `isOwner` flags are not authorization. Configuration inspection is handled locally and only in the verified owner's private chat; non-secret settings are shown while API keys, tokens, passwords, WhatsApp sessions, and private keys remain redacted and are never sent to the LLM. See `docs/OWNER_SECURITY.md`.
+
 ## AI response performance (v1.10.0)
 
 The default AI profile is Boost after the schema v12 migration. It uses an 80 ms message-coalescing window, 3 history turns, a 180-token output budget, up to 3 eligible API key attempts per provider with fair round-robin rotation, a 3.5-second per-provider timeout, and a 14-second total fallback deadline. Use `.aiset speed boost`, `.aiset speed fast`, or `.aiset speed balanced` to switch profiles. Provider telemetry, job checkpoints, and conversation journal writes are queued asynchronously so they do not block the response-critical path; hot conversation history and quoted-reply anchors are updated immediately. See `docs/AI_ENGINE.md` for trade-offs and operational details.
@@ -37,7 +43,7 @@ npm test
 npm start
 ```
 
-`npm start` first checks and installs missing declared Node dependencies. On Linux, after loading the saved configuration, startup also runs the Nexora dependency manager to check Docker/Podman, required runtime images, and `cloudflared`; missing supported host packages are installed automatically when the process has the required privileges. Node.js and npm themselves must already be installed. See `docs/CODE_LAB.md` for supported operating systems, privilege behavior, and dry-run mode.
+`npm start` first checks and installs missing declared Node dependencies. On Linux, after loading saved configuration, startup runs the Nexora host manager with the `auto` runtime preference by default. It detects the actual init system, avoids `sudo` when already root, attempts a locked manual Docker daemon only on a root host without a service manager, and tries Podman if Docker cannot start. It also validates/pulls the Python and Node images and verifies `cloudflared`. If host capabilities do not permit any container engine, the bot stays online and Code Lab execution is reported unavailable rather than pretending it is ready. See `docs/CODE_LAB.md` and `docs/OWNER_SECURITY.md`.
 
 `npm run git:setup` menyiapkan repository lokal/branch `main` dan memastikan remote `origin` mengarah ke repository resmi. Bila folder ini merupakan hasil `git clone`, perintah tersebut hanya memverifikasi konfigurasi yang sudah ada.
 
@@ -578,7 +584,7 @@ Users can ask Ocha to run the most recent assistant code block by saying `coba j
 
 Each session receives an unguessable path on a temporary `trycloudflare.com` Quick Tunnel. Session paths are independently revoked after 60 minutes, with automatic container and workspace cleanup. One shared Quick Tunnel is created only on the first preview request and reused across concurrent users/sessions, then closed after a configurable five-minute idle grace period after the last session disappears. Startup does not launch a long-running cloudflared process; a cross-process lease and serialized lifecycle prevent duplicate tunnel children. SIGINT/SIGTERM/SIGHUP cleanup is supported; an independent heartbeat watchdog also removes labelled worker containers and temporary files after an ungraceful bot process loss. A hard power/kernel failure or unavailable container daemon can still delay cleanup.
 
-Install Docker Engine (daemon) or rootless Podman, `cloudflared`, and pull `python:3.12-alpine` plus `node:22-alpine`. On systemd VPS, start Docker with `sudo systemctl enable --now docker`, then verify `docker info` before pulling images. Use `.nexora status` to verify. Anyone who receives a preview URL can access it; do not include secrets or private data. Quick Tunnels are for temporary development/testing, not production hosting. Full lifecycle, security, resource limits, and configuration details are in `docs/CODE_LAB.md`.
+The automatic host manager prepares Docker or Podman and the required Python/Node images where the VPS permits it. On a systemd host, the manager starts Docker directly as root; it does not call `sudo` when UID is 0. On non-systemd hosts it tries a lock-protected manual `dockerd` when root, then daemonless Podman. If both engines are blocked by the hosting container/kernel, the provider must enable container support or expose a supported runtime; do not force `--privileged` or weaken socket permissions. Use `.nexora status` to verify. Anyone who receives a preview URL can access it; do not include secrets or private data. Quick Tunnels are for temporary development/testing, not production hosting. Full lifecycle, security, resource limits, and configuration details are in `docs/CODE_LAB.md`.
 
 ## Nexora Website Builder
 

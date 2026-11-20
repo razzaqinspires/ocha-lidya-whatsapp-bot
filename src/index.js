@@ -14,7 +14,7 @@ import { dispatch } from './core/dispatcher.js';
 import { configureMessageMonitor, observeIncomingMessage, observeOutgoingMessage, observeMessageUpdates, observeGroupReceipts, getMessageMonitorStats } from './core/message-monitor.js';
 import serializer from './lib/serializ_simple.js';
 const { serialize, extendSocket, trackSentMessageId, setOutgoingMessageObserver } = serializer;
-import { isOwner } from './core/identity.js';
+import { isVerifiedOwnerMessage } from './core/identity.js';
 import { initializeContacts, addContactFromPnJid } from './core/contacts.js';
 import { initializeGroupMetadata } from './core/group-metadata.js';
 import { resolveMessageSenderPn } from './core/jid-resolution.js';
@@ -309,13 +309,21 @@ async function start() {
         if (!raw.message || raw.key.remoteJid === 'status@broadcast' || isDuplicateIncoming(raw.key)) continue;
         try {
           const isGroup = raw.key.remoteJid?.endsWith('@g.us') || false;
-          const senderPn = await resolveMessageSenderPn(sock, raw.key, isGroup);
+          const senderPn = await resolveMessageSenderPn(sock, raw.key, isGroup, { ownerNumber: getConfig().bot.owner });
           const message = serialize(sock, raw);
           if (senderPn) {
             message.sender = senderPn;
             message.senderPn = senderPn;
           }
-          message.isOwner = isOwner([senderPn, message.sender], getConfig().bot.owner);
+          message.isOwner = isVerifiedOwnerMessage({ ...message, senderPn }, getConfig().bot.owner);
+          logger.debug({
+            messageId: message.id,
+            ownerVerified: message.isOwner,
+            senderPnResolved: Boolean(senderPn),
+            senderIsLid: String(raw.key.participant || raw.key.remoteJid || '').endsWith('@lid'),
+            isGroup: message.isGroup,
+            fromMe: Boolean(message.fromMe)
+          }, 'Incoming sender identity verified from WhatsApp metadata');
           observeIncomingMessage(message);
           if (message.fromMe && !message.isOwner) continue;
           if (!message.fromMe && senderPn) await addContactFromPnJid(senderPn);

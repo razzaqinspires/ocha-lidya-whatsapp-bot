@@ -8,10 +8,13 @@ import { getPrefixes } from './prefix.js';
 import { shouldSuppressGroupInteraction } from './group-policy.js';
 import { answerMessage, isAITrigger } from '../ai/engine.js';
 import { dispatchReplySession } from './reply-sessions.js';
+import { isVerifiedOwnerMessage } from './identity.js';
 
 export async function dispatch(sock, message) {
   const config = getConfig();
-  if (message.fromMe && !message.isOwner) return;
+  const ownerVerified = isVerifiedOwnerMessage(message, config.bot.owner);
+  message.isOwner = ownerVerified;
+  if (message.fromMe && !ownerVerified) return;
   // Global group mute suppresses every group command and AI response.
   // Contact and group metadata ingestion runs before dispatch in index.js.
   if (shouldSuppressGroupInteraction(message, config)) return;
@@ -24,7 +27,7 @@ export async function dispatch(sock, message) {
   const body = String(message.body || '').trim();
   if (!body) return;
   if (isMasterSyntax(body)) {
-    if (!message.isOwner) return;
+    if (!ownerVerified) return;
     if (message.isGroup && !config.security.allowMasterInGroups) return message.reply('Master console dinonaktifkan di grup.');
     return runMasterCommand(sock, message, body);
   }
