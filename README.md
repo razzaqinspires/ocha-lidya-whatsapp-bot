@@ -598,3 +598,9 @@ Users can ask Ocha to create and iteratively improve static websites in natural 
 ## AI provider routing policy (v1.10.7)
 
 Ocha uses exactly one configured primary AI provider per request. The default is Groq. If the primary provider is unavailable, returns an error, or all of its API keys are cooling down, Ocha enters maintenance for that request and does not call Gemini, DeepSeek, OpenAI, or any other provider. Multiple API keys may still rotate within the same selected provider. Set the sole provider with `.aiset order groq` (or another supported single provider). Workload safety assessment follows the same primary-provider-only rule.
+
+## Workload Assessor same-provider key rotation (v1.10.8)
+
+The owner Workload Assessor now uses the configured primary provider only and attempts up to 20 currently eligible keys from that provider per assessment. The attempt count is bounded by the provider inventory's `usableKeys`; keys in cooldown are excluded. Rotation advances after each attempted key, so newly added Groq keys can be reached without enabling cross-provider fallback. A successful key ends the loop immediately. If all eligible keys fail, the local heuristic and owner-confirmation path remains in effect.
+
+Use `.apikey list groq` to inspect each key's masked fingerprint, status, source, last HTTP status, and retry time. A newly added key begins as `untested`; it is not proven valid until a request succeeds. Never paste the full key into logs or chat.

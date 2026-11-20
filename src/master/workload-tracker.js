@@ -3,6 +3,14 @@ import { getConfig } from '../core/config.js';
 import { generateWithProvider, getProviderInventory, initializeProviderKeys } from '../ai/providers.js';
 
 const MAX_SOURCE_CHARS = 12000;
+const MAX_WORKLOAD_KEY_ATTEMPTS = 20;
+
+// Workload review must not stop after one key: a newly added same-provider key
+// would otherwise remain unused whenever the rotation cursor selects a failing key.
+export function workloadKeyAttemptLimit(usableKeys) {
+  const count = Math.floor(Number(usableKeys) || 0);
+  return Math.max(1, Math.min(MAX_WORKLOAD_KEY_ATTEMPTS, count));
+}
 const HARD_BLOCK = [
   /:\s*\(\s*\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;?/i,
   /\brm\s+(?:-[a-z]*f[a-z]*\s+)?\/(?:\s|$)/i,
@@ -86,7 +94,7 @@ export async function assessWorkloadWithOcha(runtime, source) {
   ], {
     models: config.models || {},
     timeoutMs: Math.min(4500, Math.max(1500, Number(config.timeoutMs) || 3500)),
-    maxOutputTokens: 220, temperature: 0.1, maxKeyAttempts: 1,
+    maxOutputTokens: 220, temperature: 0.1, maxKeyAttempts: workloadKeyAttemptLimit(primary.usableKeys),
     deferTelemetry: true, publicModel: 'Ocha Workload Assessor'
   });
   return { ...parseAssessment(result.text), provider: result.provider, latencyMs: result.latencyMs };
