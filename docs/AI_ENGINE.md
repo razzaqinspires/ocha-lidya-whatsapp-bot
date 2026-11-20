@@ -1,4 +1,4 @@
-# Ocha Lidya AI Engine — v1.10.0
+# Ocha Lidya AI Engine — v1.10.9
 
 ## Public identity
 
@@ -6,7 +6,7 @@ The public AI identity exposed in chat is **Nexora-2.0-Flash**. Provider and ups
 
 ## Providers and default order
 
-Qwen has been removed from provider configuration, routing, and the `.env.example` template. The remaining default priority route is Groq → Gemini → DeepSeek → OpenAI. A custom `.aiset order` changes priority only; any remaining configured provider is still appended and attempted. Only configured providers are considered. Current default upstream model IDs are configurable in `src/config.js`; the public identity remains Nexora-2.0-Flash.
+Qwen has been removed from provider configuration, routing, and the `.env.example` template. The remaining default priority route is Groq → Gemini → DeepSeek → OpenAI. `.aiset order` sets the exact ordered provider chain; no provider outside that list is added automatically. Only providers with configured keys and at least one currently eligible key are called. Current default upstream model IDs are configurable in `src/config.js`; the public identity remains Nexora-2.0-Flash.
 
 | Provider | Default upstream model ID | Credential |
 |---|---|---|
@@ -34,7 +34,7 @@ Managed keys are stored in `data/secrets/provider-keys.json`, with directory/fil
 
 ## Key validation and classification
 
-The provider manager rotates eligible keys fairly using a per-provider round-robin cursor. The default Boost profile attempts up to three eligible keys per provider; Fast uses two and Balanced uses up to four. A successful request ends attempts for that provider for the current job. A successful request proves that the key worked for that request, not that it has unlimited quota. Every attempt increments the hit counter before the network request and writes an append-only `ai.key.event` event. Counters are reconstructed from the JSONL event history after restart.
+The provider manager rotates eligible keys fairly using a per-provider round-robin cursor. The shared AI router attempts every currently eligible key for a provider when the response is key-specific (such as 401, 403, or 429 quota/rate-limit responses). A successful key ends the chain immediately. A model/request error or provider-wide network/5xx outage moves to the next provider without needlessly replaying the same request across every key. A successful request proves that the key worked for that request, not that it has unlimited quota. Every attempt increments the hit counter before the network request and writes an append-only `ai.key.event` event. Counters are reconstructed from the JSONL event history after restart.
 
 | Observed response | Classification | Retry policy |
 |---|---|---|
@@ -46,7 +46,7 @@ The provider manager rotates eligible keys fairly using a per-provider round-rob
 | HTTP 429 with daily/quota indicators | `daily_limit` | Probe at provider `Retry-After` when supplied; otherwise use next UTC day boundary + 5 minutes as a fallback heuristic |
 | HTTP 429 without daily/quota indicators | `rate_limited` | Probe at `Retry-After` when supplied; otherwise after 30 seconds |
 | HTTP 400 | `request_or_model_error` | Does not prove key invalid; stop retrying other keys for the same malformed request and fall back |
-| HTTP 5xx, timeout, network error | `provider_error` | Probe after 15 seconds |
+| HTTP 5xx, timeout, network error | `provider_error` | Probe after 15 seconds; switch provider immediately because the failure is provider-wide |
 | Other/unclassified response | `error` | Probe after 1 minute |
 
 Important: API providers do not expose one universal “key expired” endpoint or universal daily-quota field. The engine infers status from authenticated request responses, response text/status codes, and `Retry-After` when present. The UTC reset estimate is only a fallback heuristic; actual quota reset clocks are provider-specific. It deliberately does not label a 400 model/payload error as an invalid key. Provider-side quota messages vary, so some 403/429 responses may be classified conservatively as `forbidden` or `rate_limited`. The owner can inspect the exact recorded reason and retry time using `.apikey list` / `.apikey get` and `.aistatus`.
@@ -55,13 +55,14 @@ The key counters include total hits, successes, failures, and reported token usa
 
 ## Fallback and maintenance
 
-1. The engine obtains the configured provider order and its key inventory.
-2. Each provider rotates to the next eligible key on subsequent requests; Boost attempts up to three keys, Fast two, and Balanced up to four when earlier keys fail.
-4. The configured total deadline stops later fallback attempts once its budget is exhausted, preventing cumulative provider timeouts from growing without bound.
-5. If every configured provider/key is unavailable, the AI subsystem enters persisted maintenance mode.
-6. While maintenance is active, generative AI requests receive no reply. Local deterministic identity, greeting, conversation-recall, and profile responses remain available without provider calls.
-7. The owner receives one private report with per-provider/per-key masked identity, fingerprint, hit/success/failure counters, status, reason, last HTTP status, and retry time.
-8. Subsequent AI requests re-evaluate keys whose retry time has elapsed. If a key/provider recovers, AI resumes and maintenance is cleared. If none has recovered, the subsystem stays silent and does not spam the owner with repeated reports.
+1. The engine reads the exact ordered provider chain from `ai.providerOrder`; the default is Groq → Gemini → DeepSeek → OpenAI.
+2. Before each provider call, it records a provider-attempt checkpoint with the provider position and current key inventory.
+3. For key-specific authentication/quota/rate-limit responses (401/403/429), every currently eligible key in that provider's environment/vault array is attempted before moving to the next provider. Keys already in cooldown are skipped until `retryAt`.
+4. For model/request errors and provider-wide network/timeout/5xx failures, the router moves to the next provider without replaying the same failing request against every key.
+5. The first provider that returns a non-empty response wins. A successful response records a provider-success checkpoint and clears AI maintenance.
+6. If every provider is missing keys, has no eligible keys, or fails, the subsystem enters persisted maintenance and the owner receives one private inventory report.
+7. Local deterministic identity, greeting, conversation-recall, and profile responses remain available during maintenance without provider calls.
+8. Conversation checkpoints retain the original job/messages payload while recording provider attempts, skips, failures, and success. If the process restarts mid-fallback, recovery can resume the queued job instead of losing it when a provider checkpoint is written.
 
 This is response-driven validation, not a guaranteed external expiry detector. A key can be valid but have no balance, lack model permission, or be temporarily rate-limited. Those conditions are reported separately where the provider response makes the distinction possible.
 
@@ -73,10 +74,10 @@ This is response-driven validation, not a guaranteed external expiry detector. A
 - `.apikey get <provider> <fingerprint>` — detailed status for one key.
 - `.apikey delete <provider> <fingerprint>` — delete a managed key.
 - `.aiset on` / `.aiset off` — enable/disable AI.
-- `.aiset speed boost` — low-latency profile: 3.5 s per provider, 14 s overall deadline, up to three round-robin key attempts/provider, 180 output tokens, 3 history turns, and 80 ms coalescing.
-- `.aiset speed fast` — balanced low-latency profile: 4.5 s/provider, 20 s deadline, 220 output tokens, 4 history turns, and 120 ms coalescing.
-- `.aiset speed balanced` — longer generation and wider key retry allowance.
-- `.aiset order groq,gemini,deepseek,openai` — set provider order.
+- `.aiset speed boost` — low-latency profile: 3.5 s per key request, 180 output tokens, 3 history turns, and 80 ms coalescing; it does not reduce the number of eligible keys tried for quota/auth failures.
+- `.aiset speed fast` — balanced low-latency profile: 4.5 s per key request, 220 output tokens, 4 history turns, and 120 ms coalescing.
+- `.aiset speed balanced` — longer generation and output allowance; the full eligible key array is still attempted for key-specific failures.
+- `.aiset order groq,gemini,deepseek,openai` — set the exact provider chain and fallback priority.
 - `.aiset model <provider> <model-id>` — override an upstream model ID.
 - `.aiset identity on/off` — allow or suppress public disclosure of creator and organization identity.
 - `.profile` — display XP, level, role, rank, and interaction progress.
@@ -85,8 +86,8 @@ This is response-driven validation, not a guaranteed external expiry detector. A
 
 - Requests use Node's built-in `fetch`; no provider SDK is required.
 - Provider adapters currently use non-streaming chat requests.
-- The response-critical path no longer waits for AI job checkpoints, conversation-turn journaling, or provider hit/success telemetry writes. Those records are queued to the append-only journal in the background; in-memory conversation history and reply anchors are updated immediately. Disk failures are logged and do not delay the current user response.
-- The default profile is Boost after schema v12 migration. Only known shipped defaults are migrated; custom owner timeout/output values are preserved. The v1.10.0 migration sets up to three attempts per provider and rotates fairly among eligible keys to avoid repeatedly selecting the same key.
+- The response-critical path does not wait for conversation-turn journaling or per-key hit/success telemetry writes. Those records are queued to the append-only journal in the background. Provider transition checkpoints are persisted before each next provider is attempted so restart recovery retains routing progress and the original job payload. Disk failures are logged and do not delay the current user response.
+- The default profile is Boost after schema migration. Only known shipped defaults are migrated; custom owner timeout/output values are preserved. The v1.10.9 schema migration converts the old Groq-only default order to the ordered multi-provider chain and removes the obsolete per-request key-attempt cap.
 - A provider may reject a model ID even when the API key itself is valid; that is recorded as a request/model issue, not an invalid key.
 - The engine can only count calls made through this bot. It cannot report API-key hits made by other applications or direct dashboard/API calls.
 - Total token counts are based on usage fields returned by the provider. Missing usage metadata is not fabricated.

@@ -256,8 +256,12 @@ export async function generateWithProvider(name, messages, options = {}) {
       pm.failures++; pm.lastLatencyMs = Date.now() - started; pm.lastStatus = classified.status; providerMetrics.set(name, pm);
       await recordEvent('failure', { status: classified.status, httpStatus: error.status || null, reason: classified.reason, retryAt: new Date(classified.retryAt).toISOString() });
       logger.warn({ provider: name, fingerprint: stat.fingerprint, status: classified.status, httpStatus: error.status, reason: classified.reason }, 'API key failed; rotating to another key for the same provider only');
-      // A bad model/request is not evidence that the key is invalid; avoid burning all keys on identical malformed payloads.
-      if (classified.status === 'request_or_model_error') break;
+      // Model/request errors and provider-wide outages do not become better
+      // by replaying the same payload against every key. Quota/401/403 failures
+      // remain key-specific candidates, so the complete key array is exhausted
+      // before the outer router moves to its next provider.
+      if (classified.status === 'request_or_model_error'
+        || (classified.status === 'provider_error' && (Number(error?.status) === 408 || Number(error?.status) >= 500 || ['ETIMEDOUT', 'NETWORK_ERROR'].includes(error?.code)))) break;
     }
   }
   if (eligibleAll.length && attemptsMade) keyRotationCursor.set(name, (cursor + attemptsMade) % eligibleAll.length);
@@ -268,6 +272,95 @@ export async function generateWithProvider(name, messages, options = {}) {
   finalError.retryable = Boolean(lastError?.retryable);
   throw finalError;
 }
+/**
+ * Execute the configured provider chain in order. Each provider gets a full
+ * pass over every currently eligible API key before the router moves on.
+ * Key cooldowns are respected; a provider with no ready keys is checkpointed
+ * as skipped and the next configured provider is considered immediately.
+ */
+export async function generateWithFallback(providerOrder, messages, options = {}) {
+  await initializeProviderKeys();
+  const order = [...new Set((Array.isArray(providerOrder) ? providerOrder : [])
+    .map(normalizeProvider).filter(isProvider))];
+  if (!order.length) {
+    throw Object.assign(new Error('Rantai provider AI kosong atau tidak valid.'), {
+      code: 'NO_PROVIDER_CONFIGURED', provider: null, providerErrors: [], retryable: false
+    });
+  }
+
+  const errors = [];
+  const attempted = [];
+  const startedAt = Date.now();
+  const inventory = getProviderInventory({ models: options.models || {} });
+  const emitCheckpoint = async event => {
+    if (typeof options.onProviderCheckpoint !== 'function') return;
+    try { await options.onProviderCheckpoint({ ...event, at: new Date().toISOString() }); }
+    catch (error) {
+      logger.warn({ err: error, provider: event.provider, phase: event.phase }, 'AI provider checkpoint callback failed');
+    }
+  };
+
+  for (let index = 0; index < order.length; index++) {
+    const provider = order[index];
+    const state = inventory.find(item => item.name === provider);
+    const baseEvent = {
+      provider, position: index + 1, providerCount: order.length,
+      totalKeys: state?.keys || 0, usableKeys: state?.usableKeys || 0
+    };
+    attempted.push(provider);
+    await emitCheckpoint({ phase: 'provider_attempt', ...baseEvent });
+
+    if (!state?.configured || state.usableKeys < 1) {
+      const reason = !state?.configured ? 'no_api_keys_configured' : 'all_api_keys_cooling_down_or_exhausted';
+      const skipped = {
+        provider, code: !state?.configured ? 'NO_API_KEY' : 'ALL_KEYS_UNAVAILABLE',
+        status: null, retryable: true, message: reason, skipped: true
+      };
+      errors.push(skipped);
+      await emitCheckpoint({ phase: 'provider_skipped', ...baseEvent, error: skipped });
+      logger.warn({ provider, ...baseEvent, reason }, 'AI provider skipped; continuing to next configured provider');
+      continue;
+    }
+
+    try {
+      const requestOptions = { ...options, maxKeyAttempts: undefined };
+      delete requestOptions.onProviderCheckpoint;
+      const result = await generateWithProvider(provider, messages, requestOptions);
+      const fallback = {
+        order, attemptedProviders: attempted,
+        fallbackUsed: index > 0,
+        fallbackFrom: attempted.length > 1 ? attempted.slice(0, -1) : [],
+        failedProviders: errors
+      };
+      await emitCheckpoint({ phase: 'provider_succeeded', ...baseEvent, fallbackUsed: fallback.fallbackUsed, latencyMs: Date.now() - startedAt });
+      logger.info({ provider, position: index + 1, providerCount: order.length, fallbackUsed: fallback.fallbackUsed, latencyMs: Date.now() - startedAt }, 'AI provider chain completed successfully');
+      return { ...result, providerFallback: fallback };
+    } catch (error) {
+      const failure = {
+        provider,
+        code: String(error?.code || 'PROVIDER_FAILED').slice(0, 100),
+        status: Number.isFinite(Number(error?.status)) ? Number(error.status) : null,
+        retryable: Boolean(error?.retryable),
+        message: String(error?.message || 'Provider request failed').slice(0, 700),
+        skipped: false
+      };
+      errors.push(failure);
+      await emitCheckpoint({ phase: 'provider_failed', ...baseEvent, error: failure });
+      logger.warn({ provider, position: index + 1, providerCount: order.length, code: failure.code, status: failure.status, retryable: failure.retryable }, 'AI provider failed after eligible API keys were attempted; switching to next provider');
+    }
+  }
+
+  const last = errors.at(-1);
+  const finalError = new Error(`Seluruh provider AI pada rantai prioritas gagal atau tidak memiliki API key aktif (${order.join(' → ')}).`);
+  finalError.name = 'AIProviderChainError';
+  finalError.code = 'ALL_PROVIDERS_EXHAUSTED';
+  finalError.provider = last?.provider || order[0];
+  finalError.providerErrors = errors;
+  finalError.retryable = errors.some(item => item.retryable);
+  finalError.attemptedProviders = attempted;
+  throw finalError;
+}
+
 export async function getKeyManagerStatus() {
   const records = await getRecords({ type: 'ai.key.event' });
   return { providers: getProviderInventory(), maintenance, recentEvents: records.slice(-30).map(r => ({ ts: r.ts, ...r.payload })) };

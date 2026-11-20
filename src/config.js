@@ -6,7 +6,7 @@
 import { initializeDatabase, appendRecord, getRecords, getLatestConfigRecord, configureDatabase } from './core/database.js';
 
 const DEFAULTS = Object.freeze({
-  schemaVersion: 21,
+  schemaVersion: 22,
   bot: { name: 'Ocha Lidya', aliases: ['Ocha', 'Lidya'], owner: '6283193905842', ownerName: 'Arifi Razzaq', creatorName: 'Arifi Razzaq', organization: 'Razzaq Ventures', publicCreatorDisclosure: true, expectedNumber: '6282177461231' },
   whatsapp: { authMode: 'pairing', pairingNumber: '6282177461231', browserName: 'Chrome', sessionDir: 'sessions/ocha-lidya', recoverInvalidSession: true, connectTimeoutMs: 60000, queryTimeoutMs: 60000, keepAliveIntervalMs: 25000 },
   logging: { level: 'info', color: 'auto', timeZone: 'Asia/Jakarta' },
@@ -32,7 +32,7 @@ const DEFAULTS = Object.freeze({
     verifyOnBoot: true
   },
   features: { autoRead: false, autoTyping: false, selfModeReply: false, groupsMuted: true },
-  ai: { enabled: true, providerOrder: ['groq'], models: { gemini: 'gemini-3.8-flash', groq: 'openai/gpt-oss-20b', deepseek: 'deepseek-flash', openai: 'gpt-6-luna' }, timeoutMs: 3500, totalBudgetMs: 14000, maxOutputTokens: 180, temperature: 0.5, historyMessages: 3, maxInputChars: 3500, coalesceMs: 80, maxKeyAttempts: 3 },
+  ai: { enabled: true, providerOrder: ['groq', 'gemini', 'deepseek', 'openai'], models: { gemini: 'gemini-3.8-flash', groq: 'openai/gpt-oss-20b', deepseek: 'deepseek-flash', openai: 'gpt-6-luna' }, timeoutMs: 3500, totalBudgetMs: 14000, maxOutputTokens: 180, temperature: 0.5, historyMessages: 3, maxInputChars: 3500, coalesceMs: 80 },
   codeLab: { enabled: true, aiExecutionEnabled: true, publicTunnelEnabled: true, websiteBuilderEnabled: true, websiteBuilderConcurrency: 2, websiteBuilderQueueLimit: 8, tunnelIdleMs: 300000, projectLibraryRoot: '', cloudflaredBin: 'cloudflared', containerRuntime: 'auto', port: 8787, ttlMs: 3600000, maxRuntimeMs: 120000, maxSourceBytes: 65536, maxOutputBytes: 49152, maxConcurrent: 2, maxSessionsTotal: 20, maxSessionsPerUser: 2, maxExecutionsPerMinute: 3, pythonImage: 'python:3.12-alpine', nodeImage: 'node:22-alpine' }
 });
 
@@ -252,6 +252,25 @@ export async function loadConfig() {
     activeConfig.codeLab = { ...DEFAULTS.codeLab, ...(activeConfig.codeLab || {}) };
     if (typeof activeConfig.codeLab.projectLibraryRoot !== 'string') activeConfig.codeLab.projectLibraryRoot = '';
     await appendRecord('config.replace', { config: activeConfig, changedBy: 'system:migration', reason: 'v1.10.4 persistent isolated user project repositories and project memory' });
+  }
+  // v1.10.9 schema v22: ordered multi-provider fallback. Previous releases
+  // intentionally persisted a single provider; keep that provider first, then
+  // append the remaining supported providers as automatic fallback options.
+  if (activeConfig.schemaVersion < 22) {
+    activeConfig.schemaVersion = 22;
+    const ai = activeConfig.ai || (activeConfig.ai = {});
+    const supported = ['groq', 'gemini', 'deepseek', 'openai'];
+    const currentOrder = Array.isArray(ai.providerOrder) ? ai.providerOrder.map(value => String(value || '').trim().toLowerCase()) : [];
+    const normalizedOrder = [...new Set(currentOrder.filter(name => supported.includes(name)))];
+    ai.providerOrder = !normalizedOrder.length
+      ? [...DEFAULTS.ai.providerOrder]
+      : normalizedOrder.length === 1
+        ? [normalizedOrder[0], ...DEFAULTS.ai.providerOrder.filter(name => name !== normalizedOrder[0])]
+        : normalizedOrder;
+    delete ai.maxKeyAttempts;
+    delete ai.retryPerProvider;
+    ai.models = { ...DEFAULTS.ai.models, ...(ai.models || {}) };
+    await appendRecord('config.replace', { config: activeConfig, changedBy: 'system:migration', reason: 'v1.10.9 ordered multi-provider fallback after exhaustive same-provider key attempts' });
   }
   activeConfig.security = { ...DEFAULTS.security, ...(activeConfig.security || {}) };
   delete activeConfig.security.masterExecEnabled;

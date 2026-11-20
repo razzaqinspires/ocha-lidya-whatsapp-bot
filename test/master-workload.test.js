@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { inspectWorkload, shouldAutoApproveAssessment, createConfirmationCode, workloadKeyAttemptLimit } from '../src/master/workload-tracker.js';
+import { inspectWorkload, shouldAutoApproveAssessment, createConfirmationCode } from '../src/master/workload-tracker.js';
 
 test('WorkloadTracker lets ordinary owner eval through without AI review', () => {
   const result = inspectWorkload('>', 'console.log(sock.user.id); await m.reply("hello");');
@@ -56,9 +56,3 @@ test('Ocha only auto-approves explicit low/medium ALLOW assessments', () => {
   assert.equal(shouldAutoApproveAssessment({ severity: 'low', recommendation: 'REVIEW' }), false);
 });
 
-test('Workload assessor can rotate across every currently usable Groq key, capped for safety', () => {
-  assert.equal(workloadKeyAttemptLimit(0), 1);
-  assert.equal(workloadKeyAttemptLimit(1), 1);
-  assert.equal(workloadKeyAttemptLimit(17), 17);
-  assert.equal(workloadKeyAttemptLimit(99), 20);
-});

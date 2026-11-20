@@ -15,10 +15,12 @@ test('AI batches rapid adjacent messages and answers once through the fast provi
   process.env.GROQ_API_KEY = 'fast-test-key';
   for (const key of Object.keys(previousOtherKeys)) delete process.env[key];
   let calls = 0;
+  const requestUrls = [];
   let requestBody;
   let replies = 0;
-  globalThis.fetch = async (_url, options) => {
+  globalThis.fetch = async (url, options) => {
     calls += 1;
+    requestUrls.push(String(url));
     requestBody = JSON.parse(options.body);
     return {
       ok: true, status: 200, statusText: 'OK', headers: { get: () => null },
@@ -61,7 +63,8 @@ test('AI batches rapid adjacent messages and answers once through the fast provi
     const exhausted = await engine.answerMessage(maintenanceSock, silentMessage);
     assert.equal(exhausted, null);
     assert.equal(ownerReports, 1, 'owner receives one private maintenance report');
-    assert.equal(calls, 1, 'Gemini and every other provider must remain untouched when Groq is unavailable');
+    assert.equal(calls, 2, 'Gemini is attempted after the Groq provider has no configured key');
+    assert.match(requestUrls[1], /generativelanguage\.googleapis\.com/, 'fallback uses the configured next provider');
 
     let identityReply = '';
     const localIdentity = { ...makeMessage('Kamu menggunakan model apa?'), id: 'identity-maintenance', key: { id: 'identity-maintenance' }, reply: async text => { identityReply = text; return { key: { id: 'identity-reply' } }; } };

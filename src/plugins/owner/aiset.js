@@ -10,10 +10,12 @@ export default {
       return m.reply(`AI ${action === 'on' ? 'diaktifkan' : 'dinonaktifkan'}.`);
     }
     if (action === 'order') {
-      const provider = rest.join('').trim().toLowerCase();
-      if (!providerNames.includes(provider)) return m.reply(`Format: .aiset order groq\nProvider tersedia: ${providerNames.join(', ')}`);
-      await updateConfig(config => { config.ai.providerOrder = [provider]; }, { actor: m.sender, reason: 'Set single AI provider; cross-provider fallback disabled' });
-      return m.reply(`Provider utama disetel ke ${provider}. Fallback ke provider lain dinonaktifkan.`);
+      const requested = rest.join(' ').split(/[,;\s]+/).map(value => value.trim().toLowerCase()).filter(Boolean);
+      const invalid = requested.filter(provider => !providerNames.includes(provider));
+      const order = [...new Set(requested)];
+      if (!order.length || invalid.length) return m.reply(`Format: .aiset order groq,gemini,deepseek,openai\nProvider tersedia: ${providerNames.join(', ')}`);
+      await updateConfig(config => { config.ai.providerOrder = order; }, { actor: m.sender, reason: 'Set ordered AI provider fallback chain' });
+      return m.reply(`Urutan provider AI disetel: ${order.join(' → ')}. Semua key aktif pada satu provider dicoba sebelum pindah ke provider berikutnya.`);
     }
     if (action === 'model') {
       const [provider, ...modelParts] = rest;
@@ -34,14 +36,11 @@ export default {
       if (!['boost', 'fast', 'balanced'].includes(profile)) return m.reply('Gunakan: .aiset speed boost | fast | balanced');
       await updateConfig(config => {
         if (profile === 'boost') {
-          config.ai.providerOrder = ['groq'];
-          config.ai.timeoutMs = 3500; config.ai.totalBudgetMs = 14000; config.ai.historyMessages = 3; config.ai.maxOutputTokens = 180; config.ai.temperature = 0.5; config.ai.maxInputChars = 3500; config.ai.coalesceMs = 80; config.ai.maxKeyAttempts = 3;
+          config.ai.timeoutMs = 3500; config.ai.totalBudgetMs = 14000; config.ai.historyMessages = 3; config.ai.maxOutputTokens = 180; config.ai.temperature = 0.5; config.ai.maxInputChars = 3500; config.ai.coalesceMs = 80;
         } else if (profile === 'fast') {
-          config.ai.providerOrder = ['groq'];
-          config.ai.timeoutMs = 4500; config.ai.totalBudgetMs = 20000; config.ai.historyMessages = 4; config.ai.maxOutputTokens = 220; config.ai.temperature = 0.55; config.ai.maxInputChars = 4500; config.ai.coalesceMs = 120; config.ai.maxKeyAttempts = 2;
+          config.ai.timeoutMs = 4500; config.ai.totalBudgetMs = 20000; config.ai.historyMessages = 4; config.ai.maxOutputTokens = 220; config.ai.temperature = 0.55; config.ai.maxInputChars = 4500; config.ai.coalesceMs = 120;
         } else {
-          config.ai.providerOrder = ['groq'];
-          config.ai.timeoutMs = 12000; config.ai.totalBudgetMs = 90000; config.ai.historyMessages = 12; config.ai.maxOutputTokens = 850; config.ai.coalesceMs = 400; config.ai.maxKeyAttempts = 4;
+          config.ai.timeoutMs = 12000; config.ai.totalBudgetMs = 90000; config.ai.historyMessages = 12; config.ai.maxOutputTokens = 850; config.ai.coalesceMs = 400;
         }
       }, { actor: m.sender, reason: `AI speed profile ${profile}` });
       return m.reply(`Profil AI ${profile} diterapkan.`);
@@ -51,7 +50,7 @@ export default {
       'Pengaturan AI:',
       '.aiset on/off',
       '.aiset speed boost/fast/balanced',
-      '.aiset order groq  (satu provider saja; tanpa fallback lintas provider)',
+      '.aiset order groq,gemini,deepseek,openai  (urutan prioritas + fallback otomatis)',
       '.aiset model groq openai/gpt-oss-20b',
       '.aiset identity on/off',
       `.aiset saat ini: ${current.timeoutMs}ms/key · target budget ${current.totalBudgetMs}ms · output ${current.maxOutputTokens} token · coalesce ${current.coalesceMs}ms`

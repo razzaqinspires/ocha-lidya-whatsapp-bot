@@ -468,3 +468,20 @@ All notable changes to Ocha Lidya are recorded here. The newest release is liste
 - Confirmation is private-chat only, sender-bound, quoted-message-bound, one-time, expires after 120 seconds, and records a SHA-256 command hash.
 - Hard-block rules for destructive OS/disk commands remain non-overridable.
 - Flag direct process introspection, dynamic require, and WhatsApp socket send/relay calls for confirmation.
+
+## v1.10.9 — Ordered AI provider fallback
+
+### Added
+- Added a shared AI provider-chain router used by chat generation and the owner Workload Assessor.
+- Exhaust every currently eligible key in the active provider's key array for key-specific 401/403/429 failures before moving to the next provider in the configured order.
+- Added automatic fallback across Groq, Gemini, DeepSeek, and OpenAI using the exact `.aiset order` priority list.
+- Added provider-attempt, skip, failure, and success checkpoints. Workload assessments also persist provider checkpoints with a source hash rather than the raw submitted code.
+- Added schema v22 migration from the previous Groq-only default to the ordered provider chain while preserving non-default owner-configured provider order.
+
+### Fixed
+- Fixed AI restart recovery so provider routing checkpoints do not overwrite and lose the original queued job/messages payload.
+- Provider-wide network/timeout/5xx errors and malformed model/request errors now move to the next provider without wasting time retrying the same payload against every key.
+- `.aiset speed` no longer silently resets the configured provider order or limits the number of quota-affected keys tried.
+
+### Validation
+- Added tests proving all Groq keys are attempted on quota exhaustion before Gemini succeeds, providers without keys are skipped, and queued jobs remain recoverable after provider checkpoints.

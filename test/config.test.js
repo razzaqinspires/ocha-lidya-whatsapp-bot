@@ -16,11 +16,12 @@ test('config facade replays persistent config.replace events from JSONL', async 
     await first.loadConfig();
     assert.equal(first.getConfig().whatsapp.authMode, 'pairing');
     assert.equal(first.getConfig().whatsapp.browserName, 'Chrome');
-    assert.equal(first.getConfig().schemaVersion, 21);
+    assert.equal(first.getConfig().schemaVersion, 22);
     assert.equal(first.getConfig().whatsapp.recoverInvalidSession, true);
     assert.equal(first.getConfig().logging.level, 'info');
     assert.equal(first.getConfig().logging.color, 'auto');
     assert.equal(first.getConfig().ai.timeoutMs, 3500);
+    assert.deepEqual(first.getConfig().ai.providerOrder, ['groq', 'gemini', 'deepseek', 'openai']);
     assert.equal(first.getConfig().ai.totalBudgetMs, 14000);
     assert.equal(first.getConfig().ai.maxOutputTokens, 180);
     assert.equal(first.getConfig().codeLab.ttlMs, 3600000);
@@ -88,10 +89,30 @@ test('legacy config migrates to canonical browser, session recovery, logger, UI,
     assert.equal(result.status, 0, result.stderr || result.stdout);
     const resultLine = result.stdout.split(/\r?\n/).find(line => line.startsWith('MIGRATION_RESULT:'));
     assert.ok(resultLine, result.stdout);
-    assert.deepEqual(JSON.parse(resultLine.slice('MIGRATION_RESULT:'.length)), { schemaVersion: 21, browserName: 'Chrome' });
+    assert.deepEqual(JSON.parse(resultLine.slice('MIGRATION_RESULT:'.length)), { schemaVersion: 22, browserName: 'Chrome' });
   } finally {
     await fs.rm(temp, { recursive: true, force: true });
   }
+});
+
+test('schema v22 preserves a custom multi-provider priority order', async () => {
+  const original = process.cwd();
+  const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'ocha-provider-order-migration-'));
+  try {
+    const databaseUrl = pathToFileURL(path.resolve(original, 'src/core/database.js')).href;
+    const configUrl = pathToFileURL(path.resolve(original, 'src/config.js')).href;
+    const source = `
+      const db = await import(${JSON.stringify(databaseUrl)}); await db.initializeDatabase();
+      await db.appendRecord('config.replace', { config: { schemaVersion: 21, ai: { providerOrder: ['deepseek', 'gemini'], maxKeyAttempts: 1 } } });
+      const config = await import(${JSON.stringify(configUrl)}); await config.loadConfig();
+      console.log('ORDER_RESULT:' + JSON.stringify({ schemaVersion: config.getConfig().schemaVersion, order: config.getConfig().ai.providerOrder, maxKeyAttempts: config.getConfig().ai.maxKeyAttempts }));
+    `;
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', source], { cwd: temp, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const line = result.stdout.split(/\r?\n/).find(value => value.startsWith('ORDER_RESULT:'));
+    assert.ok(line, result.stdout);
+    assert.deepEqual(JSON.parse(line.slice('ORDER_RESULT:'.length)), { schemaVersion: 22, order: ['deepseek', 'gemini'] });
+  } finally { await fs.rm(temp, { recursive: true, force: true }); }
 });
 
 test('schema v9 migration removes Qwen and legacy maxKeyAttempts', async () => {
@@ -118,10 +139,10 @@ test('schema v9 migration removes Qwen and legacy maxKeyAttempts', async () => {
     const line = result.stdout.split(/\r?\n/).find(value => value.startsWith('V10_RESULT:'));
     assert.ok(line, result.stdout);
     const output = JSON.parse(line.slice('V10_RESULT:'.length));
-    assert.equal(output.schemaVersion, 21);
-    assert.deepEqual(output.ai.providerOrder, ['groq']);
+    assert.equal(output.schemaVersion, 22);
+    assert.deepEqual(output.ai.providerOrder, ['groq', 'gemini', 'deepseek', 'openai']);
     assert.equal(output.ai.models.qwen, undefined);
-    assert.equal(output.ai.maxKeyAttempts, 3);
+    assert.equal(output.ai.maxKeyAttempts, undefined);
   } finally {
     await fs.rm(temp, { recursive: true, force: true });
   }
@@ -150,8 +171,8 @@ test('schema v11 applies AI Boost only to shipped defaults and preserves owner c
     const line = result.stdout.split(/\r?\n/).find(value => value.startsWith('BOOST_MIGRATION:'));
     assert.ok(line, result.stdout);
     assert.deepEqual(JSON.parse(line.slice('BOOST_MIGRATION:'.length)), {
-      schemaVersion: 21, timeoutMs: 3500, totalBudgetMs: 14000, maxOutputTokens: 180,
-      historyMessages: 3, coalesceMs: 80, maxKeyAttempts: 3, groqModel: 'owner-custom-model'
+      schemaVersion: 22, timeoutMs: 3500, totalBudgetMs: 14000, maxOutputTokens: 180,
+      historyMessages: 3, coalesceMs: 80, groqModel: 'owner-custom-model'
     });
   } finally {
     process.chdir(original);
@@ -182,7 +203,7 @@ test('v1.8.0 worker concurrency values migrate to the new low-memory maximum', a
     assert.equal(result.status, 0, result.stderr || result.stdout);
     const line = result.stdout.split(/\r?\n/).find(value => value.startsWith('V181_RESULT:'));
     assert.ok(line, result.stdout);
-    assert.deepEqual(JSON.parse(line.slice('V181_RESULT:'.length)), { schemaVersion: 21, maxConcurrent: 4 });
+    assert.deepEqual(JSON.parse(line.slice('V181_RESULT:'.length)), { schemaVersion: 22, maxConcurrent: 4 });
   } finally {
     await fs.rm(temp, { recursive: true, force: true });
   }
