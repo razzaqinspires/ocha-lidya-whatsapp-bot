@@ -6,7 +6,7 @@
 import { initializeDatabase, appendRecord, getRecords, getLatestConfigRecord, configureDatabase } from './core/database.js';
 
 const DEFAULTS = Object.freeze({
-  schemaVersion: 22,
+  schemaVersion: 24,
   bot: { name: 'Ocha Lidya', aliases: ['Ocha', 'Lidya'], owner: '6283193905842', ownerName: 'Arifi Razzaq', creatorName: 'Arifi Razzaq', organization: 'Razzaq Ventures', publicCreatorDisclosure: true, expectedNumber: '6282177461231' },
   whatsapp: { authMode: 'pairing', pairingNumber: '6282177461231', browserName: 'Chrome', sessionDir: 'sessions/ocha-lidya', recoverInvalidSession: true, connectTimeoutMs: 60000, queryTimeoutMs: 60000, keepAliveIntervalMs: 25000 },
   logging: { level: 'info', color: 'auto', timeZone: 'Asia/Jakarta' },
@@ -32,7 +32,7 @@ const DEFAULTS = Object.freeze({
     verifyOnBoot: true
   },
   features: { autoRead: false, autoTyping: false, selfModeReply: false, groupsMuted: true },
-  ai: { enabled: true, providerOrder: ['groq', 'gemini', 'deepseek', 'openai'], models: { gemini: 'gemini-3.8-flash', groq: 'openai/gpt-oss-20b', deepseek: 'deepseek-flash', openai: 'gpt-6-luna' }, timeoutMs: 3500, totalBudgetMs: 14000, maxOutputTokens: 180, temperature: 0.5, historyMessages: 3, maxInputChars: 3500, coalesceMs: 80 },
+  ai: { enabled: true, providerOrder: ['groq', 'gemini', 'deepseek', 'openai'], models: { gemini: 'gemini-3.8-flash', groq: 'openai/gpt-oss-120b', deepseek: 'deepseek-flash', openai: 'gpt-6.2-sol' }, freeOnly: true, timeoutMs: 3500, totalBudgetMs: 14000, maxOutputTokens: 180, temperature: 0.5, historyMessages: 3, maxInputChars: 3500, coalesceMs: 80 },
   codeLab: { enabled: true, aiExecutionEnabled: true, publicTunnelEnabled: true, websiteBuilderEnabled: true, websiteBuilderConcurrency: 2, websiteBuilderQueueLimit: 8, tunnelIdleMs: 300000, projectLibraryRoot: '', cloudflaredBin: 'cloudflared', containerRuntime: 'auto', port: 8787, ttlMs: 3600000, maxRuntimeMs: 120000, maxSourceBytes: 65536, maxOutputBytes: 49152, maxConcurrent: 2, maxSessionsTotal: 20, maxSessionsPerUser: 2, maxExecutionsPerMinute: 3, pythonImage: 'python:3.12-alpine', nodeImage: 'node:22-alpine' }
 });
 
@@ -270,7 +270,17 @@ export async function loadConfig() {
     delete ai.maxKeyAttempts;
     delete ai.retryPerProvider;
     ai.models = { ...DEFAULTS.ai.models, ...(ai.models || {}) };
-    await appendRecord('config.replace', { config: activeConfig, changedBy: 'system:migration', reason: 'v1.10.9 ordered multi-provider fallback after exhaustive same-provider key attempts' });
+    await appendRecord('config.replace', { config: activeConfig, changedBy: 'system:migration', reason: 'v1.10.9 ordered provider fallback with classified key/provider failure handling' });
+  }
+  // v1.10.10 schema v24: autonomous model discovery, independent 24-hour
+  // catalog scheduling, and conservative free-tier routing defaults.
+  if (activeConfig.schemaVersion < 24) {
+    activeConfig.schemaVersion = 24;
+    const ai = activeConfig.ai || (activeConfig.ai = {});
+    if (typeof ai.freeOnly !== 'boolean') ai.freeOnly = true;
+    ai.models = { ...DEFAULTS.ai.models, ...(ai.models || {}) };
+    if (ai.models.groq === 'openai/gpt-oss-20b') ai.models.groq = DEFAULTS.ai.models.groq;
+    await appendRecord('config.replace', { config: activeConfig, changedBy: 'system:migration', reason: 'v1.10.10 autonomous provider model catalog and free-tier-first routing' });
   }
   activeConfig.security = { ...DEFAULTS.security, ...(activeConfig.security || {}) };
   delete activeConfig.security.masterExecEnabled;
@@ -332,6 +342,7 @@ function validateConfig(c) {
   if (!Number.isInteger(c.database?.segmentMaxBytes) || c.database.segmentMaxBytes < 65536) throw new Error('database.segmentMaxBytes minimal 65536');
   if (!Number.isInteger(c.database?.archiveMaxCount) || c.database.archiveMaxCount < 1) throw new Error('database.archiveMaxCount minimal 1');
   if (c.ai && (!Array.isArray(c.ai.providerOrder) || c.ai.providerOrder.some(name => !['gemini','groq','deepseek','openai'].includes(name)))) throw new Error('ai.providerOrder berisi provider tidak dikenal');
+  if (c.ai && typeof c.ai.freeOnly !== 'boolean') throw new Error('ai.freeOnly harus boolean');
   if (c.ai && (!Number.isInteger(c.ai.timeoutMs) || c.ai.timeoutMs < 1000 || c.ai.timeoutMs > 180000)) throw new Error('ai.timeoutMs harus 1000-180000');
   if (c.ai && (!Number.isInteger(c.ai.totalBudgetMs) || c.ai.totalBudgetMs < 3000 || c.ai.totalBudgetMs > 120000)) throw new Error('ai.totalBudgetMs harus 3000-120000');
   if (c.ai && (!Number.isInteger(c.ai.coalesceMs) || c.ai.coalesceMs < 0 || c.ai.coalesceMs > 2000)) throw new Error('ai.coalesceMs harus 0-2000');

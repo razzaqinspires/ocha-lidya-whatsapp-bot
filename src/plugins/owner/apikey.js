@@ -1,3 +1,4 @@
+import { triggerModelCatalogRefresh } from '../../ai/model-catalog.js';
 import { manageApiKeys, providerNames } from '../../ai/providers.js';
 export default {
   name: 'apikey', aliases: ['keys', 'keymanager'], category: 'owner', ownerOnly: true,
@@ -20,6 +21,9 @@ export default {
     const values = rest.join(' ').split(',').map(value => value.trim()).filter(Boolean);
     if (m.isGroup) return m.reply('Semua pengelolaan API key hanya boleh melalui chat pribadi owner.');
     const result = await manageApiKeys(type, name, values);
+    if (['add', 'delete'].includes(type) && (result.added || result.removed)) {
+      void triggerModelCatalogRefresh('api-keys-updated').catch(error => console.warn('[AI model catalog] refresh after API key change failed:', error?.message || error));
+    }
     if (['add', 'delete', 'get'].includes(type)) {
       // Remove any key-bearing command message from the WhatsApp conversation when possible.
       try { if (m.key) await sock.sendMessage(m.chat, { delete: m.key }); } catch {}

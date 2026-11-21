@@ -15,7 +15,15 @@ export default {
       const order = [...new Set(requested)];
       if (!order.length || invalid.length) return m.reply(`Format: .aiset order groq,gemini,deepseek,openai\nProvider tersedia: ${providerNames.join(', ')}`);
       await updateConfig(config => { config.ai.providerOrder = order; }, { actor: m.sender, reason: 'Set ordered AI provider fallback chain' });
-      return m.reply(`Urutan provider AI disetel: ${order.join(' → ')}. Semua key aktif pada satu provider dicoba sebelum pindah ke provider berikutnya.`);
+      return m.reply(`Urutan provider AI disetel: ${order.join(' → ')}. 401/key-specific mencoba key berikutnya; 429, timeout, network, model error, atau billing langsung pindah provider.`);
+    }
+    if (action === 'free-only') {
+      const value = String(rest[0] || '').toLowerCase();
+      if (!['on', 'off'].includes(value)) return m.reply('Gunakan: .aiset free-only on/off\nON: hanya provider/model dengan akses gratis yang terdokumentasi. OFF: provider berbayar boleh dicoba; biaya penggunaan mengikuti akun provider.');
+      await updateConfig(config => { config.ai.freeOnly = value === 'on'; }, { actor: m.sender, reason: `AI free-only mode ${value}` });
+      return m.reply(value === 'on'
+        ? 'Mode free-only ON. Routing hanya mengizinkan model yang tercatat memiliki akses gratis; DeepSeek/OpenAI berbayar dilewati.'
+        : 'Mode free-only OFF. Provider berbayar dapat masuk fallback. Pastikan billing dan batas pengeluaran akun provider sudah diatur.');
     }
     if (action === 'model') {
       const [provider, ...modelParts] = rest;
@@ -51,7 +59,9 @@ export default {
       '.aiset on/off',
       '.aiset speed boost/fast/balanced',
       '.aiset order groq,gemini,deepseek,openai  (urutan prioritas + fallback otomatis)',
-      '.aiset model groq openai/gpt-oss-20b',
+      '.aiset free-only on/off  (default ON, cegah biaya provider berbayar)',
+      '.aimodels status | refresh  (katalog model provider)',
+      '.aiset model groq openai/gpt-oss-120b',
       '.aiset identity on/off',
       `.aiset saat ini: ${current.timeoutMs}ms/key · target budget ${current.totalBudgetMs}ms · output ${current.maxOutputTokens} token · coalesce ${current.coalesceMs}ms`
     ].join('\n'));

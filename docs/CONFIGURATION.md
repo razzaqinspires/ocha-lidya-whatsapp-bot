@@ -101,3 +101,10 @@ Provider keys managed by `.apikey add` are stored separately at `data/secrets/pr
 ## Nexora Code Lab (schema v16)
 
 The `codeLab` object manages isolated execution and temporary TryCloudflare previews. Its settings are global owner policy and apply to every bot user. Use `.nexora all on/off` for the bundled master switch, or `.nexora code on/off`, `.nexora auto-run on/off`, `.nexora tunnel on/off`, `.nexora workers 1-4`, and `.nexora runtime docker/podman` for individual controls. `workers` is the simultaneous program limit; total preview sessions are configured separately. See [`CODE_LAB.md`](CODE_LAB.md) for container hardening, persistent Quick Tunnel lifecycle, setup, and operational limits.
+
+
+## AI model discovery settings (v1.10.10)
+
+`ai.freeOnly` defaults to `true`. When enabled, only models present in both the authenticated provider model-list response and the official free-tier allowlist can be selected. Groq and Gemini are eligible; DeepSeek and OpenAI are treated as paid API providers. Use `.aiset free-only off` only when provider billing is intentionally enabled.
+
+The model catalogue is stored separately in `data/ai-model-catalog.json`, not in the single-writer primary JSONL journal. The in-process scheduler and detached Node.js worker start automatically with `npm start`. The detached worker survives terminal closure and main-bot shutdown while the VPS remains online, refreshes when due, retries transient catalogue outages hourly, and reloads the provider-key vault from disk. No systemd, cron, installer, or extra command is required. A VPS shutdown stops all local processes; the next `npm start` recreates the worker and catches up. See [`AI_MODEL_CATALOG.md`](AI_MODEL_CATALOG.md).

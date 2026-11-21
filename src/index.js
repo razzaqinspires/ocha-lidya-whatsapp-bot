@@ -22,6 +22,8 @@ import { ensureGroupMetadata, hydrateParticipatingGroupsOnce, handleGroupsUpsert
 import { resumePendingAI, initializeAIHistoryCache } from './ai/engine.js';
 import { initializeUserProfiles } from './ai/user-profiles.js';
 import { initializeProviderKeys } from './ai/providers.js';
+import { startModelCatalogScheduler, stopModelCatalogScheduler } from './ai/model-catalog.js';
+import { ensureModelCatalogWorkerStarted } from './ai/model-catalog-worker-manager.js';
 import { getReconnectDelay, isValidInternationalNumber, normalizePhoneNumber, shouldRequestPairingCode, shouldStopReconnect, shouldRecoverInvalidSession } from './core/connection-policy.js';
 import { startCodeLab, stopCodeLab } from './runtime/code-lab.js';
 import { runNexoraBootstrap } from './runtime/bootstrap-agent.js';
@@ -38,6 +40,18 @@ try {
 await initializeContacts();
 await initializeGroupMetadata();
 await initializeProviderKeys();
+try {
+  const catalog = await startModelCatalogScheduler({ refreshAtStartup: true });
+  logger.info({ active: catalog.active, mode: catalog.mode, checkedAt: catalog.checkedAt, nextRunAt: catalog.nextRunAt, intervalHours: catalog.intervalHours }, 'In-process autonomous AI model catalog scheduler active');
+} catch (error) {
+  logger.warn({ err: error }, 'In-process AI model catalog scheduler could not initialize; it will retry on the next process start');
+}
+try {
+  const worker = ensureModelCatalogWorkerStarted();
+  logger.info({ active: worker.active, workerStarted: worker.started, workerPid: worker.pid, logFile: worker.logFile || null }, 'Detached AI model catalog worker ensured');
+} catch (error) {
+  logger.warn({ err: error }, 'Detached AI model catalog worker could not start; in-process scheduler remains active');
+}
 try {
   await initializeAIHistoryCache();
   await initializeUserProfiles();
@@ -371,6 +385,7 @@ async function shutdownRuntime(signal, exitCode = 0) {
   const socketToClose = activeSocket;
   activeSocket = undefined;
   try { socketToClose?.end?.(new Error(`Process shutdown: ${signal}`)); } catch {}
+  stopModelCatalogScheduler();
   try { await stopCodeLab(); }
   catch (error) { logger.error({ message: error.message }, 'Code Lab shutdown cleanup failed'); }
   process.exit(exitCode);

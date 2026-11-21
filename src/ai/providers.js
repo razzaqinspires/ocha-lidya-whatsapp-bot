@@ -6,10 +6,10 @@ import { logger } from '../core/logger.js';
 
 const VAULT = path.resolve('data/secrets/provider-keys.json');
 const PROVIDERS = {
-  groq: { env: 'GROQ_API_KEY', baseURL: 'https://api.groq.com/openai/v1/chat/completions', model: 'openai/gpt-oss-20b', protocol: 'openai-compatible' },
+  groq: { env: 'GROQ_API_KEY', baseURL: 'https://api.groq.com/openai/v1/chat/completions', model: 'openai/gpt-oss-120b', protocol: 'openai-compatible' },
   gemini: { env: 'GEMINI_API_KEY', baseURL: 'https://generativelanguage.googleapis.com/v1beta/models', model: 'gemini-3.8-flash', protocol: 'gemini' },
   deepseek: { env: 'DEEPSEEK_API_KEY', baseURL: 'https://api.deepseek.com/chat/completions', model: 'deepseek-flash', protocol: 'openai-compatible' },
-  openai: { env: 'OPENAI_API_KEY', baseURL: 'https://api.openai.com/v1/chat/completions', model: 'gpt-6-luna', protocol: 'openai-compatible' }
+  openai: { env: 'OPENAI_API_KEY', baseURL: 'https://api.openai.com/v1/chat/completions', model: 'gpt-6.2-sol', protocol: 'openai-compatible' }
 };
 const transientStatus = new Set([408, 409, 425, 429, 500, 502, 503, 504]);
 const keyStats = new Map();
@@ -51,11 +51,41 @@ async function persistVault() {
   });
   return saveQueue;
 }
-export async function initializeProviderKeys() {
+export async function reloadProviderKeyVault() {
+  let nextVault = {};
+  try { nextVault = JSON.parse(await fs.readFile(VAULT, 'utf8')); }
+  catch (error) {
+    if (error.code !== 'ENOENT') {
+      logger.error({ err: error }, 'Provider key vault unreadable during model catalog refresh');
+      throw error;
+    }
+  }
+  const parsedVault = nextVault && typeof nextVault === 'object' && !Array.isArray(nextVault) ? nextVault : {};
+  vault = Object.fromEntries(providerNames.map(provider => [
+    provider, Array.isArray(parsedVault[provider]) ? parsedVault[provider].filter(value => typeof value === 'string' && value.trim()) : []
+  ]));
+  for (const provider of providerNames) {
+    for (const item of allKeysAfterVaultReload(provider)) statsFor(item.value).source = item.source;
+  }
+  return Object.fromEntries(providerNames.map(provider => [provider, (vault[provider] || []).length]));
+}
+
+function allKeysAfterVaultReload(provider) {
+  const env = (process.env[PROVIDERS[provider].env] || '').split(/[;,\n]/).map(value => value.trim()).filter(Boolean).map(value => ({ value, source: 'env' }));
+  const stored = (Array.isArray(vault[provider]) ? vault[provider] : []).filter(value => typeof value === 'string').map(value => ({ value, source: 'vault' }));
+  const seen = new Set();
+  return [...env, ...stored].filter(item => {
+    const id = fingerprint(item.value);
+    if (seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+}
+
+export async function initializeProviderKeys({ skipTelemetry = false } = {}) {
   if (initialized) return;
-  try { vault = JSON.parse(await fs.readFile(VAULT, 'utf8')); }
-  catch (error) { if (error.code !== 'ENOENT') { logger.error({ err: error }, 'Provider key vault unreadable'); throw error; } }
-  const keyEvents = await getRecords({ type: 'ai.key.event' });
+  await reloadProviderKeyVault();
+  const keyEvents = skipTelemetry ? [] : await getRecords({ type: 'ai.key.event' });
   for (const row of keyEvents) {
     const event = row.payload || {};
     if (!event.fingerprint) continue;
@@ -65,7 +95,7 @@ export async function initializeProviderKeys() {
     if (event.event === 'failure') { stat.failures++; stat.status = event.status || 'error'; stat.reason = event.reason || null; stat.retryAt = Date.parse(event.retryAt || '') || 0; stat.lastErrorAt = row.ts; stat.lastHttpStatus = event.httpStatus || null; }
     keyStats.set(event.fingerprint, stat);
   }
-  const records = await getRecords({ type: 'ai.maintenance' });
+  const records = skipTelemetry ? [] : await getRecords({ type: 'ai.maintenance' });
   const last = records.at(-1)?.payload;
   if (last?.active) maintenance = { active: true, since: last.since, notifiedAt: last.notifiedAt, reason: last.reason };
   initialized = true;
@@ -112,8 +142,11 @@ function classifyFailure(error) {
       ? { status: 'daily_limit', permanent: false, retryAt: retryAtFromProvider(error, nextUtcDay()), reason: 'daily quota exhausted' }
       : { status: 'rate_limited', permanent: false, retryAt: Date.now() + 30_000, reason: 'temporary rate limit' };
   }
-  if (status === 400) return { status: 'request_or_model_error', permanent: false, retryAt: Date.now() + 5 * 60_000, reason: 'bad request or model unsupported; key validity not proven' };
-  if (status >= 500 || error?.retryable || error?.code === 'ETIMEDOUT') return { status: 'provider_error', permanent: false, retryAt: Date.now() + 15_000, reason: 'provider/network temporarily unavailable' };
+  if (status === 402) return { status: 'insufficient_balance', permanent: true, retryAt: Date.now() + 6 * 60 * 60_000, reason: 'provider account balance / billing credit insufficient' };
+  if (status === 400 || status === 404 || status === 422) return { status: 'request_or_model_error', permanent: false, retryAt: Date.now() + 5 * 60_000, reason: 'request or model unsupported; key validity not proven' };
+  const networkCode = String(error?.code || error?.cause?.code || '').toUpperCase();
+  const networkFailure = /NETWORK|TIMEOUT|ETIMEDOUT|ECONN|ENOTFOUND|EAI_AGAIN|UND_ERR|SOCKET/.test(networkCode) || /fetch failed|network.*unavailable|could not resolve host|connection reset/.test(message);
+  if (status >= 500 || networkFailure || error?.retryable || error?.code === 'ETIMEDOUT') return { status: 'provider_error', permanent: false, retryAt: Date.now() + 15_000, reason: 'provider/network temporarily unavailable' };
   return { status: 'error', permanent: false, retryAt: Date.now() + 60_000, reason: 'unclassified error' };
 }
 function nextUtcDay() { const d = new Date(); return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1, 0, 5); }
@@ -122,6 +155,127 @@ function publicKeyInfo(provider, item) {
   const stat = statsFor(item.value);
   return { provider, fingerprint: stat.fingerprint, masked: mask(item.value), source: item.source, ...stat, usableNow: isEligible(stat), probeDue: isEligible(stat) && ['invalid', 'forbidden', 'daily_limit', 'rate_limited', 'provider_error'].includes(stat.status) };
 }
+const MODEL_LIST_ENDPOINTS = Object.freeze({
+  groq: 'https://api.groq.com/openai/v1/models',
+  deepseek: 'https://api.deepseek.com/models',
+  openai: 'https://api.openai.com/v1/models'
+});
+
+function normalizeListedModel(provider, model) {
+  if (!model || typeof model !== 'object') return null;
+  const id = provider === 'gemini'
+    ? String(model.baseModelId || model.name || '').replace(/^models\//, '')
+    : String(model.id || '').trim();
+  if (!id || id.length > 160) return null;
+  const methods = Array.isArray(model.supportedGenerationMethods) ? model.supportedGenerationMethods : null;
+  const supportsChat = provider === 'gemini'
+    ? Boolean(methods?.includes('generateContent'))
+    : true;
+  return {
+    id,
+    name: String(model.displayName || model.name || id).slice(0, 180),
+    owner: String(model.owned_by || model.publisher || '').slice(0, 100) || null,
+    contextWindow: Number.isFinite(Number(model.inputTokenLimit || model.context_window)) ? Number(model.inputTokenLimit || model.context_window) : null,
+    maxOutputTokens: Number.isFinite(Number(model.outputTokenLimit || model.max_output_tokens)) ? Number(model.outputTokenLimit || model.max_output_tokens) : null,
+    supportsChat,
+    methods: methods ? methods.slice(0, 20).map(value => String(value).slice(0, 80)) : null
+  };
+}
+
+async function fetchModelListPage(provider, key, pageToken, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    let url;
+    let headers;
+    if (provider === 'gemini') {
+      const query = new URLSearchParams({ pageSize: '1000' });
+      if (pageToken) query.set('pageToken', pageToken);
+      url = `https://generativelanguage.googleapis.com/v1beta/models?${query}`;
+      headers = { 'x-goog-api-key': key, accept: 'application/json' };
+    } else {
+      url = MODEL_LIST_ENDPOINTS[provider];
+      headers = { authorization: `Bearer ${key}`, accept: 'application/json' };
+    }
+    const response = await fetch(url, { method: 'GET', headers, signal: controller.signal });
+    const raw = await response.text();
+    let data;
+    try { data = raw ? JSON.parse(raw) : {}; }
+    catch { data = { raw: raw.slice(0, 500) }; }
+    if (!response.ok) {
+      const message = String(data.error?.message || data.message || data.raw || response.statusText || 'Model catalog request failed').slice(0, 500);
+      const error = new Error(`${provider} model catalog HTTP ${response.status}: ${message}`);
+      error.provider = provider;
+      error.status = response.status;
+      error.retryAfter = response.headers?.get?.('retry-after') || null;
+      error.retryable = transientStatus.has(response.status);
+      throw error;
+    }
+    return data;
+  } catch (error) {
+    if (error.name === 'AbortError' || controller.signal.aborted) {
+      throw errorWithMetadata(error, { provider, retryable: true, code: 'ETIMEDOUT' });
+    }
+    if (error instanceof TypeError) throw errorWithMetadata(error, { provider, retryable: true, code: 'NETWORK_ERROR' });
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Read the provider's own model catalog. This is metadata-only; it does not
+ * submit an inference request and does not consume model output tokens.
+ * Keys are tried only until one key can read the catalog. Raw keys are never
+ * returned or persisted.
+ */
+export async function listProviderModels(provider, { timeoutMs = 10000, maxPages = 5 } = {}) {
+  await initializeProviderKeys();
+  provider = normalizeProvider(provider);
+  if (!isProvider(provider)) throw new Error(`Provider tidak dikenal: ${provider}`);
+  const candidates = allKeys(provider);
+  if (!candidates.length) return { provider, status: 'no_api_key', models: [], keyFingerprint: null };
+
+  let lastError = null;
+  for (const item of candidates) {
+    try {
+      const models = [];
+      let pageToken = null;
+      for (let page = 0; page < maxPages; page++) {
+        const data = await fetchModelListPage(provider, item.value, pageToken, timeoutMs);
+        const rows = provider === 'gemini' ? (data.models || []) : (data.data || []);
+        for (const row of rows) {
+          const normalized = normalizeListedModel(provider, row);
+          if (normalized) models.push(normalized);
+        }
+        pageToken = provider === 'gemini' ? (data.nextPageToken || null) : null;
+        if (!pageToken) break;
+      }
+      const unique = [...new Map(models.map(model => [model.id, model])).values()];
+      return {
+        provider, status: 'ok', models: unique.slice(0, 1000),
+        modelCount: unique.length, keyFingerprint: fingerprint(item.value),
+        listedAt: new Date().toISOString()
+      };
+    } catch (error) {
+      lastError = error;
+      // An invalid credential is key-specific, so try the next key. A timeout,
+      // outage or catalog rate limit is provider-wide and must not fan out.
+      if (![401, 403].includes(Number(error?.status))) break;
+    }
+  }
+  return {
+    provider,
+    status: Number(lastError?.status) === 401 ? 'unauthorized' : Number(lastError?.status) === 403 ? 'forbidden' : 'unreachable',
+    models: [], keyFingerprint: null,
+    error: {
+      code: String(lastError?.code || 'MODEL_CATALOG_FAILED').slice(0, 80),
+      httpStatus: Number.isFinite(Number(lastError?.status)) ? Number(lastError.status) : null,
+      message: String(lastError?.message || 'Model catalog unavailable').slice(0, 300)
+    }
+  };
+}
+
 export function getProviderInventory(config = {}) {
   return providerNames.map(name => {
     const keys = allKeys(name).map(item => publicKeyInfo(name, item));
@@ -255,13 +409,19 @@ export async function generateWithProvider(name, messages, options = {}) {
       const pm = providerMetrics.get(name) || { successes: 0, failures: 0, averageLatencyMs: null };
       pm.failures++; pm.lastLatencyMs = Date.now() - started; pm.lastStatus = classified.status; providerMetrics.set(name, pm);
       await recordEvent('failure', { status: classified.status, httpStatus: error.status || null, reason: classified.reason, retryAt: new Date(classified.retryAt).toISOString() });
-      logger.warn({ provider: name, fingerprint: stat.fingerprint, status: classified.status, httpStatus: error.status, reason: classified.reason }, 'API key failed; rotating to another key for the same provider only');
+      logger.warn({ provider: name, fingerprint: stat.fingerprint, status: classified.status, httpStatus: error.status, reason: classified.reason }, 'API key/provider attempt failed');
       // Model/request errors and provider-wide outages do not become better
       // by replaying the same payload against every key. Quota/401/403 failures
-      // remain key-specific candidates, so the complete key array is exhausted
-      // before the outer router moves to its next provider.
-      if (classified.status === 'request_or_model_error'
-        || (classified.status === 'provider_error' && (Number(error?.status) === 408 || Number(error?.status) >= 500 || ['ETIMEDOUT', 'NETWORK_ERROR'].includes(error?.code)))) break;
+      // remain key-specific candidates. Daily/account quota, model rejection,
+      // network outages and server errors stop key fan-out and move to the next provider.
+      const networkCode = String(error?.code || error?.cause?.code || '').toUpperCase();
+      const networkMessage = String(error?.message || error?.cause?.message || '').toLowerCase();
+      const providerWideFailure = Number(error?.status) === 408 || Number(error?.status) === 429
+        || Number(error?.status) >= 500
+        || /NETWORK|TIMEOUT|ETIMEDOUT|ECONN|ENOTFOUND|EAI_AGAIN|UND_ERR|SOCKET/.test(networkCode)
+        || /fetch failed|network.*unavailable|connection reset|could not resolve host|socket hang up/.test(networkMessage);
+      if (['request_or_model_error', 'daily_limit', 'rate_limited', 'insufficient_balance'].includes(classified.status)
+        || (classified.status === 'provider_error' && providerWideFailure)) break;
     }
   }
   if (eligibleAll.length && attemptsMade) keyRotationCursor.set(name, (cursor + attemptsMade) % eligibleAll.length);
@@ -273,10 +433,10 @@ export async function generateWithProvider(name, messages, options = {}) {
   throw finalError;
 }
 /**
- * Execute the configured provider chain in order. Each provider gets a full
- * pass over every currently eligible API key before the router moves on.
- * Key cooldowns are respected; a provider with no ready keys is checkpointed
- * as skipped and the next configured provider is considered immediately.
+ * Execute the configured provider chain in order. Key-specific authentication
+ * failures may rotate through sibling keys; provider-wide faults, quota limits,
+ * unsupported model/request errors and billing failures hand off immediately.
+ * Key cooldowns are respected and no provider receives an unbounded retry pass.
  */
 export async function generateWithFallback(providerOrder, messages, options = {}) {
   await initializeProviderKeys();

@@ -1,3 +1,37 @@
+## [1.10.11] - 2026-11-21
+
+### Changed
+- Removed systemd/cron installation requirements and external model-catalog timer scripts; discovery is now managed by the main Node.js lifecycle after `npm start`.
+- Replaced 15-minute polling with a one-shot timer aligned to the persisted 24-hour deadline, plus hourly retry for transient provider catalogue outages. `npm start` now also launches a singleton detached Node.js worker that survives terminal closure and main-bot shutdown.
+- API key additions/deletions trigger immediate metadata-only rediscovery; worker refreshes reload the key vault, and `.aimodels status` / `.aistatus` show worker PID, heartbeat, and next run.
+- The detached worker uses an exclusive PID lock, 30-second heartbeat, and separate log; the next `npm start` recreates it after VPS downtime and catches up from the saved catalogue timestamp.
+
+### Validation
+- Syntax check: 122 JavaScript files checked.
+- Offline suite: 132 passed, 2 skipped, 0 failed (134 total).
+- Detached-worker smoke test: worker remained alive after its launcher exited, wrote PID/heartbeat status, and cleaned up its lock on SIGTERM.
+- Provider catalog tests use mocked endpoints; live provider credentials and inference still require verification on the target host.
+
+## [1.10.10] - 2026-11-21
+
+### Added
+- Added authenticated model-list discovery for Groq, Gemini, DeepSeek, and OpenAI, with no inference prompt or output-token use during catalog refresh.
+- Added a 24-hour autonomous scheduler, dedicated atomic catalogue database (`data/ai-model-catalog.json`), 30-snapshot history, and cross-process refresh lock.
+- Added independent systemd service/timer installer with cron fallback, so catalogue refresh continues when the WhatsApp bot and terminal are stopped while the host remains powered on.
+- Added owner controls `.aimodels status/refresh` and `.aiset free-only on/off`; safe default allows only models intersecting the documented free-tier allowlist.
+- Added provider-specific current free/paid policies, model recommendation selection, Gemini `generateContent` filtering, and stale last-known-good retention for temporary catalog outages.
+
+### Fixed
+- Provider-wide network/timeout/5xx errors, 429 quota/rate limits, 402 balance errors, and malformed/unsupported model requests now stop same-provider key fan-out and advance to the next provider. Only key-specific authentication failures keep rotating sibling keys.
+- Corrected HTTP 402 classification to `insufficient_balance`; DeepSeek's 402 is a balance issue, not model deprecation.
+- Standalone catalog refresh skips the main JSONL event journal so the independent systemd process cannot race the application's single-writer database.
+- Fixed schema migration ordering by applying schema v24 after migrations v11–v22; existing user-configured provider priority is preserved.
+
+### Validation
+- Syntax check: 121 JavaScript files checked.
+- Offline suite: 127 passed, 2 skipped, 0 failed (129 total).
+- Model discovery and fallback tests use mocked provider APIs; live provider credentials and inference still require verification on the target host.
+
 ## [1.10.5] - 2026-11-21
 
 ### Added
@@ -80,6 +114,7 @@
 
 # Changelog
 
+
 ## [1.8.0] - 2026-11-20
 
 ### Added
@@ -130,6 +165,7 @@
 - AI review is advisory, not a safety proof. Scoped destructive actions require explicit confirmation; root/disk/host-wide critical patterns are blocked.
 
 # Changelog
+
 
 ## [1.7.1] - 2026-11-19
 

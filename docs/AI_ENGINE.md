@@ -1,21 +1,63 @@
-# Ocha Lidya AI Engine — v1.10.9
+# Ocha Lidya AI Engine — v1.10.11
 
 ## Public identity
 
-The public AI identity exposed in chat is **Nexora-2.0-Flash**. Provider and upstream model identifiers are internal routing details. The engine instructs the assistant not to disclose provider/model vendor names, and a direct question such as “kamu menggunakan model apa?” receives the fixed identity response. The product creator is a separate public identity: Arifi Razzaq, under Razzaq Ventures, configured through the non-secret allowlist in `bot.ownerName`, `bot.creatorName`, `bot.organization`, and `bot.publicCreatorDisclosure`. This is a product identity/abstraction layer; it does not mean every upstream provider is literally running a model named Nexora.
+The public AI identity exposed in chat is **Nexora-2.0-Flash**. Provider and upstream model identifiers remain internal routing details. The public identity is an application abstraction; it does not mean every upstream provider is literally running a model named Nexora.
 
-## Providers and default order
+## Provider routing and failure classification
 
-Qwen has been removed from provider configuration, routing, and the `.env.example` template. The remaining default priority route is Groq → Gemini → DeepSeek → OpenAI. `.aiset order` sets the exact ordered provider chain; no provider outside that list is added automatically. Only providers with configured keys and at least one currently eligible key are called. Current default upstream model IDs are configurable in `src/config.js`; the public identity remains Nexora-2.0-Flash.
+The default priority route is Groq → Gemini → DeepSeek → OpenAI. `.aiset order` changes the ordered chain; providers outside that list are never called. The router first checks whether a provider has credentials and eligible keys, then attempts its request. A successful, non-empty response ends the chain.
 
-| Provider | Default upstream model ID | Credential |
-|---|---|---|
-| Groq | `openai/gpt-oss-20b` | `GROQ_API_KEY` |
-| Gemini | `gemini-3.8-flash` | `GEMINI_API_KEY` |
-| DeepSeek | `deepseek-flash` | `DEEPSEEK_API_KEY` |
-| OpenAI | `gpt-6-luna` | `OPENAI_API_KEY` |
+Key rotation is intentionally different from provider fallback:
 
-Model availability and account entitlement can change. The provider's authenticated API response is the authoritative check for a particular key. Official catalog references: [Groq models](https://console.groq.com/docs/models), [Gemini model support](https://firebase.google.com/docs/ai-logic/models), [DeepSeek model list](https://api-docs.deepseek.com/api/list-models/), and [OpenAI API models](https://developers.openai.com/api/docs/models).
+- **401 / invalid credential:** key-specific. Try the next key in that provider's array.
+- **403:** classify as permission, expiry, or quota based on the provider message; do not assume every 403 means the same thing.
+- **429 / daily quota / account rate limit:** stop key fan-out and advance to the next provider. Replaying against sibling keys is wasteful when the quota is organization/account/project scoped.
+- **402:** insufficient billing balance; stop the provider and advance. It is not a model-deprecation signal.
+- **400 / 404 / 422:** request/model incompatibility; do not mark the key invalid and do not replay the same bad payload across sibling keys.
+- **Timeout / network / 5xx:** provider-wide failure; record the checkpoint and advance immediately.
+
+This distinction fixes a weakness exposed by the 21 November 2026 runtime log: nine Groq attempts with a network-level `fetch failed` should not fan out to nine different credentials. The router now makes one provider attempt for provider-wide faults and moves on. Account quota is also not multiplied by adding multiple keys to the same account or organization.
+
+## Providers and free-tier policy (verified 21 November 2026)
+
+| Provider | Preferred model when free-only is ON | Free access policy | Credential |
+|---|---|---|---|
+| Groq | `openai/gpt-oss-120b` | Free-plan limits are documented for GPT-OSS 120B/20B and Qwen 3.8 27B; quota is organization-level. | `GROQ_API_KEY` |
+| Gemini | `gemini-3.8-flash` | Gemini 3.8 Flash is listed as free of charge on the Standard tier. Gemini 4 Carbon/Argon/Neon are paid-only in the current pricing document; older models are secondary only when still visible in the key's live model catalogue. | `GEMINI_API_KEY` |
+| DeepSeek | `deepseek-flash` (paid mode only) | Current API pricing is token-billed; no zero-cost inference tier is documented in the checked pricing page. | `DEEPSEEK_API_KEY` |
+| OpenAI | `gpt-6.2-sol` (paid mode only) | API usage is paid; current model documentation does not establish a free inference tier. | `OPENAI_API_KEY` |
+
+Official references: [Groq model catalogue](https://console.groq.com/docs/models), [Groq rate limits](https://console.groq.com/docs/rate-limits), [Gemini models](https://ai.google.dev/gemini-api/docs/models), [Gemini pricing](https://ai.google.dev/gemini-api/docs/pricing), [DeepSeek model list](https://api-docs.deepseek.com/api/list-models/), [DeepSeek pricing](https://api-docs.deepseek.com/quick_start/pricing/), [DeepSeek error codes](https://api-docs.deepseek.com/quick_start/error_codes/), [OpenAI model catalogue](https://developers.openai.com/api/docs/models), and [OpenAI rate limits](https://developers.openai.com/api/docs/guides/rate-limits).
+
+The provider model-list endpoint confirms which model IDs are visible to a particular API key. It does **not** expose a universal `isFree` field, prove that inference quota remains, or guarantee that an account's model permissions are active. The application therefore intersects the authenticated live catalogue with a conservative, documented free-model allowlist. New, unknown model IDs are never silently promoted into free-only routing; the allowlist needs an official pricing verification before they can be used. This avoids accidentally switching to a paid model.
+
+## Autonomous model catalogue
+
+`src/ai/model-catalog.js` queries the authenticated provider model-list API without sending an inference prompt:
+
+- Groq: `GET /openai/v1/models`
+- Gemini: `GET /v1beta/models` with pagination and `supportedGenerationMethods` filtering
+- DeepSeek: `GET /models`
+- OpenAI: `GET /v1/models`
+
+The catalogue is persisted separately at `data/ai-model-catalog.json`. It stores provider model metadata, verified free-tier eligibility, recommended free/paid model IDs, timestamps, status, and up to 30 compact history snapshots. Raw API keys are never written; the listing adapter returns only metadata and an optional key fingerprint. The file is created with restrictive permissions and replaced atomically. A cross-process lock prevents concurrent scheduled refreshes.
+
+The in-process scheduler and a singleton detached Node.js worker start automatically during `npm start`. The detached worker survives closing the terminal or stopping the main WhatsApp process while the VPS remains powered on. It refreshes when the catalogue is missing or overdue, schedules the next run from the persisted 24-hour deadline, and retries transient catalogue network outages hourly. `.apikey add/delete` requests an immediate refresh, and worker refreshes reload the vault from disk. The worker PID/heartbeat is stored in `data/ai-model-catalog-worker.json`; its log is `data/logs/ai-model-catalog-worker.log`. No systemd, cron, or installation command is required. If the VPS itself stops, the next `npm start` detects the stopped worker, starts it again, and catches up. The dedicated catalogue file avoids writes to the main single-writer event journal.
+
+Owner commands:
+
+```text
+.aimodels status
+.aimodels refresh
+.aiset free-only on
+.aiset free-only off
+.aiset order groq,gemini,deepseek,openai
+```
+
+`free-only` defaults to ON. It limits runtime routing to Groq and Gemini models that exist in both the live provider catalogue and the documented free allowlist. When OFF, DeepSeek/OpenAI and their recommended paid models may enter fallback; billing is the owner's responsibility. A successful catalogue HTTP response proves that a key can list models, not that a model can complete inference or that free quota is still available. Newly listed chat models that are not covered by the policy appear in `.aimodels status` for review and are never auto-promoted to free routing. Runtime inference remains the final health signal.
+
+The system does not create, purchase, scrape, or invent API keys. It uses only the owner-provided keys in environment variables and `data/secrets/provider-keys.json`. An account must be created and a credential issued by the provider's own console.
 
 ## API key manager
 
@@ -28,71 +70,33 @@ The owner-only `.apikey` command manages multiple keys per provider:
 .apikey delete gemini <fingerprint>
 ```
 
-`add` accepts comma-separated values. `list` and `get` never reveal the full secret: they show a masked key and a SHA-256-derived fingerprint. `get` returns detailed counters, status, last error, HTTP status, and retry time. `delete` removes keys managed in the local vault; keys supplied through `.env` must be removed from `.env` manually. Keys that were already added to the vault are not copied into JSONL configuration or logs.
+`list` and `get` never reveal the full secret: they show a masked key and a SHA-256-derived fingerprint. Managed keys are stored in `data/secrets/provider-keys.json` with directory/file permissions restricted to the current OS user (`0700`/`0600` where supported). This is access-control hardening, not encryption. Environment variables remain supported; multiple keys can be separated by comma, semicolon, or newline.
 
-Managed keys are stored in `data/secrets/provider-keys.json`, with directory/file permissions restricted to the current OS user (`0700`/`0600` where supported). This is access-control hardening, not encryption. Protect the host and encrypt backups. Do not share the file or the raw key as a WhatsApp message. Environment variables remain supported; multiple keys can be separated by comma, semicolon, or newline.
+## Provider checkpoints and maintenance
 
-## Key validation and classification
+Before each provider attempt, the router persists an attempt checkpoint. It then persists skip/failure/success transitions as the request advances. Original queued job payloads are retained, so a restart during provider fallback can resume the job without losing its source messages. If every permitted provider is missing keys, has no eligible key, or fails, the subsystem enters maintenance and sends the owner a private status report. Local deterministic identity, greeting, and profile responses remain available while upstream AI is in maintenance.
 
-The provider manager rotates eligible keys fairly using a per-provider round-robin cursor. The shared AI router attempts every currently eligible key for a provider when the response is key-specific (such as 401, 403, or 429 quota/rate-limit responses). A successful key ends the chain immediately. A model/request error or provider-wide network/5xx outage moves to the next provider without needlessly replaying the same request across every key. A successful request proves that the key worked for that request, not that it has unlimited quota. Every attempt increments the hit counter before the network request and writes an append-only `ai.key.event` event. Counters are reconstructed from the JSONL event history after restart.
-
-| Observed response | Classification | Retry policy |
-|---|---|---|
-| HTTP 200 with non-empty output | `active` | Eligible immediately |
-| HTTP 401 | `expired` when the provider explicitly says expired; otherwise `invalid` (revoked, malformed, or unauthorized) | Probe again after 6 hours |
-| HTTP 403 with quota/billing indicators | `daily_limit` | Probe at provider `Retry-After` when supplied; otherwise use next UTC day boundary + 5 minutes as a fallback heuristic |
-| HTTP 403 explicitly reporting expiry | `expired` | Probe again after 6 hours |
-| HTTP 403 without quota/expiry indicators | `forbidden` (permission/project restriction) | Probe again after 1 hour |
-| HTTP 429 with daily/quota indicators | `daily_limit` | Probe at provider `Retry-After` when supplied; otherwise use next UTC day boundary + 5 minutes as a fallback heuristic |
-| HTTP 429 without daily/quota indicators | `rate_limited` | Probe at `Retry-After` when supplied; otherwise after 30 seconds |
-| HTTP 400 | `request_or_model_error` | Does not prove key invalid; stop retrying other keys for the same malformed request and fall back |
-| HTTP 5xx, timeout, network error | `provider_error` | Probe after 15 seconds; switch provider immediately because the failure is provider-wide |
-| Other/unclassified response | `error` | Probe after 1 minute |
-
-Important: API providers do not expose one universal “key expired” endpoint or universal daily-quota field. The engine infers status from authenticated request responses, response text/status codes, and `Retry-After` when present. The UTC reset estimate is only a fallback heuristic; actual quota reset clocks are provider-specific. It deliberately does not label a 400 model/payload error as an invalid key. Provider-side quota messages vary, so some 403/429 responses may be classified conservatively as `forbidden` or `rate_limited`. The owner can inspect the exact recorded reason and retry time using `.apikey list` / `.apikey get` and `.aistatus`.
-
-The key counters include total hits, successes, failures, and reported token usage where the provider returns usage metadata. Token usage may be unavailable or differently defined by an upstream API; in that case it remains zero rather than being estimated.
-
-## Fallback and maintenance
-
-1. The engine reads the exact ordered provider chain from `ai.providerOrder`; the default is Groq → Gemini → DeepSeek → OpenAI.
-2. Before each provider call, it records a provider-attempt checkpoint with the provider position and current key inventory.
-3. For key-specific authentication/quota/rate-limit responses (401/403/429), every currently eligible key in that provider's environment/vault array is attempted before moving to the next provider. Keys already in cooldown are skipped until `retryAt`.
-4. For model/request errors and provider-wide network/timeout/5xx failures, the router moves to the next provider without replaying the same failing request against every key.
-5. The first provider that returns a non-empty response wins. A successful response records a provider-success checkpoint and clears AI maintenance.
-6. If every provider is missing keys, has no eligible keys, or fails, the subsystem enters persisted maintenance and the owner receives one private inventory report.
-7. Local deterministic identity, greeting, conversation-recall, and profile responses remain available during maintenance without provider calls.
-8. Conversation checkpoints retain the original job/messages payload while recording provider attempts, skips, failures, and success. If the process restarts mid-fallback, recovery can resume the queued job instead of losing it when a provider checkpoint is written.
-
-This is response-driven validation, not a guaranteed external expiry detector. A key can be valid but have no balance, lack model permission, or be temporarily rate-limited. Those conditions are reported separately where the provider response makes the distinction possible.
+Key counters and error classifications are reconstructed from the primary append-only JSONL event journal. The dedicated model catalogue never writes to that journal because the primary database is single-writer. Key status is response-driven, not a universal external key-expiry detector. A model-list request can validate catalog access, while an inference request is still needed to prove that a particular model can actually answer.
 
 ## Owner controls
 
-- `.aistatus` — AI maintenance state, route, per-provider inventory, total hits, token usage, success/failure counts, and per-key status.
-- `.apikey add <provider> <key1,key2>` — add managed keys.
-- `.apikey list <provider>` — list masked keys and status.
-- `.apikey get <provider> <fingerprint>` — detailed status for one key.
-- `.apikey delete <provider> <fingerprint>` — delete a managed key.
-- `.aiset on` / `.aiset off` — enable/disable AI.
-- `.aiset speed boost` — low-latency profile: 3.5 s per key request, 180 output tokens, 3 history turns, and 80 ms coalescing; it does not reduce the number of eligible keys tried for quota/auth failures.
-- `.aiset speed fast` — balanced low-latency profile: 4.5 s per key request, 220 output tokens, 4 history turns, and 120 ms coalescing.
-- `.aiset speed balanced` — longer generation and output allowance; the full eligible key array is still attempted for key-specific failures.
-- `.aiset order groq,gemini,deepseek,openai` — set the exact provider chain and fallback priority.
-- `.aiset model <provider> <model-id>` — override an upstream model ID.
-- `.aiset identity on/off` — allow or suppress public disclosure of creator and organization identity.
-- `.profile` — display XP, level, role, rank, and interaction progress.
+- `.aistatus` — AI maintenance, provider route, per-key status, quota, counters, and catalogue timestamp.
+- `.aimodels status` — latest provider catalogue, free-model candidates, recommendations, and refresh schedule.
+- `.aimodels refresh` — force a catalogue refresh now.
+- `.aiset free-only on/off` — enforce only documented free-tier models or allow paid providers.
+- `.aiset order groq,gemini,deepseek,openai` — set provider priority.
+- `.aiset model <provider> <model-id>` — set a configured model ID; automatic catalogue selection still chooses a verified free candidate when free-only is ON.
+- `.aiset speed boost/fast/balanced` — tune request latency and output/context bounds.
+- `.aiset identity on/off` — control public creator identity disclosure.
+- `.apikey add/list/get/delete` — manage provider credentials without revealing full secrets.
 
 ## Runtime notes and limitations
 
-- Requests use Node's built-in `fetch`; no provider SDK is required.
-- Provider adapters currently use non-streaming chat requests.
-- The response-critical path does not wait for conversation-turn journaling or per-key hit/success telemetry writes. Those records are queued to the append-only journal in the background. Provider transition checkpoints are persisted before each next provider is attempted so restart recovery retains routing progress and the original job payload. Disk failures are logged and do not delay the current user response.
-- The default profile is Boost after schema migration. Only known shipped defaults are migrated; custom owner timeout/output values are preserved. The v1.10.9 schema migration converts the old Groq-only default order to the ordered multi-provider chain and removes the obsolete per-request key-attempt cap.
-- A provider may reject a model ID even when the API key itself is valid; that is recorded as a request/model issue, not an invalid key.
-- The engine can only count calls made through this bot. It cannot report API-key hits made by other applications or direct dashboard/API calls.
-- Total token counts are based on usage fields returned by the provider. Missing usage metadata is not fabricated.
-- Maintenance and key-event history are persisted in the append-only JSONL database. The raw managed key vault is separate from the JSONL database.
-
+- Requests use Node's built-in `fetch`; no provider SDK is required. Provider adapters currently use non-streaming chat requests.
+- The 24-hour timer is independent from the WhatsApp process only after the installer is run on the host. It is not silently installed by bot startup because installation requires OS-level privileges.
+- If a provider model disappears or is no longer supported by the API list, it is excluded from fresh catalogue recommendations. A last-known-good selection may be retained as stale for up to seven days when catalog access is temporarily unavailable; it is not treated as a fresh confirmation.
+- Live API credentials and upstream inference were not testable in this build environment. Tests use simulated model-list and inference endpoints; verify the deployment with `.aimodels refresh` and a real message after installation.
+- The default inference identity remains Nexora-2.0-Flash regardless of the upstream provider/model selected.
 
 ## Quoted AI reply chains and command-session priority (v1.7.0)
 
