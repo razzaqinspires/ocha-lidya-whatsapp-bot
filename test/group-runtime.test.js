@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-test('group metadata bootstraps once, tracks participants by event, and never deletes contacts when group is removed', async () => {
+test('group metadata hydrates participating groups, tracks participants by event, and never deletes contacts when group is removed', async () => {
   const original = process.cwd();
   const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'ocha-group-runtime-test-'));
   process.chdir(temp);
@@ -94,3 +94,4 @@ test('group metadata bootstraps once, tracks participants by event, and never de
     await fs.rm(temp, { recursive: true, force: true });
   }
 });
+

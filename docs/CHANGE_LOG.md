@@ -1,3 +1,11 @@
+## [1.10.15] - 2026-11-21
+
+- Changed group activation to an in-context owner control: the verified owner sends `.mute off` inside the target group; `.mute on` mutes that same group.
+- Added a narrow muted-group dispatch exception for verified owner `.mute` commands only. All other commands and AI interactions remain suppressed while muted. Non-owner `.mute` messages are silently ignored.
+- Added schema v26 migration that restores the safe global MUTE default and clears prior per-group activation overrides, requiring deliberate owner activation in each group. Bulk activation is disabled; `.mute on all` remains an emergency mute.
+- Changed participating-group hydration into a reconciled inventory refresh on connection startup, throttled to five minutes; detects groups joined while offline and removes stale groups no longer joined.
+- Updated `.joingc` guidance and group-control documentation.
+
 ## [1.10.14] - 2026-11-21
 
 ### Added

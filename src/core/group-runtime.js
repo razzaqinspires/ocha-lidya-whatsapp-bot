@@ -6,7 +6,6 @@ import {
   getGroupMetadata,
   hasGroupMetadata,
   listGroupMetadata,
-  isGroupBootstrapComplete,
   markGroupBootstrapComplete,
   upsertGroupMetadata,
   updateGroupMetadata
@@ -18,6 +17,8 @@ const fetchInFlight = new Map();
 const lastFetchAttempt = new Map();
 let initialHydrationStarted = false;
 let initialHydrationPromise = null;
+let lastSuccessfulHydrationAt = 0;
+const PARTICIPATING_GROUP_SYNC_COOLDOWN_MS = 5 * 60_000;
 
 function cleanJid(value) {
   return typeof value === 'string' ? value.replace(/:\d+(?=@)/, '') : '';
@@ -137,11 +138,19 @@ export async function ensureGroupMetadata(sock, groupId, { force = false } = {})
   return request;
 }
 
-/** One batched participating-groups query on a fresh cache; not repeated on reconnect/restart once populated. */
-export async function hydrateParticipatingGroupsOnce(sock) {
-  if (!getConfig().groupMetadata?.initialSync || isGroupBootstrapComplete()) return;
+/**
+ * Reconcile the local group inventory against WhatsApp's current membership.
+ * Called on every connection open, with a cooldown to avoid redundant fetches.
+ * This discovers groups joined while the bot was offline and removes stale
+ * entries for groups the bot no longer belongs to.
+ */
+export async function hydrateParticipatingGroupsOnce(sock, { force = false } = {}) {
+  if (!getConfig().groupMetadata?.initialSync) return;
   if (initialHydrationPromise) return initialHydrationPromise;
   if (initialHydrationStarted) return;
+  if (!force && lastSuccessfulHydrationAt && Date.now() - lastSuccessfulHydrationAt < PARTICIPATING_GROUP_SYNC_COOLDOWN_MS) {
+    return { skipped: true, reason: 'cooldown', groups: listGroupMetadata().length };
+  }
   initialHydrationStarted = true;
   if (typeof sock.groupFetchAllParticipating !== 'function') {
     initialHydrationStarted = false;
@@ -156,23 +165,43 @@ export async function hydrateParticipatingGroupsOnce(sock) {
       const entries = Array.isArray(result)
         ? result.map(group => [group?.id, group])
         : Object.entries(result || {});
+      const cachedBeforeSync = listGroupMetadata();
+      // A successful but unexpectedly empty response must not erase a known
+      // inventory; treat it as inconclusive rather than as proof of zero groups.
+      if (entries.length === 0 && cachedBeforeSync.length > 0) {
+        logger.warn({ cachedGroups: cachedBeforeSync.length }, 'Participating group snapshot was unexpectedly empty; retaining the last known inventory');
+        return { skipped: true, reason: 'empty-snapshot-retained', groups: cachedBeforeSync.length };
+      }
       let saved = 0;
+      const participatingIds = new Set();
       for (const [jid, metadata] of entries) {
         if (!metadata || typeof metadata !== 'object') continue;
         const id = metadata.id || jid;
         if (!String(id || '').endsWith('@g.us')) continue;
+        participatingIds.add(id);
         const enriched = await enrichGroupMetadata(sock, { ...metadata, id });
         const group = await upsertGroupMetadata(enriched);
         if (group) saved += 1;
       }
+      let removed = 0;
+      for (const cached of listGroupMetadata()) {
+        if (participatingIds.has(cached.id)) continue;
+        const deleted = await deleteGroupMetadata(cached.id, 'not-present-in-current-participating-groups-snapshot');
+        if (deleted) {
+          await clearGroupMuteOverride(cached.id, { reason: `reconciled group membership: bot no longer participates in ${cached.id}` });
+          removed += 1;
+        }
+      }
       await markGroupBootstrapComplete();
-      logger.info({ fetched: entries.length, saved, groups: listGroupMetadata().length }, 'Initial group metadata batch hydration completed and checkpointed');
-      return { saved, groups: listGroupMetadata().length };
+      lastSuccessfulHydrationAt = Date.now();
+      logger.info({ fetched: entries.length, saved, removed, groups: listGroupMetadata().length }, 'Participating group inventory reconciled and checkpointed');
+      return { saved, removed, groups: listGroupMetadata().length };
     } catch (error) {
       initialHydrationStarted = false;
-      logger.warn({ err: error }, 'Initial group metadata batch hydration failed; one-time lazy fetch remains enabled');
+      logger.warn({ err: error }, 'Participating group inventory refresh failed; cached inventory retained for the next retry');
       throw error;
     } finally {
+      initialHydrationStarted = false;
       initialHydrationPromise = null;
     }
   })();

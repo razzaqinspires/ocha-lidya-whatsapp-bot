@@ -16,7 +16,7 @@ test('config facade replays persistent config.replace events from JSONL', async 
     await first.loadConfig();
     assert.equal(first.getConfig().whatsapp.authMode, 'pairing');
     assert.equal(first.getConfig().whatsapp.browserName, 'Chrome');
-    assert.equal(first.getConfig().schemaVersion, 25);
+    assert.equal(first.getConfig().schemaVersion, 26);
     assert.equal(first.getConfig().whatsapp.recoverInvalidSession, true);
     assert.equal(first.getConfig().logging.level, 'info');
     assert.equal(first.getConfig().logging.color, 'auto');
@@ -91,7 +91,7 @@ test('legacy config migrates to canonical browser, session recovery, logger, UI,
     assert.equal(result.status, 0, result.stderr || result.stdout);
     const resultLine = result.stdout.split(/\r?\n/).find(line => line.startsWith('MIGRATION_RESULT:'));
     assert.ok(resultLine, result.stdout);
-    assert.deepEqual(JSON.parse(resultLine.slice('MIGRATION_RESULT:'.length)), { schemaVersion: 25, browserName: 'Chrome' });
+    assert.deepEqual(JSON.parse(resultLine.slice('MIGRATION_RESULT:'.length)), { schemaVersion: 26, browserName: 'Chrome' });
   } finally {
     await fs.rm(temp, { recursive: true, force: true });
   }
@@ -113,7 +113,7 @@ test('schema v22 preserves a custom multi-provider priority order', async () => 
     assert.equal(result.status, 0, result.stderr || result.stdout);
     const line = result.stdout.split(/\r?\n/).find(value => value.startsWith('ORDER_RESULT:'));
     assert.ok(line, result.stdout);
-    assert.deepEqual(JSON.parse(line.slice('ORDER_RESULT:'.length)), { schemaVersion: 25, order: ['deepseek', 'gemini'] });
+    assert.deepEqual(JSON.parse(line.slice('ORDER_RESULT:'.length)), { schemaVersion: 26, order: ['deepseek', 'gemini'] });
   } finally { await fs.rm(temp, { recursive: true, force: true }); }
 });
 
@@ -141,7 +141,7 @@ test('schema v9 migration removes Qwen and legacy maxKeyAttempts', async () => {
     const line = result.stdout.split(/\r?\n/).find(value => value.startsWith('V10_RESULT:'));
     assert.ok(line, result.stdout);
     const output = JSON.parse(line.slice('V10_RESULT:'.length));
-    assert.equal(output.schemaVersion, 25);
+    assert.equal(output.schemaVersion, 26);
     assert.deepEqual(output.ai.providerOrder, ['groq', 'gemini', 'deepseek', 'openai']);
     assert.equal(output.ai.models.qwen, undefined);
     assert.equal(output.ai.maxKeyAttempts, undefined);
@@ -173,7 +173,7 @@ test('schema v11 applies AI Boost only to shipped defaults and preserves owner c
     const line = result.stdout.split(/\r?\n/).find(value => value.startsWith('BOOST_MIGRATION:'));
     assert.ok(line, result.stdout);
     assert.deepEqual(JSON.parse(line.slice('BOOST_MIGRATION:'.length)), {
-      schemaVersion: 25, timeoutMs: 3500, totalBudgetMs: 14000, maxOutputTokens: 180,
+      schemaVersion: 26, timeoutMs: 3500, totalBudgetMs: 14000, maxOutputTokens: 180,
       historyMessages: 3, coalesceMs: 80, groqModel: 'owner-custom-model'
     });
   } finally {
@@ -205,14 +205,14 @@ test('v1.8.0 worker concurrency values migrate to the new low-memory maximum', a
     assert.equal(result.status, 0, result.stderr || result.stdout);
     const line = result.stdout.split(/\r?\n/).find(value => value.startsWith('V181_RESULT:'));
     assert.ok(line, result.stdout);
-    assert.deepEqual(JSON.parse(line.slice('V181_RESULT:'.length)), { schemaVersion: 25, maxConcurrent: 4 });
+    assert.deepEqual(JSON.parse(line.slice('V181_RESULT:'.length)), { schemaVersion: 26, maxConcurrent: 4 });
   } finally {
     await fs.rm(temp, { recursive: true, force: true });
   }
 });
 
 
-test('schema v25 adds clean per-group mute state without changing the global mute default', async () => {
+test('schema v26 resets every group to safe MUTE until owner activates it in that group', async () => {
   const original = process.cwd();
   const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'ocha-config-v25-group-mute-'));
   try {
@@ -221,9 +221,9 @@ test('schema v25 adds clean per-group mute state without changing the global mut
     const source = `
       const db = await import(${JSON.stringify(databaseUrl)}); await db.initializeDatabase();
       await db.appendRecord('config.replace', { config: {
-        schemaVersion: 24,
+        schemaVersion: 25,
         features: {
-          groupsMuted: true,
+          groupsMuted: false,
           groupMuteOverrides: { '120363123456789012-1234567890@g.us': false, 'not-a-group': false },
           lastJoinedGroupId: '120363123456789012-1234567890@g.us'
         }
@@ -236,9 +236,9 @@ test('schema v25 adds clean per-group mute state without changing the global mut
     const line = result.stdout.split(/\r?\n/).find(value => value.startsWith('GROUP_MUTE_MIGRATION:'));
     assert.ok(line, result.stdout);
     const output = JSON.parse(line.slice('GROUP_MUTE_MIGRATION:'.length));
-    assert.equal(output.schemaVersion, 25);
-    assert.equal(output.features.groupsMuted, true);
-    assert.deepEqual(output.features.groupMuteOverrides, { '120363123456789012-1234567890@g.us': false });
-    assert.equal(output.features.lastJoinedGroupId, '120363123456789012-1234567890@g.us');
+    assert.equal(output.schemaVersion, 26);
+    assert.equal(output.features.groupsMuted, true, 'schema v26 restores global MUTE even if previous config was active');
+    assert.deepEqual(output.features.groupMuteOverrides, {}, 'previous active exceptions are cleared so every group requires in-context owner activation');
+    assert.equal(output.features.lastJoinedGroupId, '');
   } finally { await fs.rm(temp, { recursive: true, force: true }); }
 });

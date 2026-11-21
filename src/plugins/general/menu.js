@@ -33,7 +33,7 @@ export default {
       `${prefix}buttons on/off · mode tombol`,
       `${prefix}master status · status console runner`,
       `${prefix}joingc <url> · bot bergabung ke grup (owner)`,
-      `${prefix}mute on/off/status [all|group-id] · mute global/per grup (owner)`,
+      `${prefix}mute on/off/status · atur grup ini langsung dari dalam grup (owner)`,
       `${prefix}nexora status · panel kontrol Nexora global (owner)`,
       `${prefix}nexora all on/off · aktif/nonaktifkan semua fitur Nexora (owner)`,
       '',

@@ -5,7 +5,7 @@ import { runMasterCommand, isMasterSyntax } from '../master/dispatcher.js';
 import { getConfig } from './config.js';
 import { logger } from './logger.js';
 import { getPrefixes } from './prefix.js';
-import { shouldSuppressGroupInteraction } from './group-policy.js';
+import { shouldSuppressGroupInteraction, isOwnerMuteControlMessage } from './group-policy.js';
 import { answerMessage, isAITrigger } from '../ai/engine.js';
 import { dispatchReplySession } from './reply-sessions.js';
 import { isVerifiedOwnerMessage } from './identity.js';
@@ -15,16 +15,20 @@ export async function dispatch(sock, message) {
   const ownerVerified = isVerifiedOwnerMessage(message, config.bot.owner);
   message.isOwner = ownerVerified;
   if (message.fromMe && !ownerVerified) return;
-  // Global group mute suppresses every group command and AI response.
-  // Contact and group metadata ingestion runs before dispatch in index.js.
-  if (shouldSuppressGroupInteraction(message, config)) return;
+  const body = String(message.body || '').trim();
+  const parsed = parseCommand(body);
+  const isOwnerMuteControl = isOwnerMuteControlMessage(message, ownerVerified);
+
+  // Muted groups have one narrow control-channel exception: verified owner
+  // may issue .mute on/off/status in that same group. No other command, AI
+  // trigger, or non-owner message is allowed through the gate.
+  if (shouldSuppressGroupInteraction(message, config) && !isOwnerMuteControl) return;
 
   // Priority lane 1: replies to an active command screen (e.g. `.groupinfo`
   // followed by `1`). It must consume the message before command parsing or AI.
   const sessionResult = await dispatchReplySession(sock, message);
   if (sessionResult.matched) return;
 
-  const body = String(message.body || '').trim();
   if (!body) return;
   if (isMasterSyntax(body)) {
     if (!ownerVerified) return;
@@ -33,12 +37,14 @@ export async function dispatch(sock, message) {
   }
   const prefixes = getPrefixes();
   const hasPrefix = prefixes.some(prefix => body.startsWith(prefix));
-  const parsed = parseCommand(body);
   const plugin = parsed ? getPlugin(parsed.command) : null;
 
   if (plugin) {
     const auth = authorize(message, plugin);
     if (!auth.ok) {
+      // Mute control is intentionally silent for non-owners, including in
+      // active groups, so ordinary members cannot probe owner-only controls.
+      if (['mute', 'groupmute'].includes(plugin.name) && auth.reason === 'owner') return;
       if (auth.reason === 'group') return message.reply('Perintah ini hanya dapat digunakan di dalam grup.');
       if (auth.reason === 'private') return message.reply('Perintah ini hanya dapat digunakan di chat pribadi.');
       if (auth.reason === 'owner') return message.reply('Perintah ini khusus owner.');

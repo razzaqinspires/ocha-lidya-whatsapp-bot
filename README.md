@@ -2,9 +2,9 @@
 
 Ocha Lidya is a modular WhatsApp automation framework built with native Node.js ESM and `@whiskeysockets/baileys`. The project separates WhatsApp transport, message serialization, command dispatch, plugin execution, persistent configuration, and durable JSONL storage.
 
-## Owner group management and per-group interaction controls (v1.10.14)
+## Owner group management and in-group mute activation (v1.10.15)
 
-Owner-only `.joingc <https://chat.whatsapp.com/INVITE_CODE>` joins a WhatsApp group using the official invite code endpoint after strict host/URL validation. A newly joined group is recorded as muted by default. From the owner private chat, `.mute off` enables only the most recently joined group; `.mute on` mutes that same group again. Use `.mute off <GROUP_JID>` or `.mute on <GROUP_JID>` to target any cached group, and `.mute off all` / `.mute on all` to control all groups. `.groupinfo` now displays the bot interaction state for every cached group. Group membership and mute state do not disable metadata or contact synchronization. See `docs/GROUP_MUTE_AND_MESSAGE_FLOW.md`.
+Owner-only `.joingc <https://chat.whatsapp.com/INVITE_CODE>` joins a WhatsApp group using strict official invite URL validation. Every group starts MUTE. The verified owner activates a specific group by sending `.mute off` inside that group, and mutes it again with `.mute on`. Non-owner `.mute` messages are silently ignored. Private owner chat supports `.mute on all` as an emergency global mute; bulk activation is disabled. `.groupinfo` lists automatically detected participating groups and their active/mute state. Group membership and mute state do not disable metadata or contact synchronization. See `docs/GROUP_MUTE_AND_MESSAGE_FLOW.md`.
 
 ## Autonomous runtime, transactional hot reload, and persistent per-user Website Builder (v1.10.13)
 
@@ -255,7 +255,7 @@ Default settings are declared in `src/config.js`; runtime changes are persisted 
 | `security.masterGolangEnabled` | `false` | Go runner (`>>>`) switch |
 | `features.groupsMuted` | `true` | Global default for group command/AI mute; metadata/contact ingestion stays active |
 | `features.groupMuteOverrides` | `{}` | Per-group interaction state keyed by WhatsApp Group JID |
-| `features.lastJoinedGroupId` | `''` | Last group joined through owner `.joingc`; target for `.mute on/off` |
+| `features.lastJoinedGroupId` | `''` | Retained compatibility field; no longer used to guess a target for `.mute` |
 | `database.segmentMaxBytes` | 8 MiB | Journal archive threshold |
 | `database.archiveMaxCount` | 120 | Maximum retained ZIP archives |
 | `database.mirrorEnabled` | `true` | Maintain local replica |
@@ -323,10 +323,10 @@ Default multi-prefix values are `.`, `!`, `/`, and `#`.
 | `.master python on/off` | — | Enable/disable Python runner |
 | `.master golang on/off` | — | Enable/disable Go runner |
 | `.joingc <url>` | `.joingroup` | Owner-only private command; joins a group using an official WhatsApp invite link and starts it muted |
-| `.mute on/off/status [all|GROUP_JID]` | `.groupmute` | Owner-only private control for global mute or one group's interaction state; metadata/contact indexing remains active |
+| `.mute on/off/status` | `.groupmute` | Owner-only in-group control for the current group; private `.mute on all` is an emergency global mute |
 | `.test <type> <options>` | `.testmsg`, `.messagetest` | Owner-only Baileys message lab: native-flow, hydrated template, event/date, poll, PTV, view-once, AI rich, and carousel |
 
-All owner plugins use `ownerOnly: true`. The private group inventory from `.groupinfo` is limited to the verified owner; users in a group can still inspect that current group's cached metadata. `.joingc` is private-chat-only and accepts only a direct HTTPS invitation link hosted at `chat.whatsapp.com`; it verifies invite metadata when the Baileys socket supports it before joining. Newly joined groups start muted. `.mute off` in the owner's private chat targets the last group joined through `.joingc`, while `.mute on/off all` retains explicit global control. `.groupinfo` is intentionally available in private chat: it lists only the local cached group index, displays active/mute state, and does not request fresh metadata for already-cached groups.
+All owner plugins use `ownerOnly: true`. The private group inventory from `.groupinfo` is limited to the verified owner; users in a group can still inspect that current group's cached metadata. `.joingc` is private-chat-only and accepts only a direct HTTPS invitation link hosted at `chat.whatsapp.com`; it verifies invite metadata when the Baileys socket supports it before joining. Newly joined groups start muted. To activate a group, the verified owner must send `.mute off` inside that group; `.mute on` mutes it again. Non-owner mute messages are silently ignored. Private owner chat supports `.mute on all` as an emergency mute; `.mute off all` and bulk activation are disabled. `.groupinfo` lists the local participating-group inventory, refreshed on connection startup and throttled to one full sync per five minutes.
 
 ### Prefix examples
 
@@ -362,7 +362,7 @@ Master syntax is reserved outside the normal prefix parser and is owner-only:
 | `>> <Python>` | Python |
 | `>>> <Go>` | Go |
 
-All developer runners are disabled by default. Each runner is independent: `.master eval on` enables `>`/`=>`, `.master cli on` immediately enables `$`, `.master python on` enables `>>`, and `.master golang on` enables `>>>`. `.master exec on/off` remains only as a temporary legacy alias for `.master cli on/off`; it is not a separate global gate. Group interaction is muted by default. After `.joingc <url>`, use `.mute off` in the owner private chat to enable only the most recently joined group; `.mute on` mutes that group again. Use `.mute off all` / `.mute on all` for explicit global control, or append a Group JID to target one group. These settings are persistent database settings, not environment variables.
+All developer runners are disabled by default. Each runner is independent: `.master eval on` enables `>`/`=>`, `.master cli on` immediately enables `$`, `.master python on` enables `>>`, and `.master golang on` enables `>>>`. `.master exec on/off` remains only as a temporary legacy alias for `.master cli on/off`; it is not a separate global gate. Group interaction is muted by default. After `.joingc <url>`, the owner must send `.mute off` inside the target group; `.mute on` there mutes it again. Non-owner mute commands are ignored. `.mute on all` in private owner chat is an emergency mute; bulk activation is disabled. Group settings are persistent database settings, not environment variables.
 
 **Security warning:** Node.js `vm` is not a security boundary. Shell, Python, and Go commands can affect the host. Do not enable them on a production host containing secrets or user data. Use a dedicated unprivileged container/VM, read-only mounts, no host secrets, CPU/memory/PID limits, and restricted networking. The bot should never run as root.
 
@@ -530,7 +530,7 @@ ocha-lidya-bot/
 
 ## 18. Version and change history
 
-Current package version: **1.10.14** (configuration schema v25).
+Current package version: **1.10.15** (configuration schema v26).
 
 See [`docs/CHANGE_LOG.md`](docs/CHANGE_LOG.md) for release history and [`docs/DATABASE_DESIGN.md`](docs/DATABASE_DESIGN.md) for persistence internals.
 
@@ -570,7 +570,7 @@ Command responses use the serializer's ordinary text transport by default. This 
 
 Master runners are independent in schema v11. `$` is controlled directly by `.master cli on/off`; JavaScript eval (`>` and `=>`), Python (`>>`), and Go (`>>>`) each have their own independent switches. There is no longer a global `exec` gate. `.master exec on/off` is only a temporary compatibility alias for `.master cli on/off`; use `cli` in new commands and documentation. `.master status` displays the owner-only console control panel. See [`docs/MASTER_CONSOLE.md`](docs/MASTER_CONSOLE.md).
 
-Group interaction defaults to mute through `features.groupsMuted: true`, with per-group overrides in `features.groupMuteOverrides`. `.joingc <url>` is owner-only and joins a WhatsApp group from a direct official invite link; the new group starts muted. `.mute off` then enables only that last joined group, while `.mute on/off all` controls every group. `.groupinfo` displays all cached groups with their active/mute state. Group metadata and verified contact indexing remain active while interactions are muted. See [`docs/GROUP_MUTE_AND_MESSAGE_FLOW.md`](docs/GROUP_MUTE_AND_MESSAGE_FLOW.md).
+Group interaction defaults to mute through `features.groupsMuted: true`, with per-group overrides in `features.groupMuteOverrides`. `.joingc <url>` is owner-only and joins a WhatsApp group from a direct official invite link; the new group starts muted. The verified owner enables a group by sending `.mute off` inside that group. `.mute on` in that group mutes it again. Non-owner `.mute` commands are silently ignored. `.mute on all` is an emergency global mute; bulk activation with `.mute off all` is intentionally disabled. `.groupinfo` displays all cached groups with their active/mute state. Group metadata and verified contact indexing remain active while interactions are muted. See [`docs/GROUP_MUTE_AND_MESSAGE_FLOW.md`](docs/GROUP_MUTE_AND_MESSAGE_FLOW.md).
 
 The message-flow monitor labels private/group destinations and consumes Baileys `messages.update` and `message-receipt.update` events. Its local terminal legend is `✓ SENT`, `✓✓ DELIVERED`, `✓✓ READ`, `✓✓ PLAYED`, and a separately colored `BOT REPLIED` marker. It does not modify WhatsApp's own tick UI or create a third WhatsApp checkmark. The monitor stores only bounded metadata, not message bodies.
 

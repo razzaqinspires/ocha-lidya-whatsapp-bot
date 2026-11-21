@@ -109,7 +109,7 @@ export default {
       `Nama: ${title}`,
       `Group ID: ${joinedId}`,
       'Status interaksi: MUTE (default aman)',
-      'Untuk mengaktifkan bot hanya di grup ini, kirim `.mute off` di chat pribadi owner.',
+      'Untuk mengaktifkan bot hanya di grup ini, owner harus mengirim `.mute off` langsung di grup tersebut.',
       'Periksa daftar dan status grup melalui `.groupinfo`.'
     ].join('\n'));
   }

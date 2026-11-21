@@ -7,7 +7,7 @@ import { pathToFileURL } from 'node:url';
 
 const groupId = '120363123456789012-1234567890@g.us';
 
-test('owner .joingc joins only official invite links, starts muted, and .mute off enables only that group', async () => {
+test('owner .joingc joins muted; owner .mute off inside the target group activates only that group', async () => {
   const original = process.cwd();
   const temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'ocha-owner-joingc-'));
   process.chdir(temporary);
@@ -27,7 +27,7 @@ test('owner .joingc joins only official invite links, starts muted, and .mute of
     assert.equal(joingc.ownerOnly, true);
     assert.equal(joingc.privateOnly, true);
     assert.equal(mute.ownerOnly, true);
-    assert.equal(mute.privateOnly, true);
+    assert.equal(mute.privateOnly, undefined);
 
     const preview = { id: groupId, subject: 'Ocha Community', creation: 1700000000, desc: 'Test group' };
     let acceptedCode = '';
@@ -41,12 +41,13 @@ test('owner .joingc joins only official invite links, starts muted, and .mute of
 
     await joingc.execute({ sock, m, args: ['https://chat.whatsapp.com/AbCdEfGhIjKlMnOpQrStUv'] , text: 'https://chat.whatsapp.com/AbCdEfGhIjKlMnOpQrStUv' });
     assert.equal(acceptedCode, 'AbCdEfGhIjKlMnOpQrStUv');
-    assert.equal(config.getConfig().features.lastJoinedGroupId, groupId);
+    assert.equal(config.getConfig().features.lastJoinedGroupId, '');
     assert.equal(control.getGroupInteractionState(groupId).muted, true, 'newly joined group is muted by default');
     assert.ok(groupMetadata.getGroupMetadata(groupId));
     assert.match(replies.at(-1), /BERHASIL BERGABUNG KE GRUP/);
+    assert.ok(replies.at(-1).includes('owner harus mengirim `.mute off` langsung di grup tersebut'));
 
-    await mute.execute({ m, args: ['off'] });
+    await mute.execute({ m: { ...m, isGroup: true, chat: groupId }, args: ['off'] });
     assert.equal(config.getConfig().features.groupsMuted, true, 'global default remains unchanged');
     assert.equal(control.getGroupInteractionState(groupId).muted, false);
     assert.equal(policy.shouldSuppressGroupInteraction({ isGroup: true, chat: groupId }, config.getConfig()), false);
@@ -68,9 +69,9 @@ test('owner .joingc joins only official invite links, starts muted, and .mute of
     assert.match(groupList, /Ocha Community.*AKTIF/);
     const otherGroup = '120363999999999999-9876543210@g.us';
     assert.equal(policy.shouldSuppressGroupInteraction({ isGroup: true, chat: otherGroup }, config.getConfig()), true, 'other groups stay muted');
-    assert.match(replies.at(-1), /Ocha aktif di grup ini/);
+    assert.match(replies.at(-1), /Ocha sekarang aktif/);
 
-    await mute.execute({ m, args: ['on'] });
+    await mute.execute({ m: { ...m, isGroup: true, chat: groupId }, args: ['on'] });
     assert.equal(control.getGroupInteractionState(groupId).muted, true);
     await groupInfo.execute({
       sock,
@@ -89,9 +90,12 @@ test('owner .joingc joins only official invite links, starts muted, and .mute of
     assert.match(nonOwnerGroupDetail, /Ocha Community/, 'non-owner sees only the current group even if another Group JID is supplied');
     assert.doesNotMatch(nonOwnerGroupDetail, /Private Elsewhere/);
     await mute.execute({ m, args: ['off', 'all'] });
-    assert.equal(config.getConfig().features.groupsMuted, false);
+    assert.equal(config.getConfig().features.groupsMuted, true, 'bulk activation is rejected');
+    assert.equal(control.getGroupInteractionState(groupId).muted, true, 'group remains muted after bulk activation rejection');
+    await mute.execute({ m, args: ['on', 'all'] });
+    assert.equal(config.getConfig().features.groupsMuted, true);
     assert.deepEqual(config.getConfig().features.groupMuteOverrides, {});
-    assert.equal(policy.shouldSuppressGroupInteraction({ isGroup: true, chat: otherGroup }, config.getConfig()), false);
+    assert.equal(policy.shouldSuppressGroupInteraction({ isGroup: true, chat: otherGroup }, config.getConfig()), true);
   } finally {
     process.chdir(original);
     await fs.rm(temporary, { recursive: true, force: true });

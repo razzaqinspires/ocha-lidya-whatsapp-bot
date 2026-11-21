@@ -6,7 +6,7 @@
 import { initializeDatabase, appendRecord, getRecords, getLatestConfigRecord, configureDatabase } from './core/database.js';
 
 const DEFAULTS = Object.freeze({
-  schemaVersion: 25,
+  schemaVersion: 26,
   bot: { name: 'Ocha Lidya', aliases: ['Ocha', 'Lidya'], owner: '6283193905842', ownerName: 'Arifi Razzaq', creatorName: 'Arifi Razzaq', organization: 'Razzaq Ventures', publicCreatorDisclosure: true, expectedNumber: '6282177461231' },
   whatsapp: { authMode: 'pairing', pairingNumber: '6282177461231', browserName: 'Chrome', sessionDir: 'sessions/ocha-lidya', recoverInvalidSession: true, connectTimeoutMs: 60000, queryTimeoutMs: 60000, keepAliveIntervalMs: 25000 },
   logging: { level: 'info', color: 'auto', timeZone: 'Asia/Jakarta' },
@@ -295,6 +295,17 @@ export async function loadConfig() {
       activeConfig.features.lastJoinedGroupId = '';
     }
     await appendRecord('config.replace', { config: activeConfig, changedBy: 'system:migration', reason: 'v1.10.14 owner group join command and per-group mute state' });
+  }
+  // v1.10.15 schema v26: all existing groups start muted; owner enables
+  // each group in-place with .mute off. The previous last-joined shortcut is
+  // intentionally retired to avoid changing the wrong group from private chat.
+  if (activeConfig.schemaVersion < 26) {
+    activeConfig.schemaVersion = 26;
+    activeConfig.features = { ...DEFAULTS.features, ...(activeConfig.features || {}) };
+    activeConfig.features.groupsMuted = true;
+    activeConfig.features.groupMuteOverrides = {};
+    activeConfig.features.lastJoinedGroupId = '';
+    await appendRecord('config.replace', { config: activeConfig, changedBy: 'system:migration', reason: 'v1.10.15 safe per-group activation: all groups muted until owner enables in target group' });
   }
   activeConfig.security = { ...DEFAULTS.security, ...(activeConfig.security || {}) };
   delete activeConfig.security.masterExecEnabled;

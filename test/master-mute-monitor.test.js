@@ -44,11 +44,11 @@ test('master CLI is independent and legacy exec is only a CLI alias', async () =
 
     const mutePlugin = (await import(pathToFileURL(path.resolve(original, 'src/plugins/owner/mute.js')).href)).default;
     assert.equal(mutePlugin.ownerOnly, true);
-    assert.equal(mutePlugin.privateOnly, true);
-    await mutePlugin.execute({ m, args: ['off'] });
-    assert.equal(config.getConfig().features.groupsMuted, false);
-    assert.match(replies.at(-1), /GROUP MUTE: OFF/);
-    await mutePlugin.execute({ m, args: ['on'] });
+    assert.equal(mutePlugin.privateOnly, undefined);
+    await mutePlugin.execute({ m, args: ['off', 'all'] });
+    assert.equal(config.getConfig().features.groupsMuted, true, 'bulk activation is disabled by the safe per-group policy');
+    assert.match(replies.at(-1), /harus mengirim/i);
+    await mutePlugin.execute({ m, args: ['on', 'all'] });
     assert.equal(config.getConfig().features.groupsMuted, true);
   });
 });
@@ -76,17 +76,21 @@ test('schema v11 defaults all group interaction to muted and removes the global 
     const line = result.stdout.split(/\r?\n/).find(value => value.startsWith('MIGRATED:'));
     assert.ok(line, result.stdout);
     const migrated = JSON.parse(line.slice('MIGRATED:'.length));
-    assert.deepEqual(migrated, { schemaVersion: 25, groupsMuted: true, masterCliEnabled: true });
+    assert.deepEqual(migrated, { schemaVersion: 26, groupsMuted: true, masterCliEnabled: true });
     assert.equal(migrated.masterExecEnabled, undefined);
   });
 });
 
-test('global group mute suppresses interaction dispatch without applying to private chats', async () => {
+test('global group mute suppresses interaction while verified owner mute control is the only group exception', async () => {
   const policyUrl = pathToFileURL(path.resolve(process.cwd(), 'src/core/group-policy.js')).href;
   const policy = await import(policyUrl);
   assert.equal(policy.shouldSuppressGroupInteraction({ isGroup: true }, { features: { groupsMuted: true } }), true);
   assert.equal(policy.shouldSuppressGroupInteraction({ isGroup: false }, { features: { groupsMuted: true } }), false);
   assert.equal(policy.shouldSuppressGroupInteraction({ isGroup: true }, { features: { groupsMuted: false } }), false);
+  assert.equal(policy.isOwnerMuteControlMessage({ isGroup: true, body: '.mute off' }, true), true);
+  assert.equal(policy.isOwnerMuteControlMessage({ isGroup: true, body: '.mute off' }, false), false, 'non-owner mute command cannot bypass the muted-group gate');
+  assert.equal(policy.isOwnerMuteControlMessage({ isGroup: true, body: '.menu' }, true), false, 'owner cannot bypass mute gate with unrelated commands');
+  assert.equal(policy.isOwnerMuteControlMessage({ isGroup: false, body: '.mute off' }, true), false, 'private command does not use group exception');
 });
 
 test('message monitor aggregates private/group reply and receipt states', async () => {

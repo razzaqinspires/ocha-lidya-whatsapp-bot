@@ -39,7 +39,9 @@ export async function rememberJoinedGroup(groupId, metadata = {}) {
     config.features.groupMuteOverrides ||= {};
     // New groups are deliberately muted until the owner explicitly enables them.
     config.features.groupMuteOverrides[groupId] = true;
-    config.features.lastJoinedGroupId = groupId;
+    // Keep the legacy field empty: activation target is always the current
+    // group context, never inferred from the last invite operation.
+    config.features.lastJoinedGroupId = '';
   }, { actor: metadata.actor || 'system', reason: metadata.reason || `remember joined group ${groupId}; default muted` });
   return getGroupInteractionState(groupId);
 }
