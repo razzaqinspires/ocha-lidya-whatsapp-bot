@@ -47,11 +47,41 @@ test('daily XP cap prevents farming while interaction count remains accurate', a
   assert.equal(profile.level, 2);
 });
 
+
+test('daily streak increments on consecutive Jakarta dates and resets after a gap', async () => {
+  let profile = await profiles.recordUserInteraction({
+    userId: 'streak-user@s.whatsapp.net', displayName: 'Streak User', messageId: 'streak-1', text: 'Halo',
+    now: new Date('2026-11-20T04:00:00Z')
+  });
+  assert.equal(profile.currentStreak, 1);
+  profile = await profiles.recordUserInteraction({
+    userId: 'streak-user@s.whatsapp.net', displayName: 'Streak User', messageId: 'streak-2', text: 'Halo lagi',
+    now: new Date('2026-11-21T04:00:00Z')
+  });
+  assert.equal(profile.currentStreak, 2);
+  assert.equal(profile.longestStreak, 2);
+  profile = await profiles.recordUserInteraction({
+    userId: 'streak-user@s.whatsapp.net', displayName: 'Streak User', messageId: 'streak-3', text: 'Masih hari ini',
+    now: new Date('2026-11-21T07:00:00Z')
+  });
+  assert.equal(profile.currentStreak, 2, 'more than one interaction on the same day does not increase streak');
+  profile = await profiles.recordUserInteraction({
+    userId: 'streak-user@s.whatsapp.net', displayName: 'Streak User', messageId: 'streak-4', text: 'Kembali setelah jeda',
+    now: new Date('2026-11-23T04:00:00Z')
+  });
+  assert.equal(profile.currentStreak, 1);
+  assert.equal(profile.longestStreak, 2);
+  assert.ok(profile.achievements.includes('FIRST CONTACT'));
+  assert.equal(profile.dailyXpCap, 100);
+});
+
 test('profile card SVG escapes user-controlled names and contains progress data', () => {
   const svg = card.buildProfileSvg({ displayName: '<script>alert(1)</script>', role: 'Kenalan', rank: 'Iron', level: 1, xp: 15, progressPercent: 15, xpRemaining: 85, totalInteractions: 1, activeDays: 1 }, { productName: 'Ocha Lidya', organization: 'Razzaq Ventures' });
   assert.equal(svg.includes('<script>'), false);
   assert.match(svg, /&lt;script&gt;/);
   assert.match(svg, /15 XP/);
+  assert.match(svg, /CURRENT STREAK/);
+  assert.match(svg, /BEST STREAK/);
 });
 
 test.after(async () => { process.chdir(original); await fs.rm(temp, { recursive: true, force: true }); });

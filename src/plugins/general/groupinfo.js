@@ -79,6 +79,7 @@ async function sendGroupPage(sock, m, groups, requestedPage = 1) {
 }
 
 export default {
+  usage: '[group-id]',
   name: 'groupinfo', aliases: ['gcinfo', 'grouplist'], category: 'general',
   description: 'Informasi grup dari cache JSONL dengan navigasi melalui reply angka',
   async execute({ sock, m, args }) {

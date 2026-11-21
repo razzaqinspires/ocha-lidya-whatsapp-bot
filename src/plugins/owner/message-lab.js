@@ -343,7 +343,7 @@ async function runTest(sock, m, type, args) {
 }
 
 export default {
-  name: 'test', aliases: ['testmsg', 'messagetest'], category: 'owner', ownerOnly: true,
+  name: 'test', aliases: ['testmsg', 'messagetest'], category: 'owner', ownerOnly: true, usage: '<type> [args]',
   description: 'Laboratorium uji serializer dan format pesan Baileys',
   async execute({ sock, m, args }) {
     const [type = 'help', ...options] = args;

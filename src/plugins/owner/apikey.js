@@ -1,7 +1,7 @@
 import { triggerModelCatalogRefresh } from '../../ai/model-catalog.js';
 import { manageApiKeys, providerNames } from '../../ai/providers.js';
 export default {
-  name: 'apikey', aliases: ['keys', 'keymanager'], category: 'owner', ownerOnly: true,
+  name: 'apikey', aliases: ['keys', 'keymanager'], category: 'owner', ownerOnly: true, usage: '<add|delete|list|get> <provider> [value]',
   description: 'Kelola API key AI dan status pemakaiannya tanpa menampilkan secret utuh',
   async execute({ sock, m, args }) {
     const [action, provider, ...rest] = args;

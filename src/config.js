@@ -6,12 +6,14 @@
 import { initializeDatabase, appendRecord, getRecords, getLatestConfigRecord, configureDatabase } from './core/database.js';
 
 const DEFAULTS = Object.freeze({
-  schemaVersion: 26,
+  schemaVersion: 27,
   bot: { name: 'Ocha Lidya', aliases: ['Ocha', 'Lidya'], owner: '6283193905842', ownerName: 'Arifi Razzaq', creatorName: 'Arifi Razzaq', organization: 'Razzaq Ventures', publicCreatorDisclosure: true, expectedNumber: '6282177461231' },
   whatsapp: { authMode: 'pairing', pairingNumber: '6282177461231', browserName: 'Chrome', sessionDir: 'sessions/ocha-lidya', recoverInvalidSession: true, connectTimeoutMs: 60000, queryTimeoutMs: 60000, keepAliveIntervalMs: 25000 },
   logging: { level: 'info', color: 'auto', timeZone: 'Asia/Jakarta' },
   mode: 'public',
   ui: { buttonsEnabled: true },
+  menu: { showDescriptions: false, pagination: { enabled: false, pageSize: 50 } },
+  commandGuard: { cooldown: { enabled: false }, antiSpam: { enabled: false, dailyWarnings: 5 } },
   groupMetadata: { initialSync: true, fetchCooldownMs: 600000 },
   prefix: { mode: 'multi', single: '.', list: ['.', '!', '/', '#'] },
   commands: { caseSensitive: false, ignoreEmpty: true },
@@ -307,6 +309,15 @@ export async function loadConfig() {
     activeConfig.features.lastJoinedGroupId = '';
     await appendRecord('config.replace', { config: activeConfig, changedBy: 'system:migration', reason: 'v1.10.15 safe per-group activation: all groups muted until owner enables in target group' });
   }
+  // v1.10.17 schema v27: global menu presentation and adaptive command governance.
+  if (activeConfig.schemaVersion < 27) {
+    activeConfig.schemaVersion = 27;
+    activeConfig.menu = structuredClone(DEFAULTS.menu);
+    activeConfig.commandGuard = structuredClone(DEFAULTS.commandGuard);
+    await appendRecord('config.replace', { config: activeConfig, changedBy: 'system:migration', reason: 'v1.10.17 global menu settings and adaptive command governor defaults' });
+  }
+  activeConfig.menu = merge(DEFAULTS.menu, activeConfig.menu || {});
+  activeConfig.commandGuard = merge(DEFAULTS.commandGuard, activeConfig.commandGuard || {});
   activeConfig.security = { ...DEFAULTS.security, ...(activeConfig.security || {}) };
   delete activeConfig.security.masterExecEnabled;
   activeConfig.features = { ...DEFAULTS.features, ...(activeConfig.features || {}) };
@@ -349,6 +360,12 @@ export async function replaceConfig(next, metadata = {}) {
 function validateConfig(c) {
   if (!['public', 'self'].includes(c.mode)) throw new Error('mode harus public atau self');
   if (typeof c.ui?.buttonsEnabled !== 'boolean') throw new Error('ui.buttonsEnabled harus boolean');
+  if (typeof c.menu?.showDescriptions !== 'boolean') throw new Error('menu.showDescriptions harus boolean');
+  if (typeof c.menu?.pagination?.enabled !== 'boolean') throw new Error('menu.pagination.enabled harus boolean');
+  if (!Number.isInteger(c.menu?.pagination?.pageSize) || c.menu.pagination.pageSize < 10 || c.menu.pagination.pageSize > 200) throw new Error('menu.pagination.pageSize harus 10-200');
+  if (typeof c.commandGuard?.cooldown?.enabled !== 'boolean' || typeof c.commandGuard?.antiSpam?.enabled !== 'boolean') throw new Error('commandGuard flags harus boolean');
+  if (c.commandGuard?.antiSpam?.dailyWarnings !== 5) throw new Error('commandGuard.antiSpam.dailyWarnings saat ini ditetapkan 5');
+
   if (typeof c.features?.groupsMuted !== 'boolean') throw new Error('features.groupsMuted harus boolean');
   if (!c.features?.groupMuteOverrides || typeof c.features.groupMuteOverrides !== 'object' || Array.isArray(c.features.groupMuteOverrides)) throw new Error('features.groupMuteOverrides harus object');
   for (const [groupId, muted] of Object.entries(c.features.groupMuteOverrides)) {

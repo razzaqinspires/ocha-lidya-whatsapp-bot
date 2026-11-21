@@ -7,6 +7,7 @@ export default {
   aliases: ['configuration', 'settings'],
   category: 'owner',
   ownerOnly: true,
+  usage: '[show]',
   privateOnly: true,
   description: 'Tampilkan snapshot konfigurasi owner dengan redaksi otomatis untuk seluruh credential.',
   async execute({ m }) {

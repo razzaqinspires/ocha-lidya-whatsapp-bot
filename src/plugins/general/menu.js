@@ -1,71 +1,39 @@
-import { sendCommandList } from '../../core/ui.js';
+import fs from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+import { listPlugins } from '../../core/plugin-loader.js';
 import { getPrefixes } from '../../core/prefix.js';
+import { getConfig } from '../../core/config.js';
+import { buildMenuText, getMenuPageCount } from '../../core/menu-renderer.js';
+import { registerReplySession } from '../../core/reply-sessions.js';
+const BANNER_PATH = fileURLToPath(new URL('../../../assets/menu-banner.jpg', import.meta.url));
+
+async function sendMenuPage(sock, message, page) {
+  const config = getConfig();
+  const plugins = listPlugins();
+  const prefixes = getPrefixes();
+  const pageCount = getMenuPageCount(plugins, config, true);
+  const selected = Math.max(1, Math.min(pageCount, Math.floor(Number(page) || 1)));
+  const body = buildMenuText({ plugins, config, prefixes, masterEnabled: true, page: selected });
+  let payload = { text: body };
+  if (selected === 1) {
+    try { payload = { image: await fs.readFile(BANNER_PATH), caption: body }; } catch {}
+  }
+  let sent;
+  try { sent = await sock.sendMessage(message.chat, payload, { quoted: message }); }
+  catch { sent = await sock.sendMessage(message.chat, { text: body }, { quoted: message }); }
+  if (pageCount > 1 && sent?.key?.id) {
+    registerReplySession({
+      chat: message.chat, messageId: sent.key.id, sender: message.sender, kind: 'menu-pagination',
+      choices: Array.from({ length: pageCount }, (_, i) => ({ key: String(i + 1), label: `Page ${i + 1}`, value: i + 1 })),
+      helpText: `Balas pesan menu ini dengan nomor halaman 1–${pageCount}.`, ttlMs: 15 * 60_000,
+      onSelect: async ({ sock: replySock, message: replyMessage, value }) => sendMenuPage(replySock, replyMessage, value)
+    });
+  }
+  return sent;
+}
 
 export default {
-  name: 'menu', aliases: ['help', 'commands'], category: 'general', description: 'Daftar perintah Ocha Lidya',
-  async execute({ sock, m, config }) {
-    const prefix = getPrefixes()[0] || '';
-    const body = [
-      '*GENERAL*',
-      `${prefix}menu · daftar perintah`,
-      `${prefix}ping · latency`,
-      `${prefix}owner · kontak owner`,
-      `${prefix}about · informasi bot dan pembuat`,
-      `${prefix}profile · XP, level, role, dan rank`,
-      `${prefix}runtime · informasi runtime`,
-      `${prefix}run python/node/html · jalankan kode & buat preview web sementara`,
-      `${prefix}project list/status · repository website pribadimu`,
-      `${prefix}project use <slug> · lanjutkan repository`,
-      `${prefix}project zip · ekspor source repository saja`,
-      `${prefix}project export ask/always/off · atur pengiriman ZIP`,
-      `${prefix}groupinfo · daftar grup dan status aktif/mute`,
-      '',
-      '*OWNER / DEVELOPER*',
-      `${prefix}setmode · public/self`,
-      `${prefix}setprefix · konfigurasi prefix`,
-      `${prefix}setbotname · ubah nama bot`,
-      `${prefix}plugins · daftar plugin`,
-      `${prefix}reload · reload plugin`,
-      `${prefix}jid · inspect PN/LID`,
-      `${prefix}dbstatus · kesehatan database`,
-      `${prefix}dbsearch · cari arsip`,
-      `${prefix}aistatus / ${prefix}aiset · pengaturan AI`,
-      `${prefix}buttons on/off · mode tombol`,
-      `${prefix}master status · status console runner`,
-      `${prefix}joingc <url> · bot bergabung ke grup (owner)`,
-      `${prefix}mute on/off/status · atur grup ini langsung dari dalam grup (owner)`,
-      `${prefix}nexora status · panel kontrol Nexora global (owner)`,
-      `${prefix}nexora all on/off · aktif/nonaktifkan semua fitur Nexora (owner)`,
-      '',
-      '*MASTER CONSOLE · OWNER ONLY*',
-      '> JavaScript eval',
-      '=> JavaScript return',
-      '$ CLI · >> Python · >>> Go',
-      '.master cli on/off · mengaktifkan CLI langsung (tanpa exec)',
-      '',
-      `Prefix: ${config.prefix.mode} · Bot mode: ${config.mode}`
-    ].join('\n');
-    const sections = [
-      { title: 'General', rows: [
-        { title: 'Ping', description: 'Ukur respons bot', id: `${prefix}ping` },
-        { title: 'Owner', description: 'Kontak owner bot', id: `${prefix}owner` },
-        { title: 'About', description: 'Informasi bot dan pembuat', id: `${prefix}about` },
-        { title: 'My profile', description: 'XP, level, role, dan rank', id: `${prefix}profile` },
-        { title: 'Group info', description: 'Metadata grup dan status aktif/mute', id: `${prefix}groupinfo` },
-        { title: 'Runtime', description: 'Status runtime', id: `${prefix}runtime` },
-        { title: 'Run code', description: 'Jalankan kode pada worker terisolasi', id: `${prefix}run` },
-        { title: 'My projects', description: 'Repository website pribadi dan project memory', id: `${prefix}project list` }
-      ]},
-      { title: 'Owner & developer', rows: [
-        { title: 'AI status', description: 'Provider dan fallback AI', id: `${prefix}aistatus` },
-        { title: 'Database', description: 'Status database JSONL', id: `${prefix}dbstatus` },
-        { title: 'Plugins', description: 'Daftar plugin', id: `${prefix}plugins` },
-        { title: 'Master status', description: 'Status runner developer', id: `${prefix}master status` },
-        { title: 'Button mode', description: 'Status tombol interaktif', id: `${prefix}buttons status` },
-        { title: 'Group mute', description: 'Mute/unmute seluruh interaksi grup (owner)', id: `${prefix}mute status` },
-        { title: 'Nexora capabilities', description: 'Kelola Code Lab dan worker AI (owner)', id: `${prefix}nexora status` }
-      ]}
-    ];
-    return sendCommandList(sock, m, { title: config.bot.name, body, sections });
-  }
+  name: 'menu', aliases: ['help', 'commands'], category: 'general', usage: '[page]',
+  description: 'Daftar command aktif dari plugin registry',
+  async execute({ sock, m, args }) { return sendMenuPage(sock, m, args[0] || 1); }
 };

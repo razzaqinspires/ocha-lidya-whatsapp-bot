@@ -1,6 +1,6 @@
 import { updateConfig } from '../../core/config.js';
 export default {
-  name:'setbotname', aliases:['botname'], category:'owner', ownerOnly:true, description:'Update displayed bot name',
+  name:'setbotname', aliases:['botname'], category:'owner', ownerOnly:true, usage: '<name>', description:'Update displayed bot name',
   async execute({m,text}) {
     const name=text.trim();
     if(!name || name.length>40) return m.reply('Gunakan: .setbotname Ocha Lidya');

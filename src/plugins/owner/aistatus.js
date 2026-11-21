@@ -4,7 +4,7 @@ import { getRelationshipEngineStatus } from '../../ai/user-profiles.js';
 import { getPublicIdentity } from '../../core/public-identity.js';
 import { getModelCatalogStatus } from '../../ai/model-catalog.js';
 export default {
-  name: 'aistatus', aliases: ['aihealth'], category: 'owner', ownerOnly: true,
+  name: 'aistatus', aliases: ['aihealth'], category: 'owner', ownerOnly: true, usage: '',
   description: 'Status AI, kesehatan key, total hit, kuota, dan maintenance',
   async execute({ m }) {
     const status = getAIStatus();

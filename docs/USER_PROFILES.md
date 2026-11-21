@@ -2,7 +2,7 @@
 
 ## Commands
 
-- `.profile` / `.me` / `.level` / `.xp`: display the current sender's profile.
+- `.profile` / `.me` / `.level` / `.xp`: display the current sender's profile card and summary.
 - `.aiset identity on/off`: allow or suppress public disclosure of creator and organization identity.
 
 ## XP and levels
@@ -11,13 +11,19 @@ Each eligible AI interaction grants 5 XP. The first interaction on a new Asia/Ja
 
 Cumulative XP required to enter level `L` is `50 * L * (L - 1)`. Rank milestones are Iron (1), Bronze (5), Silver (10), Gold (20), Platinum (35), Diamond (50), and Mythic (75).
 
+## Activity streaks and achievements
+
+A current streak increases once when a user has an eligible interaction on a new consecutive Asia/Jakarta calendar day. Multiple interactions on the same day do not increase the streak. Missing a calendar day resets the current streak; the best streak is retained. Existing profiles without historical streak data are migrated conservatively and are not assigned a long streak retroactively.
+
+Achievements are derived from aggregate totals, including first contact, conversation milestones, active-day milestones, streak milestones, and rank tiers. The profile card shows a capped selection of the latest earned milestones.
+
 ## Relationship role
 
 Relationship role is a non-emotional familiarity tier derived from aggregate interactions and active days: Pengunjung, Kenalan, Teman Ngobrol, Teman Akrab, Sahabat Digital. A verified owner has the fixed role Owner & Creator. The model is instructed not to claim human feelings.
 
 ## Stored data
 
-Each user has a separate `ai.user.profile` record in the append-only JSONL repository. It stores display name, XP, level, rank, aggregate interactions, active days, daily XP counters, bounded recent message IDs, greeting count, and broad communication-style counters. It does not store raw messages in the profile record.
+Each user has a separate `ai.user.profile` record in the append-only JSONL repository. It stores display name, XP, level, rank, aggregate interactions, active days, current/best streaks, daily XP counters, bounded recent message IDs, greeting count, and broad communication-style counters. It does not store raw messages in the profile record.
 
 ## Public creator identity
 

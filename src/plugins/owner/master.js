@@ -33,7 +33,7 @@ function statusText(security) {
 }
 
 export default {
-  name: 'master', aliases: ['masterconfig'], category: 'owner', ownerOnly: true, privateOnly: true,
+  name: 'master', aliases: ['masterconfig'], category: 'owner', ownerOnly: true, privateOnly: true, usage: '[status|cli|python|golang] [on|off]',
   description: 'Manage independent owner-only developer runners',
   async execute({ m, args }) {
     const [requestedFeature, value] = args;

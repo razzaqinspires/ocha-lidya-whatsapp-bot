@@ -37,6 +37,7 @@ export default {
   aliases: ['joingroup', 'join-group'],
   category: 'owner',
   ownerOnly: true,
+  usage: '<invite-url>',
   privateOnly: true,
   description: 'Masukkan bot ke grup WhatsApp melalui tautan undangan; grup baru dimulai dalam status mute',
   async execute({ sock, m, args, text }) {

@@ -12,6 +12,7 @@ import { initializeDatabase } from './core/database.js';
 import { loadPlugins, watchSourceFiles } from './core/plugin-loader.js';
 import { startAutoGitSync } from './core/auto-git-sync.js';
 import { dispatch } from './core/dispatcher.js';
+import { initializeCommandGovernor } from './core/command-governor.js';
 import { configureMessageMonitor, observeIncomingMessage, observeOutgoingMessage, observeMessageUpdates, observeGroupReceipts, getMessageMonitorStats } from './core/message-monitor.js';
 import serializer from './lib/serializ_simple.js';
 const { serialize, extendSocket, trackSentMessageId, setOutgoingMessageObserver } = serializer;
@@ -40,6 +41,14 @@ if (!runtimeLock.acquired) {
 
 await initializeDatabase();
 await loadConfig();
+if (getConfig().commandGuard?.antiSpam?.enabled) {
+  try {
+    const guard = await initializeCommandGovernor();
+    logger.info({ active: true, trackedUsers: guard.users }, 'Persistent anti-spam sanction registry warmed');
+  } catch (error) {
+    logger.warn({ err: error }, 'Anti-spam sanction registry warm-up failed; command governor will retry lazily');
+  }
+}
 let hostPreflightResult = null;
 try {
   hostPreflightResult = await runNexoraBootstrap(getConfig().codeLab);

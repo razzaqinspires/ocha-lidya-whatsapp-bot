@@ -1,6 +1,6 @@
 import { resolveMessageSenderPn } from '../../core/jid-resolution.js';
 export default {
-  name: 'jid', aliases: ['jidinfo', 'liddebug'], category: 'developer', ownerOnly: true,
+  name: 'jid', aliases: ['jidinfo', 'liddebug'], category: 'developer', ownerOnly: true, usage: '[message-context]',
   description: 'Inspect PN/LID identifiers for the current message',
   async execute({ sock, m }) {
     const key = m.key || {};

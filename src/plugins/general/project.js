@@ -39,6 +39,7 @@ export default {
   name: 'project',
   aliases: ['projects', 'repo', 'repository'],
   category: 'developer',
+  usage: '<list|status|use|history|zip|export> [value]',
   description: 'Kelola repository website, memori tugas, riwayat versi, dan ekspor ZIP milik pengguna',
   async execute({ sock, m, args }) {
     if (m.isGroup || String(m.chat || '').endsWith('@g.us')) {

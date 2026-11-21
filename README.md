@@ -2,6 +2,14 @@
 
 Ocha Lidya is a modular WhatsApp automation framework built with native Node.js ESM and `@whiskeysockets/baileys`. The project separates WhatsApp transport, message serialization, command dispatch, plugin execution, persistent configuration, and durable JSONL storage.
 
+## Global command governance and AI command authoring (v1.10.17)
+
+Global menu preferences are owner-controlled with `.setmenu descriptions on|off`, `.setmenu pages on|off`, `.setmenu limit <10-200>`, and `.setmenu status`. All users see the same menu. Pagination is off by default; when enabled, users reply to the menu message with a page number. Adaptive command cooldown and anti-spam are independent global controls: `.guard cooldown on|off`, `.guard antispam on|off`, and `.guard status`. Cooldowns are calculated per sender/chat/command from workload metadata; anti-spam uses an initial notice, five counted daily strikes, and escalating temporary suspensions. `.createcmd <instruction>` uses the configured AI provider chain and active plugin inventory to draft a plugin in an existing plugin folder. Reply to code or use `.createcmd => <source>` to wrap existing code without rewriting it. Review with `.createcmd show <id>` and install with `.createcmd apply <id>`.
+
+## Live command directory and expanded profiles (v1.10.16)
+
+`.menu` reads the active plugin registry instead of a hard-coded command list. It lists every loaded canonical plugin command, displays optional argument usage, follows the configured prefix, and includes a branded banner from `assets/menu-banner.jpg`. Owner commands such as `.test` and `.apikey` are included automatically. `.profile` now displays current/best daily streaks, daily XP remaining, achievements, aggregate interaction statistics, level progression, and an upgraded branded card. Streaks use Asia/Jakarta calendar days. See `docs/MENU_AND_COMMAND_REGISTRY.md` and `docs/USER_PROFILES.md`.
+
 ## Owner group management and in-group mute activation (v1.10.15)
 
 Owner-only `.joingc <https://chat.whatsapp.com/INVITE_CODE>` joins a WhatsApp group using strict official invite URL validation. Every group starts MUTE. The verified owner activates a specific group by sending `.mute off` inside that group, and mutes it again with `.mute on`. Non-owner `.mute` messages are silently ignored. Private owner chat supports `.mute on all` as an emergency global mute; bulk activation is disabled. `.groupinfo` lists automatically detected participating groups and their active/mute state. Group membership and mute state do not disable metadata or contact synchronization. See `docs/GROUP_MUTE_AND_MESSAGE_FLOW.md`.
@@ -530,7 +538,7 @@ ocha-lidya-bot/
 
 ## 18. Version and change history
 
-Current package version: **1.10.15** (configuration schema v26).
+Current package version: **1.10.16** (configuration schema v26).
 
 See [`docs/CHANGE_LOG.md`](docs/CHANGE_LOG.md) for release history and [`docs/DATABASE_DESIGN.md`](docs/DATABASE_DESIGN.md) for persistence internals.
 
@@ -607,3 +615,42 @@ The model catalogue queries the official authenticated model-list API of each pr
 The scheduler is started automatically by `src/index.js` during `npm start`; no systemd, cron, installer, or extra terminal command is required. Startup launches both an in-process scheduler and a singleton detached Node.js worker. The detached worker survives closing the terminal or stopping the main WhatsApp process while the VPS remains powered on; its heartbeat and PID are recorded in `data/ai-model-catalog-worker.json`, and its log is written to `data/logs/ai-model-catalog-worker.log`. It performs an immediate metadata-only refresh when the catalogue is missing or overdue, then schedules the next refresh from the persisted 24-hour deadline. Transient provider catalogue outages are retried hourly. Adding or removing an API key through `.apikey` triggers an immediate catalogue refresh and the detached worker reloads the key vault on its next refresh. If the VPS itself shuts down, no local process can run; the next `npm start` automatically re-creates the worker and catches up from the saved timestamp. `.aimodels status` and `.aistatus` report the detached worker status and PID.
 
 Owner controls: `.aimodels status`, `.aimodels refresh`, `.aiset free-only on/off`, `.aiset order groq,gemini,deepseek,openai`, `.apikey list groq`. The catalogue can prove that a key may list model IDs; only a real inference request can prove that the model can answer and that quota remains. New models are not automatically labelled free unless their free access is verified in official pricing documentation. See [`docs/AI_ENGINE.md`](docs/AI_ENGINE.md) and [`docs/AI_MODEL_CATALOG.md`](docs/AI_MODEL_CATALOG.md).
+
+## Live command directory and user profile
+
+The `.menu` command is generated from the active plugin registry. It includes all loaded plugin commands (including owner-only tools such as `.test` and `.apikey`) and uses optional `usage` metadata to display arguments without lengthy descriptions. The menu banner is bundled at `assets/menu-banner.jpg`; if image delivery is unavailable, the command directory falls back to text.
+
+`.profile` now includes rank/level progress, daily XP allowance, current and best activity streaks, aggregate interaction statistics, communication-style summary, and achievement milestones. Streak dates use the Asia/Jakarta calendar. Profile records keep aggregate statistics and bounded deduplication IDs only; raw conversation text is not added to profile storage.
+
+See `docs/MENU_AND_COMMAND_REGISTRY.md` and `docs/USER_PROFILES.md` for plugin metadata and profile rules.
+
+## v1.10.17 — Global Menu, Command Governor, AI Command Author
+
+### Global menu settings
+
+- `.setmenu descriptions on|off` controls command descriptions for every user.
+- `.setmenu pages on|off` enables/disables global menu pagination.
+- `.setmenu limit 10-200` sets the maximum number of entries per page.
+- `.setmenu status` displays the shared settings.
+- When pagination is enabled, reply to a menu message with a page number. The reply session is bound to the original sender and expires after 15 minutes.
+
+### Adaptive command governance
+
+- `.guard cooldown on|off` enables a command-specific cooldown computed from command metadata and workload signals. The key is isolated by sender, chat, and canonical command name.
+- `.guard antispam on|off` enables burst/repeated-command detection independently of cooldown.
+- `.guard status` displays global settings.
+- Cooldown denial notices are rate-limited to one per remaining cooldown period.
+- Anti-spam sends an initial warning before counting strikes. Five subsequent violations in the Asia/Jakarta day trigger a temporary suspension. Suspension duration escalates from 5 minutes to 15 minutes, 1 hour, 6 hours, and 24 hours. It is not a permanent ban. A live suspension blocks commands and AI replies; the daily warning counter resets at Jakarta midnight.
+- Owner commands bypass user-facing cooldown and anti-spam enforcement so the owner can recover configuration.
+
+### AI-assisted plugin authoring
+
+- `.createcmd <instruction>` asks the configured AI provider chain to design a plugin against the current plugin inventory and existing plugin folders.
+- Reply to source code with `.createcmd <instruction>` to ask Ocha to wrap/polish it. For source-only wrapping use `.createcmd => <source>`.
+- Source-preservation mode requires the original snippet to remain byte-for-byte present in the generated plugin. The authoring prompt explicitly forbids syntax repair/rewrite.
+- AI chooses among existing plugin directories only; new category folders are not created. Plugin metadata includes command name, aliases, category, usage, description, and owner/private policy.
+- Generated source is not executed during drafting. It is statically policy-checked, reviewed by the Workload Assessor (local conservative analysis if AI review is unavailable), stored as a draft, and installed only after `.createcmd apply <draft-id>`.
+- `.createcmd show <draft-id>` displays the full generated source for owner review. `.createcmd list` shows pending drafts. Supplied code must remain byte-for-byte present; syntax errors are reported, never silently repaired. Existing commands and aliases are never overwritten. The normal transactional source watcher discovers the installed plugin after the file is written and validated.
+- Generated plugins may import only Node built-ins, Baileys, and approved internal `core`, `ai`, and `lib` modules. Dynamic process execution primitives and unsafe imports are rejected.
+
+Configuration schema: v27. Existing installations migrate to menu descriptions OFF, pagination OFF, cooldown OFF, and anti-spam OFF. These controls are global, not per-user preferences.

@@ -1,6 +1,6 @@
 import { updateConfig, getConfig } from '../../core/config.js';
 export default {
-  name: 'buttons', aliases: ['buttonmode', 'uibuttons'], category: 'owner', ownerOnly: true,
+  name: 'buttons', aliases: ['buttonmode', 'uibuttons'], category: 'owner', ownerOnly: true, usage: '<on|off|status>',
   description: 'Atur kebijakan transport pesan interaktif (mode aman: teks biasa)',
   async execute({ m, args }) {
     const value = String(args[0] || '').toLowerCase();

@@ -44,15 +44,34 @@ async function walkJavaScript(directory, files = []) {
 
 export async function loadPlugins() {
   const files = await walkJavaScript(PLUGIN_ROOT);
+  const previousByFile = new Map([...registry.values()].map(entry => [entry.file, entry]));
+  const next = new Map();
+  const failures = [];
+
   for (const file of files) {
     try {
       const plugin = await importPlugin(file);
-      registry.set(keyOf(plugin, file), { plugin, file });
+      const key = keyOf(plugin, file);
+      if (next.has(key)) {
+        throw new Error(`Duplicate plugin command name: ${plugin.name}`);
+      }
+      next.set(key, { plugin, file });
     } catch (error) {
-      logger.error({ err: error, file }, 'Plugin gagal dimuat');
+      failures.push({ file, message: error.message });
+      // A failed replacement must not make a previously working command disappear.
+      const previous = previousByFile.get(file);
+      if (previous) next.set(keyOf(previous.plugin, file), previous);
+      logger.error({ err: error, file }, 'Plugin gagal dimuat; versi valid sebelumnya dipertahankan bila tersedia');
     }
   }
-  logger.info({ count: registry.size, root: PLUGIN_ROOT }, 'Plugin loaded');
+
+  // Commit one complete registry snapshot. Deleted plugin files are removed,
+  // added plugins become visible immediately, and menus read this same registry.
+  registry.clear();
+  for (const [key, entry] of next) registry.set(key, entry);
+  const plugins = listPlugins();
+  logger.info({ count: plugins.length, failed: failures.length, root: PLUGIN_ROOT }, 'Plugin registry atomically refreshed');
+  return plugins;
 }
 
 export function listPlugins() {
@@ -100,7 +119,9 @@ async function reloadPluginTree(changes) {
   for (const file of files) {
     try {
       const plugin = await importPlugin(file);
-      next.set(keyOf(plugin, file), { plugin, file });
+      const key = keyOf(plugin, file);
+      if (next.has(key)) throw new Error(`Duplicate plugin command name: ${plugin.name}`);
+      next.set(key, { plugin, file });
     } catch (error) {
       failures.push({ file: path.relative(PLUGIN_ROOT, file), message: error.message });
       const previous = currentByFile.get(file);

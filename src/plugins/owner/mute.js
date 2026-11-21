@@ -13,7 +13,7 @@ function groupLabel(groupId) {
 }
 
 export default {
-  name: 'mute', aliases: ['groupmute'], category: 'owner', ownerOnly: true,
+  name: 'mute', aliases: ['groupmute'], category: 'owner', ownerOnly: true, usage: '<on|off|status> [all|group-id]',
   description: 'Kontrol mute grup dari dalam grup; hanya owner terverifikasi yang dapat mengubah status',
   async execute({ m, args }) {
     const action = String(args[0] || 'status').toLowerCase();

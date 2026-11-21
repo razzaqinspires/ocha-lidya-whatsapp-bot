@@ -64,7 +64,8 @@ function makeDefault(userId, displayName = 'Pengguna') {
   return {
     userId, displayName: cleanName(displayName), xp: 0, level: 1, rank: 'Iron', role: 'Pengunjung',
     totalInteractions: 0, activeDays: 0, lastActiveDate: null, dailyXpDate: null, dailyXpEarned: 0,
-    styleCounts: {}, greetingCount: 0, recentMessageIds: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString()
+    styleCounts: {}, greetingCount: 0, currentStreak: 0, longestStreak: 0,
+    recentMessageIds: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString()
   };
 }
 function normalize(profile, userId) {
@@ -74,6 +75,11 @@ function normalize(profile, userId) {
   next.level = levelFromXp(next.xp);
   next.rank = rankForLevel(next.level);
   next.styleCounts = next.styleCounts && typeof next.styleCounts === 'object' ? next.styleCounts : {};
+  next.currentStreak = Math.max(0, Number(next.currentStreak) || (next.lastActiveDate ? 1 : 0));
+  next.longestStreak = Math.max(next.currentStreak, Number(next.longestStreak) || 0);
+  next.greetingCount = Math.max(0, Number(next.greetingCount) || 0);
+  next.activeDays = Math.max(0, Number(next.activeDays) || 0);
+  next.totalInteractions = Math.max(0, Number(next.totalInteractions) || 0);
   next.recentMessageIds = Array.isArray(next.recentMessageIds) ? next.recentMessageIds.slice(-MAX_RECENT_IDS) : [];
   return next;
 }
@@ -100,21 +106,56 @@ export async function getUserProfile(userId, { displayName, isOwner = false } = 
   return structuredClone(profileView(profile, isOwner));
 }
 
+function profileAchievements(profile) {
+  const achievements = [];
+  if (profile.totalInteractions >= 1) achievements.push('FIRST CONTACT');
+  if (profile.totalInteractions >= 50) achievements.push('50 CONVERSATIONS');
+  if (profile.totalInteractions >= 250) achievements.push('COMMUNICATOR');
+  if (profile.totalInteractions >= 1000) achievements.push('VETERAN');
+  if (profile.activeDays >= 7) achievements.push('7 ACTIVE DAYS');
+  if (profile.activeDays >= 30) achievements.push('30 ACTIVE DAYS');
+  if (profile.currentStreak >= 3) achievements.push('3-DAY STREAK');
+  if (profile.currentStreak >= 7) achievements.push('7-DAY STREAK');
+  if (profile.currentStreak >= 30) achievements.push('30-DAY STREAK');
+  if (profile.level >= 10) achievements.push('SILVER TIER');
+  if (profile.level >= 20) achievements.push('GOLD TIER');
+  if (profile.level >= 50) achievements.push('DIAMOND TIER');
+  return achievements.slice(-6);
+}
+
 function profileView(profile, isOwner = false) {
   const level = levelFromXp(profile.xp);
   const currentFloor = xpRequiredForLevel(level);
   const nextFloor = xpRequiredForLevel(level + 1);
-  return {
+  const today = todayKey();
+  const todayOrdinal = dayOrdinal(today);
+  const lastActiveOrdinal = dayOrdinal(profile.lastActiveDate);
+  const daysSinceActive = lastActiveOrdinal === null ? Infinity : todayOrdinal - lastActiveOrdinal;
+  const currentStreak = daysSinceActive <= 1 ? profile.currentStreak : 0;
+  const view = {
     ...profile,
     level,
     rank: rankForLevel(level),
     role: relationshipFor(profile, isOwner),
     interactionStyle: dominantStyle(profile.styleCounts),
+    currentStreak,
     xpIntoLevel: Math.max(0, profile.xp - currentFloor),
     xpForNextLevel: Math.max(1, nextFloor - currentFloor),
     xpRemaining: Math.max(0, nextFloor - profile.xp),
-    progressPercent: Math.min(100, Math.floor(((profile.xp - currentFloor) / Math.max(1, nextFloor - currentFloor)) * 100))
+    progressPercent: Math.min(100, Math.floor(((profile.xp - currentFloor) / Math.max(1, nextFloor - currentFloor)) * 100)),
+    dailyXpCap: DAILY_XP_CAP,
+    dailyXpRemaining: profile.dailyXpDate === today
+      ? Math.max(0, DAILY_XP_CAP - (Number(profile.dailyXpEarned) || 0))
+      : DAILY_XP_CAP
   };
+  view.achievements = profileAchievements(view);
+  return view;
+}
+
+function dayOrdinal(dateKey) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dateKey || ''))) return null;
+  const [year, month, day] = dateKey.split('-').map(Number);
+  return Math.floor(Date.UTC(year, month - 1, day) / 86_400_000);
 }
 
 export async function recordUserInteraction({ userId, displayName, messageId, text = '', isOwner = false, now = new Date() }) {
@@ -127,7 +168,15 @@ export async function recordUserInteraction({ userId, displayName, messageId, te
     : cleanName(displayName || profile.displayName);
   const date = todayKey(now);
   const newDay = profile.lastActiveDate !== date;
-  if (newDay) profile.activeDays++;
+  if (newDay) {
+    profile.activeDays++;
+    const previousDay = dayOrdinal(profile.lastActiveDate);
+    const currentDay = dayOrdinal(date);
+    profile.currentStreak = previousDay !== null && currentDay - previousDay === 1
+      ? Math.max(0, profile.currentStreak) + 1
+      : 1;
+    profile.longestStreak = Math.max(profile.longestStreak, profile.currentStreak);
+  }
   profile.lastActiveDate = date;
   profile.totalInteractions++;
   const style = classifyStyle(text);

@@ -1,7 +1,7 @@
 import { getConfig } from '../../core/config.js';
 import { setPrefixMode,setSinglePrefix,addPrefix,removePrefix,getPrefixes } from '../../core/prefix.js';
 export default {
-  name:'setprefix', aliases:['prefix'], category:'owner', ownerOnly:true, description:'Kelola prefix',
+  name:'setprefix', aliases:['prefix'], category:'owner', ownerOnly:true, usage: '<mode|single|add|remove> [value]', description:'Kelola prefix',
   async execute({m,args}) {
     const [mode,action,value]=args;
     try {

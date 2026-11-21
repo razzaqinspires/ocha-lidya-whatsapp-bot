@@ -1,7 +1,7 @@
 import { createCodeSession, extractCodeBlock, normalizeCodeLanguage } from '../../runtime/code-lab.js';
 
 export default {
-  name: 'run', aliases: ['execute', 'previewcode'], category: 'developer',
+  name: 'run', aliases: ['execute', 'previewcode'], category: 'developer', usage: '<python|node|html> <code>',
   description: 'Jalankan Python/Node.js atau tampilkan HTML pada preview sementara',
   async execute({ m, text, args }) {
     const body = String(m.body || '').trim();

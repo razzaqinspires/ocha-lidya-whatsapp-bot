@@ -50,7 +50,7 @@ function statusText() {
 }
 
 export default {
-  name: 'nexora', aliases: ['capability', 'aitools'], category: 'owner', ownerOnly: true, privateOnly: true,
+  name: 'nexora', aliases: ['capability', 'aitools'], category: 'owner', ownerOnly: true, privateOnly: true, usage: '[status|all|code|tunnel|workers] [value]',
   description: 'Manage all Nexora capabilities and the global isolated Code Lab service',
   async execute({ m, args }) {
     const [action = 'status', value] = args;

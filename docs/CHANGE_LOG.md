@@ -585,3 +585,20 @@ All notable changes to Ocha Lidya are recorded here. The newest release is liste
 - JavaScript syntax: 127 files checked.
 - Full test suite: 148 tests, 146 passed, 2 skipped, 0 failed.
 - Code Lab tunnel handoff integration test: passed; replacement adopted the same tunnel PID and URL without starting a duplicate Cloudflared process.
+
+## [1.10.16] - 2026-11-21
+
+### Added
+- Replaced the manually maintained `.menu` command list with a live snapshot of the active plugin registry. Added/removed/reloaded plugins now appear in the next menu without editing a second list.
+- Added command `usage` metadata for argument-taking plugins, including `.test <type> [args]` and `.apikey <add|delete|list|get> <provider> [value]`.
+- Added a branded Ocha Lidya AI / Nexora menu banner asset and a compact command-registry summary widget (plugin count, category count, prefix mode, and bot mode).
+- Expanded user profiles with current and best daily activity streaks, daily XP remaining, and milestone achievements; upgraded the profile card layout.
+
+### Fixed
+- Manual plugin reload now builds a complete shadow registry and swaps it atomically. Removed plugin files are removed from the registry, failed replacements retain the previous valid plugin when available, and duplicate plugin command names are rejected.
+- Profile streaks use Asia/Jakarta calendar days, do not increase more than once per day, reset after a missed day, and do not appear active when the last interaction is older than yesterday.
+- The menu no longer uses a hard-coded command list, preventing owner commands such as `.test` and `.apikey` from being omitted.
+
+### Validation
+- Added menu-renderer tests for live plugin metadata, argument placeholders, duplicate command names, prefix/mode widgets, and the master-console block.
+- Added profile tests for consecutive-day streaks, missed-day reset, daily XP capacity, and SVG escaping.

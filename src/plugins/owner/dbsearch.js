@@ -1,6 +1,6 @@
 import { searchArchives } from '../../core/database.js';
 export default {
-  name:'dbsearch', aliases:['archivefind'], category:'owner', ownerOnly:true, description:'Cari record dalam ZIP archive tanpa ekstraksi penuh',
+  name:'dbsearch', aliases:['archivefind'], category:'owner', ownerOnly:true, usage: '<query>', description:'Cari record dalam ZIP archive tanpa ekstraksi penuh',
   async execute({m,args}) {
     const query=args.join(' ');
     if(!query) return m.reply('Gunakan: .dbsearch kata-kunci');

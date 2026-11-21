@@ -1,7 +1,7 @@
 import { updateConfig, getConfig } from '../../core/config.js';
 import { providerNames } from '../../ai/providers.js';
 export default {
-  name: 'aiset', aliases: ['aiconfig'], category: 'owner', ownerOnly: true,
+  name: 'aiset', aliases: ['aiconfig'], category: 'owner', ownerOnly: true, usage: '<setting> [value]',
   description: 'Atur prioritas provider, model upstream, dan kecepatan',
   async execute({ m, args }) {
     const [action, ...rest] = args;

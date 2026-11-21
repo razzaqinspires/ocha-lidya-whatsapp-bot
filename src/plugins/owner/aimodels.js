@@ -33,7 +33,7 @@ function render(snapshot) {
 }
 
 export default {
-  name: 'aimodels', aliases: ['modelcatalog', 'modelcheck'], category: 'owner', ownerOnly: true,
+  name: 'aimodels', aliases: ['modelcatalog', 'modelcheck'], category: 'owner', ownerOnly: true, usage: '[status|refresh|free|all]',
   description: 'Audit katalog model resmi, rekomendasi gratis/berbayar, dan jadwal pembaruan',
   async execute({ m, args }) {
     const action = String(args?.[0] || 'status').toLowerCase();
