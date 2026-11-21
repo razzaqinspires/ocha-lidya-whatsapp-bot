@@ -16,6 +16,7 @@ const INPUT_HARD_LIMIT = 4096;
 const URL_PATTERN = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/i;
 const QUICK_TUNNEL_LOCK_NAME = '.cloudflared-quick-tunnel.lock';
 const QUICK_TUNNEL_MAX_IN_FLIGHT = 160;
+const WATCHDOG_PROTOCOL_VERSION = 2;
 
 const state = {
   server: null,
@@ -38,6 +39,9 @@ const state = {
   heartbeatPath: null,
   shutdownPath: null,
   tunnelPidPath: null,
+  tunnelLogPath: null,
+  ownerPath: null,
+  watchdogPidPath: null,
   instanceId: null,
   sessions: new Map(),
   reservations: new Map(),
@@ -50,7 +54,8 @@ const state = {
   prerequisites: { cloudflared: null, runtime: null, runtimeError: null },
   runtimeName: null,
   startedAt: null,
-  closing: false
+  closing: false,
+  handoffInProgress: false
 };
 
 const config = () => getConfig().codeLab || {};
@@ -694,6 +699,16 @@ function waitForChildClose(child, timeoutMs) {
 
 async function stopTunnelProcess(child) {
   if (!child) return;
+  if (child.__ochaExternal) {
+    child.__ochaIntentionalStop = true;
+    const record = child.__ochaRecord || await readTunnelRecord();
+    if (record && Number(record.pid) === Number(child.pid)) await terminateVerifiedOrphan(record);
+    child.__ochaClosed = true;
+    if (state.tunnelPidPath) await fs.rm(state.tunnelPidPath, { force: true }).catch(() => {});
+    await releaseTunnelLease(child.__ochaLeaseToken);
+    if (state.tunnel === child) state.tunnel = null;
+    return;
+  }
   if (!child.__ochaClosed && child.exitCode === null && child.signalCode === null) child.__ochaIntentionalStop = true;
   if (!(await waitForChildClose(child, 0))) {
     try { child.kill('SIGTERM'); } catch {}
@@ -758,10 +773,103 @@ async function handleUnexpectedTunnelExit(child, code, signal) {
   // otherwise-unused Quick Tunnel running in the background after a failure.
 }
 
+async function readTunnelRecord() {
+  if (!state.tunnelPidPath) return null;
+  return readJsonFile(state.tunnelPidPath);
+}
+
+async function persistTunnelRecord(patch = {}) {
+  const lease = state.tunnelLease;
+  if (!lease) return null;
+  const current = await readJsonFile(lease.path);
+  if (!current || current.token !== lease.token) throw new Error('Kepemilikan Quick Tunnel berubah; record tidak ditimpa.');
+  const next = { ...current, ...patch, updatedAt: new Date().toISOString() };
+  await writeJsonAtomically(lease.path, next);
+  if (state.tunnelPidPath) await writeJsonAtomically(state.tunnelPidPath, next);
+  return next;
+}
+
+async function isTunnelRecordAlive(record) {
+  if (!record?.pid || !record?.url) return false;
+  const info = await inspectLinuxProcess(Number(record.pid));
+  return processMatches(record, info, record.executable);
+}
+
+async function adoptExistingTunnel() {
+  const lockPath = state.rootDir ? path.join(state.rootDir, QUICK_TUNNEL_LOCK_NAME) : null;
+  if (!lockPath || !state.tunnelPidPath) return false;
+  let record = await readJsonFile(lockPath);
+  const pidRecord = await readTunnelRecord();
+  if (!record || !pidRecord || record.token !== pidRecord.token) return false;
+  if (record.instanceId !== state.instanceId || !record.url) return false;
+
+  const expectedOwner = Number(record.ownerPid);
+  if (expectedOwner !== process.pid) {
+    const handoffFrom = Number(process.env.OCHA_HANDOFF_FROM_PID || 0);
+    if (!handoffFrom || expectedOwner !== handoffFrom) return false;
+    const ownerInfo = await inspectLinuxProcess(expectedOwner);
+    if (ownerInfo.alive) return false;
+    record = await persistExternalOwner(lockPath, record, process.pid);
+  }
+  if (!(await isTunnelRecordAlive(record))) return false;
+
+  state.tunnelLease = { path: lockPath, token: record.token, instanceId: state.instanceId };
+  state.tunnel = {
+    pid: Number(record.pid),
+    exitCode: null,
+    signalCode: null,
+    __ochaClosed: false,
+    __ochaExternal: true,
+    __ochaIntentionalStop: false,
+    __ochaLeaseToken: record.token,
+    __ochaGeneration: Number(record.generation) || 0,
+    __ochaRecord: record
+  };
+  state.tunnelUrl = String(record.url);
+  state.tunnelStartedAt = record.startedAt || record.createdAt || null;
+  state.tunnelGeneration = Math.max(state.tunnelGeneration, Number(record.generation) || 0);
+  state.tunnelError = null;
+  state.tunnelFailures = 0;
+  state.tunnelRetryAfter = 0;
+  logger.info({ tunnel: new URL(state.tunnelUrl).host, pid: record.pid, generation: record.generation, adopted: true }, 'Existing healthy TryCloudflare tunnel adopted; no replacement process started');
+  return true;
+}
+
+async function persistExternalOwner(lockPath, record, ownerPid) {
+  const ownerInfo = await inspectLinuxProcess(ownerPid);
+  const latest = await readJsonFile(lockPath);
+  if (!latest || latest.token !== record.token || Number(latest.pid) !== Number(record.pid)) {
+    throw new Error('Quick Tunnel lease berubah selama controlled handoff.');
+  }
+  const next = { ...latest, ownerPid, ownerStartTicks: ownerInfo.startTicks || null, handoffAt: new Date().toISOString() };
+  await writeJsonAtomically(lockPath, next);
+  if (state.tunnelPidPath) await writeJsonAtomically(state.tunnelPidPath, next);
+  return next;
+}
+
+async function waitForHandoffLease() {
+  if (!process.env.OCHA_HANDOFF_FROM_PID || !state.rootDir) return false;
+  const lockPath = path.join(state.rootDir, QUICK_TUNNEL_LOCK_NAME);
+  const deadline = Date.now() + 12_000;
+  while (Date.now() < deadline) {
+    const record = await readJsonFile(lockPath);
+    if (record?.instanceId === state.instanceId && Number(record.ownerPid) === process.pid && record.url) return true;
+    await new Promise(resolve => setTimeout(resolve, 150));
+  }
+  return false;
+}
+
 async function startTunnelInternal() {
   if (state.closing) throw new Error('Code Lab sedang dihentikan.');
   if (!setting('publicTunnelEnabled', true)) throw new Error('Public TryCloudflare tunnel dinonaktifkan oleh owner.');
-  if (state.tunnelUrl && state.tunnel && state.tunnel.exitCode === null && state.tunnel.signalCode === null) return state.tunnelUrl;
+  if (state.tunnelUrl && state.tunnel && state.tunnel.exitCode === null && state.tunnel.signalCode === null) {
+    if (!state.tunnel.__ochaExternal || await isTunnelRecordAlive(state.tunnel.__ochaRecord)) return state.tunnelUrl;
+    state.tunnel.__ochaClosed = true;
+    state.tunnel = null;
+    state.tunnelUrl = null;
+    state.tunnelStartedAt = null;
+    state.tunnelLease = null;
+  }
   if (state.tunnel) await stopTunnelProcess(state.tunnel);
 
   if (state.tunnelRetryAfter > Date.now()) {
@@ -778,22 +886,32 @@ async function startTunnelInternal() {
   await acquireTunnelLease(binary);
   const generation = ++state.tunnelGeneration;
   let child;
+  const logPath = state.tunnelLogPath || path.join(state.instanceDir, 'cloudflared.log');
+  state.tunnelLogPath = logPath;
+  await fs.mkdir(path.dirname(logPath), { recursive: true, mode: 0o700 });
+  await fs.truncate(logPath, 0).catch(() => {});
+  let logHandle;
   try {
+    logHandle = await fs.open(logPath, 'a', 0o600);
     child = spawn(binary, ['tunnel', '--url', `http://127.0.0.1:${port}`, '--no-autoupdate'], {
-      stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, detached: false,
+      stdio: ['ignore', logHandle.fd, logHandle.fd], windowsHide: true, detached: true,
       env: { PATH: process.env.PATH || '', HOME: process.env.HOME || os.tmpdir(), NO_COLOR: '1' }
     });
+    child.unref();
   } catch (error) {
+    await logHandle?.close().catch(() => {});
     await releaseTunnelLease(state.tunnelLease?.token);
-    const failure = new Error(`cloudflared tidak dapat dijalankan (${error.code || error.message}). Pasang cloudflared pada VPS.`);
+    const failure = new Error(`cloudflared tidak dapat dijalankan (${error.code || error.message}). Periksa instalasi cloudflared.`);
     recordTunnelFailure(failure);
     throw failure;
   }
+  await logHandle?.close().catch(() => {});
 
   child.__ochaGeneration = generation;
   child.__ochaLeaseToken = state.tunnelLease?.token || null;
   child.__ochaClosed = false;
   child.__ochaIntentionalStop = false;
+  child.__ochaLogPath = logPath;
   state.tunnel = child;
   state.tunnelStartedAt = new Date().toISOString();
   const pidWritePromise = updateTunnelLease(child, binary, generation).catch(async error => {
@@ -802,43 +920,48 @@ async function startTunnelInternal() {
   });
 
   let timer;
+  let pollTimer;
   let settled = false;
   let output = '';
   const readyPromise = new Promise((resolve, reject) => {
+    const cleanupTimers = () => { clearTimeout(timer); clearInterval(pollTimer); };
     const fail = error => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      cleanupTimers();
       state.tunnelPromise = null;
       reject(error);
     };
-    const inspect = chunk => {
-      output = `${output}${chunk.toString()}`.slice(-16_000);
+    const inspect = async () => {
+      try { output = (await fs.readFile(logPath, 'utf8')).slice(-16_000); }
+      catch {}
       const match = output.match(URL_PATTERN);
       if (match && !settled && state.tunnel === child && !child.__ochaIntentionalStop) {
         settled = true;
-        clearTimeout(timer);
+        cleanupTimers();
         state.tunnelUrl = match[0].replace(/\/$/, '');
         state.tunnelError = null;
         state.tunnelFailures = 0;
         state.tunnelRetryAfter = 0;
         state.tunnelPromise = null;
+        try { await persistTunnelRecord({ url: state.tunnelUrl, startedAt: state.tunnelStartedAt }); }
+        catch (error) { logger.warn({ message: error.message }, 'Could not persist public tunnel URL for controlled handoff'); }
         logger.info({ tunnel: new URL(state.tunnelUrl).host, pid: child.pid, generation, mode: 'on-demand' }, 'Shared on-demand TryCloudflare tunnel ready');
         resolve(state.tunnelUrl);
+        return;
       }
+      if (child.exitCode !== null || child.signalCode !== null) fail(new Error(`Quick Tunnel berhenti sebelum URL siap (exit ${child.exitCode ?? child.signalCode}). ${output.slice(-900)}`));
     };
-    child.stdout.on('data', inspect);
-    child.stderr.on('data', inspect);
-    child.once('error', error => fail(new Error(`cloudflared tidak dapat dijalankan (${error.code || error.message}). Pasang cloudflared pada VPS.`)));
+    pollTimer = setInterval(() => { void inspect(); }, 200);
+    pollTimer.unref?.();
+    child.once('error', error => fail(new Error(`cloudflared tidak dapat dijalankan (${error.code || error.message}). Periksa binary dan permission.`)));
     child.once('close', (code, signal) => {
       child.__ochaClosed = true;
-      clearTimeout(timer);
+      cleanupTimers();
       const wasCurrent = state.tunnel === child;
       const wasReady = settled && Boolean(state.tunnelUrl);
       if (!settled) fail(new Error(`Quick Tunnel berhenti sebelum URL siap (exit ${code ?? signal}). ${output.slice(-900)}`));
       child.__ochaExitCleanup = (async () => {
-        // Do not clear the active child or release its lease until the PID and
-        // lock records are reconciled. A subsequent start must await this work.
         await pidWritePromise;
         if (state.tunnelPidPath) {
           const record = await readJsonFile(state.tunnelPidPath);
@@ -869,6 +992,7 @@ async function startTunnelInternal() {
       try { child.kill('SIGTERM'); } catch {}
     }, 25_000);
     timer.unref?.();
+    void inspect();
   });
   state.tunnelPromise = readyPromise;
   await pidWritePromise;
@@ -901,7 +1025,13 @@ function startTunnel() {
   clearTunnelIdleTimer();
   return serializeTunnelOperation(async () => {
     if (!setting('publicTunnelEnabled', true)) throw new Error('Public TryCloudflare tunnel dinonaktifkan oleh owner.');
-    if (state.tunnelUrl && state.tunnel && !state.tunnel.__ochaClosed && state.tunnel.exitCode === null && state.tunnel.signalCode === null) return state.tunnelUrl;
+    if (state.tunnelUrl && state.tunnel && !state.tunnel.__ochaClosed && state.tunnel.exitCode === null && state.tunnel.signalCode === null) {
+      if (!state.tunnel.__ochaExternal || await isTunnelRecordAlive(state.tunnel.__ochaRecord)) return state.tunnelUrl;
+      state.tunnel.__ochaClosed = true;
+      state.tunnel = null;
+      state.tunnelUrl = null;
+      state.tunnelLease = null;
+    }
     return startTunnelInternal();
   }).catch(error => {
     if (setting('publicTunnelEnabled', true) && !state.tunnelUrl) state.tunnelError = error;
@@ -1135,14 +1265,52 @@ async function ensureWatchdog() {
     state.heartbeatPath = path.join(instanceDir, 'heartbeat');
     state.shutdownPath = path.join(instanceDir, 'shutdown');
     state.tunnelPidPath = path.join(instanceDir, 'cloudflared.pid');
+    state.ownerPath = path.join(instanceDir, 'owner.json');
+    state.watchdogPidPath = path.join(instanceDir, 'watchdog.json');
     await fs.mkdir(instanceDir, { recursive: true, mode: 0o700 });
+    await fs.rm(state.shutdownPath, { force: true }).catch(() => {});
+    const ownerInfo = await inspectLinuxProcess(process.pid);
+    await writeJsonAtomically(state.ownerPath, { pid: process.pid, startTicks: ownerInfo.startTicks || null, updatedAt: new Date().toISOString() });
     await fs.writeFile(state.heartbeatPath, String(Date.now()), { mode: 0o600 });
+
+    const existing = await readJsonFile(state.watchdogPidPath);
+    if (existing?.pid) {
+      const info = await inspectLinuxProcess(Number(existing.pid));
+      const isWatchdog = info.alive && info.commandLine.includes(path.basename(WATCHDOG_FILE));
+      if (isWatchdog && Number(existing.protocolVersion) >= WATCHDOG_PROTOCOL_VERSION) {
+        state.watchdog = {
+          pid: Number(existing.pid),
+          kill(signal = 'SIGTERM') { try { process.kill(Number(existing.pid), signal); } catch {} }
+        };
+        logger.debug({ pid: existing.pid, protocolVersion: existing.protocolVersion }, 'Existing Code Lab watchdog adopted');
+        return state.watchdog;
+      }
+      if (info.alive && !isWatchdog) {
+        throw new Error(`PID watchdog ${existing.pid} hidup tetapi identitas proses tidak cocok; tidak akan menimpa lock worker.`);
+      }
+      if (isWatchdog) {
+        // Replace only a verified legacy watchdog. Older workers pin the
+        // original parent PID and cannot follow an atomic runtime handoff.
+        try { process.kill(Number(existing.pid), 'SIGTERM'); } catch (error) { if (error?.code !== 'ESRCH') throw error; }
+        const deadline = Date.now() + 1800;
+        while (Date.now() < deadline) {
+          const current = await inspectLinuxProcess(Number(existing.pid));
+          if (!current.alive) break;
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        const current = await inspectLinuxProcess(Number(existing.pid));
+        if (current.alive) throw new Error(`Legacy Code Lab watchdog PID ${existing.pid} tidak berhenti; tidak membuat worker duplikat.`);
+      }
+      await fs.rm(state.watchdogPidPath, { force: true }).catch(() => {});
+    }
+
     const child = spawn(process.execPath, [WATCHDOG_FILE, String(process.pid), state.instanceId, instanceDir, String(state.runtimeName || selectedRuntime())], {
       detached: true, stdio: 'ignore', windowsHide: true,
       env: { PATH: process.env.PATH || '', HOME: process.env.HOME || os.tmpdir() }
     });
     state.watchdog = child;
     child.unref();
+    if (child.pid) await writeJsonAtomically(state.watchdogPidPath, { pid: child.pid, protocolVersion: WATCHDOG_PROTOCOL_VERSION, startedAt: new Date().toISOString() });
     child.once('error', error => {
       if (state.watchdog === child) state.watchdog = null;
       logger.warn({ code: error.code, message: error.message }, 'Code Lab orphan watchdog failed to start');
@@ -1172,22 +1340,37 @@ export async function startCodeLab() {
   if (state.startPromise) return state.startPromise;
   state.startPromise = (async () => {
     state.closing = false;
+    // Direct Code Lab consumers (tests/embedded usage) still get a one-time
+    // runtime probe. The main application sets this marker after its central
+    // host preflight so a source hot reload never probes Docker/Podman again.
+    if (process.env.OCHA_HOST_PREFLIGHT_COMPLETED !== '1' && !state.prerequisites.runtime) {
+      try { await ensureRuntimePrerequisites(); }
+      catch (error) { logger.warn({ message: error.message }, 'Code Lab runtime remains unavailable after startup preflight; execution stays fail-closed'); }
+    }
     if (!state.startedAt) state.startedAt = new Date().toISOString();
     if (!state.rootDir) state.rootDir = path.resolve(String(setting('tempDir', path.join(os.tmpdir(), 'ocha-code-lab'))));
-    if (!state.instanceId) state.instanceId = `${process.pid}-${crypto.randomBytes(6).toString('hex')}`;
+    if (!state.instanceId) state.instanceId = `main-${crypto.createHash('sha256').update(`${path.resolve(process.cwd())}:${state.rootDir}`).digest('hex').slice(0, 14)}`;
     if (!state.instanceDir) state.instanceDir = path.join(state.rootDir, `instance-${state.instanceId}`);
     await fs.mkdir(state.instanceDir, { recursive: true, mode: 0o700 });
+    state.heartbeatPath = path.join(state.instanceDir, 'heartbeat');
+    state.shutdownPath = path.join(state.instanceDir, 'shutdown');
+    state.tunnelPidPath = path.join(state.instanceDir, 'cloudflared.pid');
+    state.ownerPath = path.join(state.instanceDir, 'owner.json');
+    state.watchdogPidPath = path.join(state.instanceDir, 'watchdog.json');
+    state.tunnelLogPath = path.join(state.instanceDir, 'cloudflared.log');
+    await fs.rm(state.shutdownPath, { force: true }).catch(() => {});
 
-    if (!state.prerequisites.runtime) {
-      try { await ensureRuntimePrerequisites({ force: true }); }
-      catch (error) { logger.warn({ message: error.message }, 'Container runtime unavailable; Python/Node execution remains fail-closed'); }
+    // Runtime provisioning has already been attempted by the host bootstrap.
+    // Do not re-run Docker/Podman startup on every JS hot reload. The runtime
+    // is revalidated lazily on the first Python/Node execution request.
+    await ensureServer();
+    if (process.env.OCHA_HANDOFF_FROM_PID) await waitForHandoffLease();
+    if (await adoptExistingTunnel()) {
+      await ensureWatchdog();
+      if (!heartbeatTimer) heartbeatTimer = startHeartbeat();
     }
 
-    await ensureServer();
-
-    // Quick Tunnel is deliberately lazy. Bot startup never opens a public URL
-    // or leaves cloudflared running until a user actually asks for a preview.
-    logger.info({ mode: 'on-demand', gateway: `127.0.0.1:${state.server.address()?.port}` }, 'Code Lab initialized; public tunnel will start on first preview request');
+    logger.info({ mode: 'on-demand', gateway: `127.0.0.1:${state.server.address()?.port}`, tunnelAdopted: Boolean(state.tunnelUrl), tunnel: state.tunnelUrl || null }, 'Code Lab initialized');
     return getCodeLabStatus();
   })();
   try { return await state.startPromise; }
@@ -1362,6 +1545,193 @@ export async function updateWebsiteSession({ ownerId, chatId = '', sessionId, ti
   return { id: session.id, language: 'website', title: session.title, summary: session.summary, fileCount: entries.length, totalBytes, version: session.projectVersion, status: session.status, previewUrl, expiresAt: new Date(session.expiresAt).toISOString(), ttlMs: session.expiresAt - Date.now(), updated: true };
 }
 
+export async function prepareCodeLabHandoff(nextPid) {
+  if (state.handoffInProgress) return { preserved: Boolean(state.tunnelUrl), instanceId: state.instanceId };
+  const replacementPid = Number(nextPid);
+  if (!Number.isSafeInteger(replacementPid) || replacementPid <= 1) throw new Error('PID proses pengganti tidak valid; handoff tidak dimulai.');
+  const nextOwner = await inspectLinuxProcess(replacementPid);
+  if (!nextOwner.alive || (process.platform === 'linux' && !nextOwner.startTicks)) {
+    throw new Error(`Proses pengganti PID ${replacementPid} belum hidup atau identitas prosesnya tidak dapat diverifikasi; handoff tidak dimulai.`);
+  }
+  state.handoffInProgress = true;
+  state.closing = true;
+  clearTunnelIdleTimer();
+  if (state.startPromise) { try { await state.startPromise; } catch {} }
+  if (runtimeProbePromise) { try { await runtimeProbePromise; } catch {} }
+  if (state.sessions.size) {
+    for (const session of [...state.sessions.values()]) await cleanupSession(session.id, 'source-handoff');
+  }
+  state.queue.length = 0;
+  if (state.server) {
+    const server = state.server;
+    await new Promise(resolve => {
+      let settled = false;
+      const finish = () => { if (settled) return; settled = true; clearTimeout(forceTimer); resolve(); };
+      const forceTimer = setTimeout(() => {
+        try { server.closeAllConnections?.(); } catch {}
+        finish();
+      }, 1800);
+      server.close(finish);
+    });
+    state.server = null;
+  }
+
+  const previousTunnelPid = Number(state.tunnel?.pid) || null;
+  let preserved = false;
+  if (state.tunnel && state.tunnelUrl && state.tunnelLease) {
+    const record = await readJsonFile(state.tunnelLease.path);
+    if (record?.token === state.tunnelLease.token && await isTunnelRecordAlive(record)) {
+      const next = { ...record, ownerPid: replacementPid, ownerStartTicks: nextOwner.startTicks || null, handoffAt: new Date().toISOString() };
+      await writeJsonAtomically(state.tunnelLease.path, next);
+      if (state.tunnelPidPath) await writeJsonAtomically(state.tunnelPidPath, next);
+      preserved = true;
+      logger.info({ tunnelPid: record.pid, nextOwnerPid: replacementPid, url: record.url }, 'Healthy TryCloudflare tunnel ownership transferred to replacement process');
+    }
+  }
+
+  if (!preserved) await stopTunnel();
+
+  // The watchdog is a separate process. V2 reads owner.json on every check,
+  // so it can survive a parent PID handoff without being restarted. A legacy
+  // worker pins the old parent PID; replace that worker only, never the tunnel.
+  if (state.ownerPath) await writeJsonAtomically(state.ownerPath, { pid: replacementPid, startTicks: nextOwner.startTicks || null, updatedAt: new Date().toISOString() });
+  if (state.heartbeatPath) await fs.writeFile(state.heartbeatPath, String(Date.now()), { mode: 0o600 });
+
+  const watchdogRecord = state.watchdogPidPath ? await readJsonFile(state.watchdogPidPath) : null;
+  const watchdogPid = Number(watchdogRecord?.pid || state.watchdog?.pid) || null;
+  const watchdogProtocol = Number(watchdogRecord?.protocolVersion || (state.watchdog ? WATCHDOG_PROTOCOL_VERSION : 0));
+  let watchdogPreserved = false;
+  if (watchdogPid && watchdogProtocol >= WATCHDOG_PROTOCOL_VERSION) {
+    const watchdogInfo = await inspectLinuxProcess(watchdogPid);
+    watchdogPreserved = watchdogInfo.alive && watchdogInfo.commandLine.includes(path.basename(WATCHDOG_FILE));
+  }
+
+  if (!watchdogPreserved && watchdogPid) {
+    const watchdogInfo = await inspectLinuxProcess(watchdogPid);
+    if (watchdogInfo.alive) {
+      if (!watchdogInfo.commandLine.includes(path.basename(WATCHDOG_FILE))) {
+        throw new Error(`PID ${watchdogPid} tidak dapat diverifikasi sebagai Code Lab watchdog; handoff dibatalkan.`);
+      }
+      try { process.kill(watchdogPid, 'SIGTERM'); }
+      catch (error) { if (error?.code !== 'ESRCH') throw error; }
+      const deadline = Date.now() + 1800;
+      while (Date.now() < deadline) {
+        const current = await inspectLinuxProcess(watchdogPid);
+        if (!current.alive) break;
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      const current = await inspectLinuxProcess(watchdogPid);
+      if (current.alive) {
+        try { process.kill(watchdogPid, 'SIGKILL'); } catch (error) { if (error?.code !== 'ESRCH') throw error; }
+        const killDeadline = Date.now() + 1200;
+        while (Date.now() < killDeadline) {
+          const latest = await inspectLinuxProcess(watchdogPid);
+          if (!latest.alive) break;
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        if ((await inspectLinuxProcess(watchdogPid)).alive) {
+          throw new Error(`Code Lab watchdog PID ${watchdogPid} tidak berhenti; proses pengganti tidak boleh mengambil alih worker yang belum selesai.`);
+        }
+      }
+    }
+    await fs.rm(state.watchdogPidPath, { force: true }).catch(() => {});
+  }
+
+  if (heartbeatTimer) clearInterval(heartbeatTimer);
+  heartbeatTimer = null;
+  if (preserved) {
+    state.tunnel = null;
+    state.tunnelLease = null;
+    state.tunnelUrl = null;
+    state.tunnelPromise = null;
+  }
+  state.watchdog = null;
+  state.watchdogPromise = null;
+
+  const result = {
+    preserved,
+    watchdogPreserved,
+    instanceId: state.instanceId,
+    instanceDir: state.instanceDir,
+    tunnelPid: preserved ? previousTunnelPid : null
+  };
+  logger.info({ tunnelPreserved: preserved, watchdogPreserved, nextPid: replacementPid }, 'Code Lab runtime handoff prepared without duplicate tunnel/watchdog processes');
+  return result;
+}
+
+export async function cancelCodeLabHandoff() {
+  // A failed replacement must leave the current runtime usable. The main
+  // process retains its instance lock until this rollback completes.
+  state.handoffInProgress = false;
+  state.closing = false;
+  clearTunnelIdleTimer();
+
+  if (state.instanceDir) {
+    state.heartbeatPath ||= path.join(state.instanceDir, 'heartbeat');
+    state.shutdownPath ||= path.join(state.instanceDir, 'shutdown');
+    state.tunnelPidPath ||= path.join(state.instanceDir, 'cloudflared.pid');
+    state.ownerPath ||= path.join(state.instanceDir, 'owner.json');
+    state.watchdogPidPath ||= path.join(state.instanceDir, 'watchdog.json');
+    await fs.rm(state.shutdownPath, { force: true }).catch(() => {});
+
+    const ownerInfo = await inspectLinuxProcess(process.pid);
+    await writeJsonAtomically(state.ownerPath, {
+      pid: process.pid,
+      startTicks: ownerInfo.startTicks || null,
+      updatedAt: new Date().toISOString(),
+      rollbackAt: new Date().toISOString()
+    });
+
+    const lockPath = state.rootDir ? path.join(state.rootDir, QUICK_TUNNEL_LOCK_NAME) : null;
+    let record = state.tunnelLease?.path ? await readJsonFile(state.tunnelLease.path) : null;
+    if (!record && lockPath) record = await readJsonFile(lockPath);
+    if (record?.instanceId === state.instanceId && await isTunnelRecordAlive(record)) {
+      const currentOwnerPid = Number(record.ownerPid) || 0;
+      if (currentOwnerPid !== process.pid) {
+        const currentOwner = await inspectLinuxProcess(currentOwnerPid);
+        if (currentOwner.alive) {
+          throw new Error(`Rollback Code Lab ditunda: owner tunnel PID ${currentOwnerPid} masih hidup; tidak mengambil alih proses yang belum berhenti.`);
+        }
+        record = {
+          ...record,
+          ownerPid: process.pid,
+          ownerStartTicks: ownerInfo.startTicks || null,
+          handoffRollbackAt: new Date().toISOString()
+        };
+        await writeJsonAtomically(lockPath || state.tunnelLease.path, record);
+        await writeJsonAtomically(state.tunnelPidPath, record);
+      }
+      state.tunnelLease = { path: lockPath || state.tunnelLease?.path, token: record.token, instanceId: state.instanceId };
+      if (!state.tunnel || state.tunnel.__ochaClosed) {
+        state.tunnel = {
+          pid: Number(record.pid),
+          exitCode: null,
+          signalCode: null,
+          __ochaClosed: false,
+          __ochaExternal: true,
+          __ochaIntentionalStop: false,
+          __ochaLeaseToken: record.token,
+          __ochaGeneration: Number(record.generation) || 0,
+          __ochaRecord: record
+        };
+      }
+      state.tunnelUrl = String(record.url);
+      state.tunnelStartedAt = record.startedAt || record.createdAt || null;
+      state.tunnelGeneration = Math.max(state.tunnelGeneration, Number(record.generation) || 0);
+    }
+
+    await ensureServer();
+    if (state.tunnel && state.tunnelUrl) {
+      const watchdogRecord = await readJsonFile(state.watchdogPidPath);
+      if (watchdogRecord?.pid || state.watchdog) await ensureWatchdog();
+      if (!heartbeatTimer) heartbeatTimer = startHeartbeat();
+    }
+  }
+
+  logger.warn({ pid: process.pid, tunnelRestored: Boolean(state.tunnelUrl), gatewayListening: Boolean(state.server?.listening) }, 'Failed source handoff rolled back; previous Code Lab runtime restored');
+  return { restored: true, tunnelPreserved: Boolean(state.tunnelUrl), gatewayListening: Boolean(state.server?.listening) };
+}
+
 export async function stopCodeLab() {
   if (state.closing) return;
   state.closing = true;
@@ -1384,18 +1754,34 @@ export async function stopCodeLab() {
   if (state.shutdownPath) await fs.writeFile(state.shutdownPath, 'clean', { mode: 0o600 }).catch(() => {});
   const watchdog = state.watchdog;
   if (watchdog) {
-    try { watchdog.kill('SIGTERM'); } catch {}
-    if (!(await waitForChildClose(watchdog, 1200))) {
-      try { watchdog.kill('SIGKILL'); } catch {}
-      await waitForChildClose(watchdog, 800);
+    if (typeof watchdog.once === 'function') {
+      try { watchdog.kill('SIGTERM'); } catch {}
+      if (!(await waitForChildClose(watchdog, 1200))) {
+        try { watchdog.kill('SIGKILL'); } catch {}
+        await waitForChildClose(watchdog, 800);
+      }
+    } else if (Number(watchdog.pid) > 1) {
+      try { process.kill(Number(watchdog.pid), 'SIGTERM'); } catch {}
+      const deadline = Date.now() + 1200;
+      while (Date.now() < deadline) {
+        const info = await inspectLinuxProcess(watchdog.pid);
+        if (!info.alive) break;
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      const info = await inspectLinuxProcess(watchdog.pid);
+      if (info.alive) { try { process.kill(Number(watchdog.pid), 'SIGKILL'); } catch {} }
     }
   }
+  if (state.watchdogPidPath) await fs.rm(state.watchdogPidPath, { force: true }).catch(() => {});
   state.watchdog = null;
   state.watchdogPromise = null;
   if (state.instanceDir) await fs.rm(state.instanceDir, { recursive: true, force: true }).catch(() => {});
   state.instanceDir = null;
   state.instanceId = null;
   state.tunnelPidPath = null;
+  state.tunnelLogPath = null;
+  state.ownerPath = null;
+  state.watchdogPidPath = null;
   state.heartbeatPath = null;
   state.shutdownPath = null;
   state.startedAt = null;
@@ -1404,6 +1790,27 @@ export async function stopCodeLab() {
   state.prerequisites.runtimeError = null;
   runtimeProbeRetryAfter = 0;
   logger.info('Code Lab gateway, workers, tunnel, and temporary sessions stopped');
+}
+
+export function applyHostPreflightResult(result = {}) {
+  const record = result.cached || result;
+  if (!record || typeof record !== 'object') return getCodeLabStatus();
+  const selected = String(record.runtimeSelected || record.runtime || '');
+  if (selected === 'docker' || selected === 'podman') {
+    state.runtimeName = selected;
+    state.prerequisites.runtime = true;
+    state.prerequisites.runtimeError = null;
+    runtimeProbeRetryAfter = 0;
+  } else if (selected === 'none') {
+    state.runtimeName = null;
+    state.prerequisites.runtime = null;
+    const detail = String(record.lastOutputTail || '').trim().slice(-1200);
+    state.prerequisites.runtimeError = `Host preflight belum menemukan Docker/Podman yang dapat digunakan.${detail ? ` ${detail}` : ''}`;
+    runtimeProbeRetryAfter = Date.now() + 15_000;
+  }
+  if (record.cloudflared === 'available') state.prerequisites.cloudflared = 'available (host preflight)';
+  else if (record.cloudflared === 'unavailable-or-unknown') state.prerequisites.cloudflared = null;
+  return getCodeLabStatus();
 }
 
 export function getCodeLabStatus() {

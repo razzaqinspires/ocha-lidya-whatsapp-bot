@@ -2,7 +2,11 @@
 
 Ocha Lidya is a modular WhatsApp automation framework built with native Node.js ESM and `@whiskeysockets/baileys`. The project separates WhatsApp transport, message serialization, command dispatch, plugin execution, persistent configuration, and durable JSONL storage.
 
-## Persistent per-user Website Builder and Project Library (v1.10.5)
+## Owner group management and per-group interaction controls (v1.10.14)
+
+Owner-only `.joingc <https://chat.whatsapp.com/INVITE_CODE>` joins a WhatsApp group using the official invite code endpoint after strict host/URL validation. A newly joined group is recorded as muted by default. From the owner private chat, `.mute off` enables only the most recently joined group; `.mute on` mutes that same group again. Use `.mute off <GROUP_JID>` or `.mute on <GROUP_JID>` to target any cached group, and `.mute off all` / `.mute on all` to control all groups. `.groupinfo` now displays the bot interaction state for every cached group. Group membership and mute state do not disable metadata or contact synchronization. See `docs/GROUP_MUTE_AND_MESSAGE_FLOW.md`.
+
+## Autonomous runtime, transactional hot reload, and persistent per-user Website Builder (v1.10.13)
 
 Nexora now stores each user's website source in a private, durable repository namespace independent from temporary Code Lab previews. Each repository retains project memory (summary, architecture, features, decisions, next steps), task history, file hashes, version snapshots, and local Git history when Git is available. Follow-up requests update only changed files and preserve the rest of the repository. `.project list/status/use/history/memory/storage/zip` manages the user's own projects. ZIP delivery defaults to `ask`; `.project export always` sends an archive after every successful update, while `off` disables automatic delivery but leaves manual export available. ZIPs include only one selected repository—never the full library root—and Project Library operations are private-chat-only. See `docs/PROJECT_LIBRARY.md` and `docs/NEXORA_WEBSITE_BUILDER.md`.
 
@@ -36,16 +40,11 @@ The expected bot number is a validation setting. The connection supports both QR
 
 ```bash
 cp .env.example .env
-# Isi GITHUB_PAT di .env bila auto-push GitHub ingin diaktifkan.
-npm install
-npm run git:setup
-# Set identitas Git satu kali bila belum tersedia:
-git config user.name "Nama Commit"
-git config user.email "email-github@example.com"
-npm run check
-npm test
+# Isi provider API key / GITHUB_PAT sesuai fitur yang akan dipakai.
 npm start
 ```
+
+`npm start` menjalankan `prestart` otomatis. Dependency Node yang hilang akan dipasang, lalu host preflight mengurus Bash (jika bisa dipasang dengan hak non-interaktif), Git, Python 3, Go, Cloudflared, dan runtime container pada Linux yang didukung. Tidak diperlukan `npm install`, `npm run git:setup`, atau `git config` untuk menjalankan bot dan fitur inti. GitHub auto-push tetap opsional: diperlukan clone/remote yang sesuai serta `GITHUB_PAT`; ZIP source tidak akan diam-diam menginisialisasi atau mendorong kode ke repository pihak lain. Node.js dan npm sendiri adalah prasyarat untuk dapat menjalankan `npm start` dan harus tersedia sebelum langkah ini.
 
 `npm start` first checks and installs missing declared Node dependencies. On Linux, after loading saved configuration, startup runs the Nexora host manager with the `auto` runtime preference by default. It detects the actual init system, avoids `sudo` when already root, attempts a locked manual Docker daemon only on a root host without a service manager, and tries Podman if Docker cannot start. It also validates/pulls the Python and Node images and verifies `cloudflared`. If host capabilities do not permit any container engine, the bot stays online and Code Lab execution is reported unavailable rather than pretending it is ready. See `docs/CODE_LAB.md` and `docs/OWNER_SECURITY.md`.
 
@@ -74,8 +73,9 @@ For an existing installation, v1.5.0 through v1.7.1 perform one-time configurati
 - npm.
 - A dedicated WhatsApp account for the bot.
 - Writable persistent storage for `data/` and `sessions/`.
-- Python 3 and Go only if their developer runners are intentionally enabled.
-- Docker or rootless Podman plus `cloudflared` for Nexora Code Lab. On supported Linux systems, startup checks and provisions these dependencies automatically when it has the required privileges.
+- Node.js 20.18+ and npm are the only runtime prerequisites for invoking `npm start`.
+- On supported Linux systems, `npm start` automatically checks/provisions Bash, Git, Python 3, Go, Docker/Podman, runtime images, and Cloudflared when a supported package manager and required non-interactive privileges are available.
+- A host that blocks container namespaces, cgroups, netlink, or storage drivers cannot be made container-capable by application code. Code Lab reports that exact host limitation and keeps Python/Node container execution fail-closed; WhatsApp and AI continue.
 
 The syntax checker scans every JavaScript file under `src/`, `test/`, and `scripts/`, including the central configuration module at `src/config.js`.
 
@@ -253,7 +253,9 @@ Default settings are declared in `src/config.js`; runtime changes are persisted 
 | `security.masterCliEnabled` | `false` | CLI shell (`$`) switch; independent of other runners |
 | `security.masterPythonEnabled` | `false` | Python runner (`>>`) switch |
 | `security.masterGolangEnabled` | `false` | Go runner (`>>>`) switch |
-| `features.groupsMuted` | `true` | Silence all group commands and group AI; metadata/contact ingestion stays active |
+| `features.groupsMuted` | `true` | Global default for group command/AI mute; metadata/contact ingestion stays active |
+| `features.groupMuteOverrides` | `{}` | Per-group interaction state keyed by WhatsApp Group JID |
+| `features.lastJoinedGroupId` | `''` | Last group joined through owner `.joingc`; target for `.mute on/off` |
 | `database.segmentMaxBytes` | 8 MiB | Journal archive threshold |
 | `database.archiveMaxCount` | 120 | Maximum retained ZIP archives |
 | `database.mirrorEnabled` | `true` | Maintain local replica |
@@ -278,7 +280,7 @@ Default multi-prefix values are `.`, `!`, `/`, and `#`.
 | `.about` | `.botinfo` | Bot identity, creator, and organization information |
 | `.profile` | `.me`, `.level`, `.xp` | Personal XP, level, rank, relationship role, and progress card |
 | `.runtime` | `.system`, `.sysinfo` | Node runtime, memory, host and process details |
-| `.groupinfo` | `.gcinfo`, `.grouplist` | In a private chat, navigate cached groups by replying with a number; in a group, show that group's cached metadata |
+| `.groupinfo` | `.gcinfo`, `.grouplist` | Owner-only private group list with active/mute statuses; in groups, show that group's cached metadata |
 | `.run python <code>` | `.execute`, `.previewcode` | Execute Python/Node.js or display HTML in an isolated temporary web preview |
 | Natural-language `coba jalankan` | — | Run the most recent assistant code block and return a session URL |
 | `.nexora status` | `.capability`, `.aitools` | Owner-only AI capability and Code Lab worker controls |
@@ -320,10 +322,11 @@ Default multi-prefix values are `.`, `!`, `/`, and `#`.
 | `.master cli on/off` | — | Enable/disable shell CLI directly; no global `exec` prerequisite |
 | `.master python on/off` | — | Enable/disable Python runner |
 | `.master golang on/off` | — | Enable/disable Go runner |
-| `.mute on/off/status` | `.groupmute` | Owner-only, private-chat-only mute for all group interactions; group metadata/contact indexing remains active |
+| `.joingc <url>` | `.joingroup` | Owner-only private command; joins a group using an official WhatsApp invite link and starts it muted |
+| `.mute on/off/status [all|GROUP_JID]` | `.groupmute` | Owner-only private control for global mute or one group's interaction state; metadata/contact indexing remains active |
 | `.test <type> <options>` | `.testmsg`, `.messagetest` | Owner-only Baileys message lab: native-flow, hydrated template, event/date, poll, PTV, view-once, AI rich, and carousel |
 
-All owner plugins use `ownerOnly: true`. `.groupinfo` is intentionally available in private chat: it lists only the local cached group index and does not request fresh metadata for already-cached groups.
+All owner plugins use `ownerOnly: true`. The private group inventory from `.groupinfo` is limited to the verified owner; users in a group can still inspect that current group's cached metadata. `.joingc` is private-chat-only and accepts only a direct HTTPS invitation link hosted at `chat.whatsapp.com`; it verifies invite metadata when the Baileys socket supports it before joining. Newly joined groups start muted. `.mute off` in the owner's private chat targets the last group joined through `.joingc`, while `.mute on/off all` retains explicit global control. `.groupinfo` is intentionally available in private chat: it lists only the local cached group index, displays active/mute state, and does not request fresh metadata for already-cached groups.
 
 ### Prefix examples
 
@@ -359,7 +362,7 @@ Master syntax is reserved outside the normal prefix parser and is owner-only:
 | `>> <Python>` | Python |
 | `>>> <Go>` | Go |
 
-All developer runners are disabled by default. Each runner is independent: `.master eval on` enables `>`/`=>`, `.master cli on` immediately enables `$`, `.master python on` enables `>>`, and `.master golang on` enables `>>>`. `.master exec on/off` remains only as a temporary legacy alias for `.master cli on/off`; it is not a separate global gate. Group interaction is muted by default; use `.mute off` in a private chat to enable it for all groups, and `.mute on` to silence all groups again. These settings are persistent database settings, not environment variables.
+All developer runners are disabled by default. Each runner is independent: `.master eval on` enables `>`/`=>`, `.master cli on` immediately enables `$`, `.master python on` enables `>>`, and `.master golang on` enables `>>>`. `.master exec on/off` remains only as a temporary legacy alias for `.master cli on/off`; it is not a separate global gate. Group interaction is muted by default. After `.joingc <url>`, use `.mute off` in the owner private chat to enable only the most recently joined group; `.mute on` mutes that group again. Use `.mute off all` / `.mute on all` for explicit global control, or append a Group JID to target one group. These settings are persistent database settings, not environment variables.
 
 **Security warning:** Node.js `vm` is not a security boundary. Shell, Python, and Go commands can affect the host. Do not enable them on a production host containing secrets or user data. Use a dedicated unprivileged container/VM, read-only mounts, no host secrets, CPU/memory/PID limits, and restricted networking. The bot should never run as root.
 
@@ -475,7 +478,7 @@ See [`docs/AUTO_GIT_SYNC.md`](docs/AUTO_GIT_SYNC.md) for behavior, failure handl
 
 ## 16. Source hot reload
 
-The source loader watches JavaScript files throughout `src/`, not just command plugins. Adding, editing, or deleting a file under `src/plugins/` updates the plugin registry without restarting WhatsApp. Changes to core, library, master, or other non-plugin JavaScript modules trigger a controlled process restart because Node.js ESM modules and their dependency graphs cannot safely be replaced in place after import. JSON and other non-JavaScript source/documentation files are not imported by the source loader, but eligible files are monitored by the repository-wide Git watcher for auto-commit and push. Runtime directories such as `sessions/`, `data/`, and `logs/` are excluded.
+The transactional source watcher monitors regular files throughout `src/` and `scripts/`, plus dependency manifests. A stable batch of JavaScript plugin modules is imported into a shadow registry and swapped atomically without restarting WhatsApp. Core modules, plugin assets/manifests, scripts, and dependency changes trigger one controlled restart per completed folder-copy batch. The watcher validates JavaScript, shell, and JSON syntax, rejects invalid batches, pauses Auto Git Sync during writes, and waits for file revisions to stabilize before applying. Runtime directories such as `sessions/`, `data/`, and `logs/` are excluded.
 
 See [`docs/HOT_RELOAD.md`](docs/HOT_RELOAD.md).
 
@@ -527,7 +530,7 @@ ocha-lidya-bot/
 
 ## 18. Version and change history
 
-Current package version: **1.10.10** (configuration schema v24).
+Current package version: **1.10.14** (configuration schema v25).
 
 See [`docs/CHANGE_LOG.md`](docs/CHANGE_LOG.md) for release history and [`docs/DATABASE_DESIGN.md`](docs/DATABASE_DESIGN.md) for persistence internals.
 
@@ -558,7 +561,7 @@ At startup Ocha Lidya creates `data/contact.jsonl` and `data/group-metadata.json
 
 The first connection performs one `groupFetchAllParticipating()` batch and persists the returned metadata. A `group.bootstrap.complete` marker prevents repeat full refreshes after a successful bootstrap. Thereafter `groups.upsert`, `groups.update`, and `group-participants.update` events update the local cache. A cached group does not trigger `groupMetadata()` network requests when `.groupinfo` is used. A group missing from cache may receive one lazy fetch, protected by an in-flight guard and configurable cooldown. Member additions/modifications add newly verified PN numbers to the permanent contacts file; member removals update only the group metadata log. When the bot itself is removed/leaves, that group's metadata cache entry is deleted, but contacts are never deleted.
 
-`.groupinfo` in a private chat lists groups already in the metadata cache. Reply to the exact list message with `1`-`10` to open a group; `0` advances a page and `00` returns to the previous page. Reply `0` to a detail view to return to the list. `.groupinfo` inside a group shows that group's cache. It does not force repeated metadata requests. See [`docs/CONTACTS_AND_GROUP_CACHE.md`](docs/CONTACTS_AND_GROUP_CACHE.md) for event semantics, file formats, PN/LID resolution order, and recovery behavior.
+`.groupinfo` in a private chat is available only to the verified owner and lists groups already in the metadata cache with active/mute status. Reply to the exact list message with `1`-`10` to open a group; `0` advances a page and `00` returns to the previous page. Reply `0` to a detail view to return to the list. `.groupinfo` inside a group shows that group's cache. It does not force repeated metadata requests. See [`docs/CONTACTS_AND_GROUP_CACHE.md`](docs/CONTACTS_AND_GROUP_CACHE.md) for event semantics, file formats, PN/LID resolution order, and recovery behavior.
 
 Command responses use the serializer's ordinary text transport by default. This keeps every response readable, searchable, selectable, and copyable in standard WhatsApp clients. `.menu` and `.groupinfo` show explicit command syntax as text. A quoted reply to an active command screen is routed through the command-session lane before AI detection; these in-memory sessions are sender-bound and expire after 10 minutes by default. In groups, AI quoted-reply activation requires a known AI answer message ID, not merely any message authored by the bot. AI reply chains preserve up to 8 linked AI turns and 12,000 characters of context. See [`docs/REPLY_ROUTING_AND_TEST_MESSAGES.md`](docs/REPLY_ROUTING_AND_TEST_MESSAGES.md). The legacy `ui.buttonsEnabled` setting and `.buttons on/off/status` command remain for configuration compatibility, but ON does not wrap all command replies in native-flow payloads. Interactive APIs are available only to explicit feature implementations after client compatibility testing; a successful relay/ACK does not guarantee that a WhatsApp client can render the message.
 
@@ -567,7 +570,7 @@ Command responses use the serializer's ordinary text transport by default. This 
 
 Master runners are independent in schema v11. `$` is controlled directly by `.master cli on/off`; JavaScript eval (`>` and `=>`), Python (`>>`), and Go (`>>>`) each have their own independent switches. There is no longer a global `exec` gate. `.master exec on/off` is only a temporary compatibility alias for `.master cli on/off`; use `cli` in new commands and documentation. `.master status` displays the owner-only console control panel. See [`docs/MASTER_CONSOLE.md`](docs/MASTER_CONSOLE.md).
 
-All group interaction is muted by default through `features.groupsMuted: true`. `.mute on/off/status` is owner-only and private-chat-only. While muted, group commands and group AI are not dispatched, but incoming event processing still indexes verified contacts and maintains group metadata. Private-chat commands and AI are unaffected. See [`docs/GROUP_MUTE_AND_MESSAGE_FLOW.md`](docs/GROUP_MUTE_AND_MESSAGE_FLOW.md).
+Group interaction defaults to mute through `features.groupsMuted: true`, with per-group overrides in `features.groupMuteOverrides`. `.joingc <url>` is owner-only and joins a WhatsApp group from a direct official invite link; the new group starts muted. `.mute off` then enables only that last joined group, while `.mute on/off all` controls every group. `.groupinfo` displays all cached groups with their active/mute state. Group metadata and verified contact indexing remain active while interactions are muted. See [`docs/GROUP_MUTE_AND_MESSAGE_FLOW.md`](docs/GROUP_MUTE_AND_MESSAGE_FLOW.md).
 
 The message-flow monitor labels private/group destinations and consumes Baileys `messages.update` and `message-receipt.update` events. Its local terminal legend is `✓ SENT`, `✓✓ DELIVERED`, `✓✓ READ`, `✓✓ PLAYED`, and a separately colored `BOT REPLIED` marker. It does not modify WhatsApp's own tick UI or create a third WhatsApp checkmark. The monitor stores only bounded metadata, not message bodies.
 

@@ -8,6 +8,7 @@ if (!Number.isInteger(parentPid) || !instanceId || !instanceDir || !runtime) pro
 const heartbeat = path.join(instanceDir, 'heartbeat');
 const shutdown = path.join(instanceDir, 'shutdown');
 const tunnelPidFile = path.join(instanceDir, 'cloudflared.pid');
+const ownerFile = path.join(instanceDir, 'owner.json');
 const tunnelLockFile = path.join(path.dirname(instanceDir), '.cloudflared-quick-tunnel.lock');
 const staleAfterMs = 30_000;
 const intervalMs = 2000;
@@ -98,12 +99,18 @@ const timer = setInterval(() => {
   checking = true;
   try {
     if (fs.existsSync(shutdown)) {
+      cleanupOrphans();
       clearInterval(timer);
       return;
     }
     let age = Infinity;
     try { age = Date.now() - fs.statSync(heartbeat).mtimeMs; } catch {}
-    if (!processExists(parentPid) || age > staleAfterMs) {
+    let owner = null;
+    try { owner = JSON.parse(fs.readFileSync(ownerFile, 'utf8')); } catch {}
+    const currentOwnerPid = Number(owner?.pid) || parentPid;
+    const ownerInfo = inspectProcess(currentOwnerPid);
+    const identityMatches = ownerInfo && (!owner?.startTicks || !ownerInfo.startTicks || String(owner.startTicks) === String(ownerInfo.startTicks));
+    if (!processExists(currentOwnerPid) || !identityMatches || age > staleAfterMs) {
       cleanupOrphans();
       clearInterval(timer);
     }

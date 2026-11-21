@@ -89,6 +89,43 @@ install_packages() {
   esac
 }
 
+ensure_cli_tools() {
+  local missing=() packages=()
+  command -v git >/dev/null 2>&1 || missing+=(git)
+  command -v python3 >/dev/null 2>&1 || missing+=(python3)
+  command -v go >/dev/null 2>&1 || missing+=(go)
+  if (( ${#missing[@]} )); then
+    case "$PKG_FAMILY" in
+      apt)
+        for tool in "${missing[@]}"; do
+          case "$tool" in git) packages+=(git) ;; python3) packages+=(python3 python3-venv) ;; go) packages+=(golang-go) ;; esac
+        done
+        ;;
+      dnf|yum)
+        for tool in "${missing[@]}"; do
+          case "$tool" in git) packages+=(git) ;; python3) packages+=(python3) ;; go) packages+=(golang) ;; esac
+        done
+        ;;
+      apk)
+        for tool in "${missing[@]}"; do
+          case "$tool" in git) packages+=(git) ;; python3) packages+=(python3 py3-pip) ;; go) packages+=(go) ;; esac
+        done
+        ;;
+      *) warn "Tidak ada package manager yang didukung untuk CLI tambahan: ${missing[*]}" ;;
+    esac
+    if (( ${#packages[@]} )); then
+      # Do not abort WhatsApp/AI startup when optional host tools cannot be
+      # installed; report exact capabilities that remain unavailable.
+      install_packages "${packages[@]}" || warn "Instalasi CLI tambahan gagal; fitur yang memerlukannya akan tetap fail-closed."
+    fi
+  fi
+  printf '[NEXORA_CLI_TOOLS] git=%s python3=%s go=%s bash=%s\n' \
+    "$(command -v git >/dev/null 2>&1 && echo available || echo missing)" \
+    "$(command -v python3 >/dev/null 2>&1 && echo available || echo missing)" \
+    "$(command -v go >/dev/null 2>&1 && echo available || echo missing)" \
+    "$(command -v bash >/dev/null 2>&1 && echo available || echo missing)"
+}
+
 ensure_cloudflared() {
   if command -v "$CLOUDFLARED_BIN" >/dev/null 2>&1; then
     log "cloudflared tersedia: $("$CLOUDFLARED_BIN" --version 2>&1 | head -n 1)"
@@ -198,8 +235,13 @@ start_dockerd_without_init() {
   if [[ -f "$pid_file" ]]; then
     local old_pid old_cmd
     old_pid="$(cat "$pid_file" 2>/dev/null || true)"
-    old_cmd="$(tr '\0' ' ' < "/proc/${old_pid}/cmdline" 2>/dev/null || true)"
-    if [[ "$old_pid" =~ ^[0-9]+$ ]] && kill -0 "$old_pid" 2>/dev/null && [[ "$old_cmd" == *dockerd* ]]; then
+    old_cmd=""
+    # Validate the PID before opening /proc. Redirection is evaluated before
+    # the command, so an empty/stale PID otherwise emits a noisy shell error.
+    if [[ "$old_pid" =~ ^[0-9]+$ ]] && (( old_pid > 1 )) && kill -0 "$old_pid" 2>/dev/null; then
+      old_cmd="$(tr '\0' ' ' < "/proc/${old_pid}/cmdline" 2>/dev/null || true)"
+    fi
+    if [[ -n "$old_cmd" && "$old_cmd" == *dockerd* ]]; then
       log "dockerd bootstrap sebelumnya masih hidup (PID $old_pid); menunggu socket."
       wait_for_docker 25
       return $?
@@ -343,6 +385,7 @@ ensure_runtime() {
 }
 
 log "Memeriksa host: OS=$OS_ID runtime=$RUNTIME"
+ensure_cli_tools || true
 cloudflared_ok=0
 runtime_ok=0
 ensure_cloudflared && cloudflared_ok=1 || warn "Cloudflare tunnel belum siap; bot tetap dapat berjalan tanpa preview publik."

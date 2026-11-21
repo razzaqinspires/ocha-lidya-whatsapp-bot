@@ -1,20 +1,48 @@
-# Source Hot Reload
+# Transactional Source Hot Reload
 
-The source loader in `src/core/plugin-loader.js` monitors JavaScript files throughout `src/` recursively. It does not watch only command plugins.
+The source watcher treats a multi-file copy/replace as one update transaction rather than restarting once per changed file.
 
-- `src/plugins/**/*.js`: add/change/remove events update the live plugin registry. A failed replacement leaves the previous valid plugin registered.
-- Other `src/**/*.js`: add/change/remove events request a controlled Node.js process restart. This refreshes ESM imports and dependent modules safely.
-- JSON, Markdown, YAML, and other files: not imported by the JS loader, but observed by the repository-wide Git watcher for automatic commit/push if they are not excluded by `.gitignore`.
-- `node_modules/` and `.git/`: excluded from source-loader and repository filesystem watching.
-- `sessions/`, quarantined `sessions.*` backups, `data/`, `logs/`, cache/build/temp/artifact directories: excluded from repository-wide watching. These contain high-churn runtime files and must never consume one inotify watcher per auth/session file.
-- `.env` is observed only for token refresh; `.env.*` secrets are excluded from watcher traversal except the explicitly trackable `.env.example` file.
+## Detection and stabilization
 
-Node.js ESM caches imported modules. Re-importing a core module under a new URL does not update references already held by other modules. Therefore core code is not represented as safely hot-swappable; a controlled restart is used instead. Plugin modules are isolated behind the plugin registry and can be replaced dynamically.
+- Watches all regular files under `src/` and `scripts/`, plus `package.json`, `package-lock.json`, and `npm-shrinkwrap.json`. Plugin JavaScript modules are live-swappable; core source, plugin assets/manifests, and bootstrap scripts request a controlled restart.
+- Uses a 4.2-second quiet window, Chokidar write-finish detection, and two file snapshots separated by a 700 ms stability check.
+- Every filesystem event increments a batch revision. If a new file event arrives while a snapshot or syntax validation is running, the current attempt is abandoned and the complete batch is re-evaluated. New events are never cleared by an older flush.
+- A five-minute maximum batch window prevents an endlessly active filesystem from postponing all maintenance forever. Changed JavaScript files pass `node --check`, shell scripts pass `bash -n`, and JSON files are parsed before commit.
+- Invalid JavaScript is rejected; the active process and previous plugin registry remain available. Rejected batches are not released to Auto Git Sync.
 
-The controlled restart starts a replacement Node.js process and exits the old process. For production use, a process manager such as systemd or PM2 is still recommended to supervise unexpected crashes and restart failures.
+## Applying changes
 
-## Watcher exhaustion and session privacy
+- `src/plugins/**/*.js` changes are imported into a shadow registry. The registry is swapped synchronously only after the new tree has been evaluated. A failed plugin retains its last known-good version; deleted plugins are removed.
+- Changes to non-plugin files under `src/`, files under `scripts/`, plugin assets/manifests, and dependency manifests require a controlled process handoff. Node ESM imports and active runtime services cannot be safely replaced in-place.
+- A batch containing core code starts exactly one replacement process. If package manifests changed, dependency reconciliation runs once before the replacement is launched.
+- Auto Git Sync is paused while a source batch is being written and resumes only after validation/commit. Syntax-rejected source batches are not pushed.
 
-The repository watcher must not recurse into Baileys multi-file auth state. Watching `sessions/ocha-lidya/` creates a watcher for every `pre-key`, `session`, `identity-key`, and `lid-mapping` file; under a long-lived session this can exhaust Linux `fs.inotify.max_user_watches` and emit `ENOSPC`. The runtime watch policy now excludes session directories and timestamped session backups before Chokidar descends into them. On an `ENOSPC` event, the affected watcher logs one compact diagnostic and closes rather than emitting an error storm.
+## Single-instance and WhatsApp socket handoff
 
-The `408 / ECONNRESET` entries in the supplied 23:04 log begin before the first `ENOSPC` watcher error at 23:10:49. Therefore the watcher exhaustion does not explain the initial WebSocket disconnect. It is a separate defect that can add resource pressure after reconnect. The earlier 408 sequence is consistent with the TCP/WebSocket connection being reset by the network path or remote endpoint; the supplied log does not identify whether the cause was VPS networking, routing, WhatsApp edge, or another process. A `.owner` command is not shown as the cause.
+`data/runtime/ocha-main.lock` is created atomically with PID, Linux process start ticks, project root, and a random ownership token. A normal second `npm start` is rejected while the existing bot owns the lock. A controlled replacement waits specifically for the old PID and cannot open its WhatsApp socket until the previous process releases the lock. During the first upgrade from a legacy watcher that predates this lock, the new process recognizes its direct parent running this project’s `src/index.js` and waits for that parent to exit even if the old version never created a lock file. Stale locks are removed only after PID/start-time checks and an unchanged-file comparison.
+
+The old process starts the replacement first, then:
+
+1. waits for the child to spawn and begin waiting for the single-instance lock;
+2. closes Code Lab sessions and the local preview listener;
+3. transfers runtime ownership, then closes the current Baileys socket;
+4. atomically releases its process lock;
+5. exits, allowing the replacement to acquire the lock and create the only WhatsApp socket.
+
+The replacement PID is verified before Code Lab begins closing anything. If the replacement cannot spawn or the handoff fails before lock release, it is terminated and the old process rolls back Code Lab ownership, rebinds the loopback gateway, and re-adopts the same tunnel only after the replacement is confirmed stopped. The lock token prevents one process from deleting another process's lock.
+
+## Cloudflare and Code Lab continuity
+
+The Quick Tunnel remains on-demand: no public tunnel is created before a preview is requested. Once started, a healthy `cloudflared` child runs detached with file-backed logs and an exclusive PID/start-time/token lease. A controlled core-source handoff transfers the owner PID in the lease and `owner.json`; the new process adopts the existing URL and PID instead of creating a second Quick Tunnel. The loopback gateway is briefly rebound by the replacement process, but the public hostname does not need to change.
+
+The watchdog uses protocol v2 and follows the atomically updated `owner.json`. Protocol-v2 watchdogs survive a controlled process handoff; legacy watchdogs are verified and replaced before the new process takes ownership. The watchdog never kills a PID unless the process identity matches its recorded Cloudflare command. Temporary Code Lab sessions are cleaned during a core restart; the tunnel URL itself is preserved while the process remains healthy.
+
+A first transition from a release that predates the handoff protocol cannot be guaranteed to preserve an already-running tunnel because that old process has no compatible ownership-transfer code loaded in memory. The first upgrade may therefore recreate a Quick Tunnel once, but the replacement still waits for the legacy parent to exit before creating a WhatsApp socket. Subsequent updates made while v1.10.12 or newer is active use the full handoff protocol.
+
+## Host preflight
+
+`npm start` runs the host preflight before Code Lab starts. The preflight cache is keyed by OS, architecture, configured images/runtime, and the presence of host CLI binaries. It does not rerun package installation during a normal controlled source handoff. If the `scripts/bootstrap/` implementation itself is part of the changed batch, the replacement is instructed to force one preflight run using the updated script. A successful host setup is checked again after 24 hours; degraded host capabilities are retried after six hours, and a failed bootstrap process is retried after one hour.
+
+On supported Linux distributions, the preflight installs missing Git, Python 3, Go, Cloudflared, and Docker/Podman packages when the package manager and non-interactive administrative permissions are available. If Bash is missing, the Node preflight attempts to install it using the supported package manager before invoking the shell bootstrap. Unsupported package managers and denied host privileges are reported instead of bypassed.
+
+Node.js 20.18+ and npm must already exist to invoke `npm start`; no npm lifecycle script can install the runtime required to execute npm itself. A VPS/container that denies namespace, cgroup, netlink, or storage capabilities cannot be made container-capable by the application. Python/Node Code Lab container execution remains fail-closed in that case, while WhatsApp and AI stay online.

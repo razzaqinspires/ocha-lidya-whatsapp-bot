@@ -18,6 +18,8 @@ test('group metadata bootstraps once, tracks participants by event, and never de
     const metadata = await import(source('core/group-metadata.js'));
     await metadata.initializeGroupMetadata();
     const runtime = await import(source('core/group-runtime.js'));
+    const groupControl = await import(source('core/group-control.js'));
+    await groupControl.rememberJoinedGroup('12345-678@g.us', { actor: 'owner@test' });
 
     let batchCalls = 0;
     const sock = {
@@ -81,6 +83,8 @@ test('group metadata bootstraps once, tracks participants by event, and never de
       participants: [{ id: '6282177461231@lid', lid: '6282177461231@lid' }]
     });
     assert.equal(metadata.getGroupMetadata('12345-678@g.us'), null, 'bot removal deletes only group metadata');
+    assert.equal(config.getConfig().features.lastJoinedGroupId, '', 'last joined target is cleared when bot leaves');
+    assert.equal(config.getConfig().features.groupMuteOverrides['12345-678@g.us'], undefined, 'per-group mute override is cleared when bot leaves');
     assert.equal(contacts.hasContact('6281111111111'), true);
     assert.equal(contacts.hasContact('6282222222222'), true);
     assert.equal(contacts.hasContact('6283333333333'), true);

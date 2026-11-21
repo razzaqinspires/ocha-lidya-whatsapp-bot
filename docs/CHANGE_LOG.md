@@ -1,3 +1,21 @@
+## [1.10.14] - 2026-11-21
+
+### Added
+- Added owner-only private command `.joingc <url>` using Baileys `groupGetInviteInfo()` and `groupAcceptInvite()` with strict HTTPS `chat.whatsapp.com` host validation.
+- New groups joined by the owner are persisted as muted by default, and `features.lastJoinedGroupId` records the target for the follow-up `.mute off` command.
+- Added per-group mute overrides while preserving the existing global mute default. `.mute on/off` targets the last joined group; explicit Group JIDs and `all` scope are supported.
+- Updated `.groupinfo` to display per-group active/mute status, global totals, and the origin of each group's mute setting.
+
+### Fixed
+- A newly joined group can be activated independently without enabling bot responses in all other groups.
+- Per-group mute overrides and last-joined target are cleared when the bot is removed from that group.
+- Added configuration schema v25 migration and validation for Group JID keyed mute state.
+
+### Validation
+- Added tests for official invite URL validation, owner/private command restrictions, join result persistence, default-muted behavior, per-group enable/mute, global override clearing, group inventory status rendering, and schema v25 migration.
+- Full suite: 151 tests, 149 passed, 2 skipped, 0 failed; syntax check: 130 JavaScript files.
+- Baileys API method usage follows its documented `groupGetInviteInfo(code)` and `groupAcceptInvite(code)` pattern.
+
 ## [1.10.11] - 2026-11-21
 
 ### Changed
@@ -521,3 +539,41 @@ All notable changes to Ocha Lidya are recorded here. The newest release is liste
 
 ### Validation
 - Added tests proving all Groq keys are attempted on quota exhaustion before Gemini succeeds, providers without keys are skipped, and queued jobs remain recoverable after provider checkpoints.
+
+## [1.10.12] - 2026-11-21
+
+### Added
+- Transactional source update batches for bulk folder copy/replace, with a 4.2-second quiet window, write-finish stabilization, revision fencing, dual snapshots, bounded five-minute batch window, and JavaScript syntax validation before applying any update.
+- Plugin-only updates now use a shadow registry and a single synchronous swap; core-source/dependency changes request one controlled process handoff. Auto Git Sync is paused during source writes and does not push syntax-rejected batches.
+- Atomic single-instance lock with PID/start-time/token validation. The replacement process waits for the previous owner to release the lock before loading a second WhatsApp socket.
+- Code Lab/Quick Tunnel handoff: a healthy detached Cloudflared process and public URL are retained across controlled hot reloads; watchdog protocol v2 follows owner.json and can transfer between main-process PIDs.
+- Autonomous host CLI preflight for Git, Python 3, Go, Bash, Cloudflared, and container runtimes on supported Linux package managers when non-interactive privileges are available. Host state is fingerprinted and cached to avoid repeated installation on every code reload.
+- `.env.example` restored for clean source/ZIP installation and documented the minimum first-run path.
+
+### Fixed
+- Prevented watcher flush races that could clear filesystem events arriving during snapshot validation and restart from a partial folder copy.
+- Rejected JavaScript syntax errors without replacing the active runtime or pushing rejected source through Auto Git Sync.
+- Replaced legacy Code Lab watchdogs that pin the old parent PID; protocol-v2 watchdogs can be reused during handoff without spawning duplicates.
+- Fixed the Docker bootstrap PID-file check so `/proc/<pid>/cmdline` is opened only after the PID is numeric, greater than 1, and confirmed alive.
+- Host bootstrap failures now schedule an in-process retry rather than waiting for a manual restart.
+
+### Validation
+- Transactional hot reload, single-instance locking, host-preflight, and Code Lab tunnel handoff regression tests passed in the v1.10.12 development baseline.
+
+
+## [1.10.13] - 2026-11-21
+
+### Added
+- Added failure-safe Code Lab handoff rollback. If a controlled replacement cannot complete, the old process restores gateway ownership and re-adopts the existing healthy Cloudflare tunnel only after the replacement process has stopped. A dedicated integration test simulates a process-identity mismatch and verifies the old gateway resumes.
+- Validate the replacement PID and Linux process start ticks before closing the Code Lab gateway or transferring tunnel ownership. For first upgrades from a legacy watcher with no lock file or handoff environment marker, the new process identifies its direct parent `src/index.js` and waits for it to exit before opening the WhatsApp socket.
+- Force one updated host preflight when files under `scripts/bootstrap/` are included in a source update batch; normal code reloads continue to reuse the host preflight cache.
+
+### Fixed
+- Prevented a failed or unverifiable replacement PID from leaving Code Lab closed.
+- Ensure a rollback does not take over a tunnel while another verified owner PID remains alive.
+- Updated source hot-reload documentation to describe the full transactional watcher scope and the plugin-asset/core restart policy.
+
+### Validation
+- JavaScript syntax: 127 files checked.
+- Full test suite: 148 tests, 146 passed, 2 skipped, 0 failed.
+- Code Lab tunnel handoff integration test: passed; replacement adopted the same tunnel PID and URL without starting a duplicate Cloudflared process.

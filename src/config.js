@@ -6,7 +6,7 @@
 import { initializeDatabase, appendRecord, getRecords, getLatestConfigRecord, configureDatabase } from './core/database.js';
 
 const DEFAULTS = Object.freeze({
-  schemaVersion: 24,
+  schemaVersion: 25,
   bot: { name: 'Ocha Lidya', aliases: ['Ocha', 'Lidya'], owner: '6283193905842', ownerName: 'Arifi Razzaq', creatorName: 'Arifi Razzaq', organization: 'Razzaq Ventures', publicCreatorDisclosure: true, expectedNumber: '6282177461231' },
   whatsapp: { authMode: 'pairing', pairingNumber: '6282177461231', browserName: 'Chrome', sessionDir: 'sessions/ocha-lidya', recoverInvalidSession: true, connectTimeoutMs: 60000, queryTimeoutMs: 60000, keepAliveIntervalMs: 25000 },
   logging: { level: 'info', color: 'auto', timeZone: 'Asia/Jakarta' },
@@ -31,7 +31,7 @@ const DEFAULTS = Object.freeze({
     fsync: true,
     verifyOnBoot: true
   },
-  features: { autoRead: false, autoTyping: false, selfModeReply: false, groupsMuted: true },
+  features: { autoRead: false, autoTyping: false, selfModeReply: false, groupsMuted: true, groupMuteOverrides: {}, lastJoinedGroupId: '' },
   ai: { enabled: true, providerOrder: ['groq', 'gemini', 'deepseek', 'openai'], models: { gemini: 'gemini-3.8-flash', groq: 'openai/gpt-oss-120b', deepseek: 'deepseek-flash', openai: 'gpt-6.2-sol' }, freeOnly: true, timeoutMs: 3500, totalBudgetMs: 14000, maxOutputTokens: 180, temperature: 0.5, historyMessages: 3, maxInputChars: 3500, coalesceMs: 80 },
   codeLab: { enabled: true, aiExecutionEnabled: true, publicTunnelEnabled: true, websiteBuilderEnabled: true, websiteBuilderConcurrency: 2, websiteBuilderQueueLimit: 8, tunnelIdleMs: 300000, projectLibraryRoot: '', cloudflaredBin: 'cloudflared', containerRuntime: 'auto', port: 8787, ttlMs: 3600000, maxRuntimeMs: 120000, maxSourceBytes: 65536, maxOutputBytes: 49152, maxConcurrent: 2, maxSessionsTotal: 20, maxSessionsPerUser: 2, maxExecutionsPerMinute: 3, pythonImage: 'python:3.12-alpine', nodeImage: 'node:22-alpine' }
 });
@@ -282,6 +282,20 @@ export async function loadConfig() {
     if (ai.models.groq === 'openai/gpt-oss-20b') ai.models.groq = DEFAULTS.ai.models.groq;
     await appendRecord('config.replace', { config: activeConfig, changedBy: 'system:migration', reason: 'v1.10.10 autonomous provider model catalog and free-tier-first routing' });
   }
+  // v1.10.14 schema v25: per-group interaction mute overrides and last joined group target.
+  if (activeConfig.schemaVersion < 25) {
+    activeConfig.schemaVersion = 25;
+    activeConfig.features = { ...DEFAULTS.features, ...(activeConfig.features || {}) };
+    const savedOverrides = activeConfig.features.groupMuteOverrides;
+    const validOverrides = savedOverrides && typeof savedOverrides === 'object' && !Array.isArray(savedOverrides)
+      ? Object.entries(savedOverrides).filter(([id, muted]) => /^\d{5,30}(?:-\d{1,25})?@g\.us$/.test(id) && typeof muted === 'boolean')
+      : [];
+    activeConfig.features.groupMuteOverrides = Object.fromEntries(validOverrides);
+    if (typeof activeConfig.features.lastJoinedGroupId !== 'string' || (activeConfig.features.lastJoinedGroupId && !/^\d{5,30}(?:-\d{1,25})?@g\.us$/.test(activeConfig.features.lastJoinedGroupId))) {
+      activeConfig.features.lastJoinedGroupId = '';
+    }
+    await appendRecord('config.replace', { config: activeConfig, changedBy: 'system:migration', reason: 'v1.10.14 owner group join command and per-group mute state' });
+  }
   activeConfig.security = { ...DEFAULTS.security, ...(activeConfig.security || {}) };
   delete activeConfig.security.masterExecEnabled;
   activeConfig.features = { ...DEFAULTS.features, ...(activeConfig.features || {}) };
@@ -325,6 +339,11 @@ function validateConfig(c) {
   if (!['public', 'self'].includes(c.mode)) throw new Error('mode harus public atau self');
   if (typeof c.ui?.buttonsEnabled !== 'boolean') throw new Error('ui.buttonsEnabled harus boolean');
   if (typeof c.features?.groupsMuted !== 'boolean') throw new Error('features.groupsMuted harus boolean');
+  if (!c.features?.groupMuteOverrides || typeof c.features.groupMuteOverrides !== 'object' || Array.isArray(c.features.groupMuteOverrides)) throw new Error('features.groupMuteOverrides harus object');
+  for (const [groupId, muted] of Object.entries(c.features.groupMuteOverrides)) {
+    if (!/^\d{5,30}(?:-\d{1,25})?@g\.us$/.test(groupId) || typeof muted !== 'boolean') throw new Error('features.groupMuteOverrides berisi Group JID atau status mute tidak valid');
+  }
+  if (typeof c.features?.lastJoinedGroupId !== 'string' || (c.features.lastJoinedGroupId && !/^\d{5,30}(?:-\d{1,25})?@g\.us$/.test(c.features.lastJoinedGroupId))) throw new Error('features.lastJoinedGroupId harus Group JID atau string kosong');
   if (typeof c.groupMetadata?.initialSync !== 'boolean') throw new Error('groupMetadata.initialSync harus boolean');
   if (!Number.isInteger(c.groupMetadata?.fetchCooldownMs) || c.groupMetadata.fetchCooldownMs < 1000 || c.groupMetadata.fetchCooldownMs > 86400000) throw new Error('groupMetadata.fetchCooldownMs harus 1000-86400000');
   if (!['qr', 'pairing'].includes(c.whatsapp?.authMode)) throw new Error('whatsapp.authMode harus qr atau pairing');

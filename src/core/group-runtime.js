@@ -12,6 +12,7 @@ import {
   updateGroupMetadata
 } from './group-metadata.js';
 import { addContactsFromPnJids } from './contacts.js';
+import { clearGroupMuteOverride } from './group-control.js';
 
 const fetchInFlight = new Map();
 const lastFetchAttempt = new Map();
@@ -220,7 +221,8 @@ export async function handleGroupParticipantsUpdate(sock, update) {
   await addContactsFromPnJids(participantPns(enrichedParticipants));
   if (normalizedAction === 'remove' && isBotAmongParticipants(sock, enrichedParticipants)) {
     const removed = await deleteGroupMetadata(id, 'bot-left-or-removed');
-    if (removed) logger.info({ groupId: id }, 'Bot left/was removed; group metadata deleted');
+    await clearGroupMuteOverride(id, { reason: `bot left or was removed from ${id}` });
+    if (removed) logger.info({ groupId: id }, 'Bot left/was removed; group metadata and per-group control state deleted');
     return;
   }
 

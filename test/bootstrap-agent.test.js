@@ -92,3 +92,39 @@ test('auto bootstrap selects a working Podman fallback without invoking sudo', a
     fs.rmSync(temp, { recursive: true, force: true });
   }
 });
+
+test('host preflight checks and provisions Git, Python, Go, and Bash when package installation is permitted', () => {
+  const shell = fs.readFileSync(script, 'utf8');
+  const adapter = fs.readFileSync(path.join(root, 'src', 'runtime', 'bootstrap-agent.js'), 'utf8');
+  assert.match(shell, /ensure_cli_tools\(\)/);
+  assert.match(shell, /golang-go|golang/);
+  assert.match(shell, /NEXORA_CLI_TOOLS/);
+  assert.match(adapter, /ensureBashAvailable\(\)/);
+  assert.match(adapter, /apt-get.*install.*bash|install.*bash/s);
+});
+
+test('Docker bootstrap validates a saved PID before reading its proc cmdline', () => {
+  const shell = fs.readFileSync(script, 'utf8');
+  const validateAt = shell.indexOf('[[ "$old_pid" =~ ^[0-9]+$ ]]');
+  const procAt = shell.indexOf('"/proc/${old_pid}/cmdline"');
+  assert.ok(validateAt >= 0 && procAt > validateAt, 'PID validation and liveness check must precede /proc access');
+});
+
+test('Code Lab handoff transfers healthy tunnel ownership and adopts only protocol-v2 watchdogs', () => {
+  const codeLab = fs.readFileSync(path.join(root, 'src', 'runtime', 'code-lab.js'), 'utf8');
+  assert.match(codeLab, /const WATCHDOG_PROTOCOL_VERSION = 2/);
+  assert.match(codeLab, /protocolVersion: WATCHDOG_PROTOCOL_VERSION/);
+  assert.match(codeLab, /ownerPid: replacementPid/);
+  assert.match(codeLab, /Existing healthy TryCloudflare tunnel adopted; no replacement process started/);
+  assert.match(codeLab, /watchdogPreserved/);
+});
+
+
+test('bootstrap implementation changes force one host preflight during controlled handoff', () => {
+  const index = fs.readFileSync(path.join(root, 'src', 'index.js'), 'utf8');
+  const adapter = fs.readFileSync(path.join(root, 'src', 'runtime', 'bootstrap-agent.js'), 'utf8');
+  assert.match(index, /relative\.startsWith\('scripts\/bootstrap\/'\)/);
+  assert.match(index, /OCHA_HOST_BOOTSTRAP_FORCE: hostBootstrapChanged \? '1' : '0'/);
+  assert.match(adapter, /forceFromBootstrapUpdate/);
+  assert.match(adapter, /!forceFromBootstrapUpdate && cache\?\.fingerprint/);
+});

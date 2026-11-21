@@ -32,7 +32,7 @@ The developer runners are persisted under `security` and `limits`; they are not 
 
 All are off by default and independent: `cli` controls `$` directly, `eval` controls `>`/`=>`, `python` controls `>>`, and `golang` controls `>>>`. There is no global `exec` prerequisite. `.master exec on/off` is temporarily retained as an alias to the CLI switch. Turning on a runner changes a persistent configuration event. A restart does not reset the switch.
 
-The global group interaction setting is `features.groupsMuted`, defaulting to `true`. `.mute on/off/status` is owner-only and private-chat-only. It gates only group dispatch/replies; it does not disable `messages.upsert`, group metadata events, or verified contact indexing. Private-chat operation continues in either mode.
+The global group interaction setting is `features.groupsMuted`, defaulting to `true`. Per-group exceptions are stored in `features.groupMuteOverrides`; the most recently joined group is recorded in `features.lastJoinedGroupId`. Owner-only `.joingc <url>` joins a group and starts it muted. `.mute off` then enables only that last joined group; an explicit Group JID can be used to target another group, while `.mute off all` enables all groups. The response gate does not disable `messages.upsert`, group metadata events, or verified contact indexing.
 
 
 ## WhatsApp connection settings

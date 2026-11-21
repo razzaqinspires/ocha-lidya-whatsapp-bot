@@ -186,15 +186,16 @@ export async function startAutoGitSync({ root = PROJECT_ROOT } = {}) {
     await assertRepository();
   } catch (error) {
     logger.warn({ reason: error.message, root: PROJECT_ROOT }, 'Auto Git Sync nonaktif: folder ini belum siap sebagai clone Git yang valid. Jalankan npm run git:setup setelah konfigurasi Git tersedia.');
-    return { enabled: false, async close() {} };
+    return { enabled: false, pause() {}, resume() {}, async close() {} };
   }
   let timer;
   let syncing = false;
   let queued = false;
   let stopped = false;
+  let suspended = false;
 
   const schedule = reason => {
-    if (stopped) return;
+    if (stopped || suspended) return;
     clearTimeout(timer);
     timer = setTimeout(() => {
       void runSync(reason);
@@ -211,7 +212,7 @@ export async function startAutoGitSync({ root = PROJECT_ROOT } = {}) {
       logger.error({ err: error }, 'Auto Git Sync gagal; perubahan lokal tidak dihapus');
     } finally {
       syncing = false;
-      if (queued && !stopped) {
+      if (queued && !stopped && !suspended) {
         queued = false;
         schedule('queued filesystem change');
       }
@@ -277,7 +278,27 @@ export async function startAutoGitSync({ root = PROJECT_ROOT } = {}) {
   });
 
   return {
+    enabled: true,
     watcher,
+    pause(reason = 'source update batch') {
+      suspended = true;
+      queued = true;
+      clearTimeout(timer);
+      logger.debug({ reason }, 'Auto Git Sync paused while a source update batch is being written');
+    },
+    resume(reason = 'source update batch settled', { sync = true } = {}) {
+      if (stopped) return;
+      suspended = false;
+      if (!sync) {
+        queued = false;
+        logger.warn({ reason }, 'Auto Git Sync resume skipped because source batch validation was rejected');
+        return;
+      }
+      if (queued) {
+        queued = false;
+        schedule(reason);
+      }
+    },
     async close() {
       stopped = true;
       clearTimeout(timer);

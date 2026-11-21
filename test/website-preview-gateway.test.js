@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
 test('website project is served by the shared gateway with token checks and local assets', async () => {
@@ -39,6 +39,7 @@ test('website project is served by the shared gateway with token checks and loca
     const boot = await codeLab.startCodeLab();
     assert.equal(boot.tunnel, 'idle/on-demand', 'bot startup must not launch cloudflared');
     await assert.rejects(fs.access(processLog), { code: 'ENOENT' }, 'no tunnel process exists before a preview is requested');
+    await assert.rejects(codeLab.prepareCodeLabHandoff(2_000_000_000), /belum hidup|tidak dapat diverifikasi/, 'handoff refuses a dead/unverifiable replacement before closing the active gateway');
 
     const files = {
       'index.html': '<!doctype html><html><head><link rel="stylesheet" href="assets/site.css"></head><body><h1>Gateway works</h1><script src="assets/site.js"></script></body></html>',
@@ -170,6 +171,51 @@ test('website project is served by the shared gateway with token checks and loca
     const finalIdleDeadline = Date.now() + 3000;
     while (Date.now() < finalIdleDeadline && codeLab.getCodeLabStatus().tunnelPid) await new Promise(resolve => setTimeout(resolve, 25));
     assert.equal(codeLab.getCodeLabStatus().tunnelPid, null, 'recovered tunnel is also stopped after its final session is removed');
+
+    // A controlled source handoff must preserve the same public tunnel PID/URL.
+    const handoffSite = await codeLab.createWebsiteSession({ ownerId: 'handoff@s.whatsapp.net', files: { 'index.html': '<h1>handoff</h1>' } });
+    const beforeHandoff = codeLab.getCodeLabStatus();
+    const startsBeforeHandoff = [...((await fs.readFile(processLog, 'utf8')).matchAll(/^START (\d+)$/gm))].length;
+    const replacementSource = `
+      import { pathToFileURL } from 'node:url';
+      const root = ${JSON.stringify(original)};
+      const config = await import(pathToFileURL(root + '/src/config.js'));
+      await config.loadConfig();
+      const lab = await import(pathToFileURL(root + '/src/runtime/code-lab.js'));
+      const status = await lab.startCodeLab();
+      console.log('HANDOFF_RESULT:' + JSON.stringify({ tunnel: status.tunnel, tunnelPid: status.tunnelPid }));
+      await lab.stopCodeLab();
+    `;
+    const replacement = spawn(process.execPath, ['--input-type=module', '-e', replacementSource], {
+      cwd: temp,
+      env: { ...process.env, PATH: `${binaryDir}:${previousPath || ''}`, OCHA_HANDOFF_FROM_PID: String(process.pid), OCHA_HOST_PREFLIGHT_COMPLETED: '1' },
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    let replacementOutput = '';
+    replacement.stdout.setEncoding('utf8').on('data', chunk => { replacementOutput += chunk; });
+    replacement.stderr.setEncoding('utf8').on('data', chunk => { replacementOutput += chunk; });
+    await new Promise((resolve, reject) => {
+      replacement.once('spawn', resolve);
+      replacement.once('error', reject);
+    });
+    const handoff = await codeLab.prepareCodeLabHandoff(replacement.pid);
+    assert.equal(handoff.preserved, true, 'healthy Quick Tunnel is retained during core source handoff');
+    assert.equal(handoff.tunnelPid, beforeHandoff.tunnelPid);
+    const replacementExit = await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => { replacement.kill('SIGKILL'); reject(new Error('replacement handoff timed out')); }, 12_000);
+      replacement.once('error', error => { clearTimeout(timer); reject(error); });
+      replacement.once('close', (code, signal) => { clearTimeout(timer); resolve({ code, signal }); });
+    });
+    assert.equal(replacementExit.code, 0, replacementOutput);
+    const resultLine = replacementOutput.split(/\r?\n/).find(line => line.startsWith('HANDOFF_RESULT:'));
+    assert.ok(resultLine, replacementOutput);
+    const adopted = JSON.parse(resultLine.slice('HANDOFF_RESULT:'.length));
+    assert.equal(adopted.tunnel, beforeHandoff.tunnel, 'replacement process adopts the same public hostname');
+    assert.equal(adopted.tunnelPid, beforeHandoff.tunnelPid, 'replacement process adopts the same cloudflared PID');
+    const afterHandoffLog = await fs.readFile(processLog, 'utf8');
+    assert.equal([...afterHandoffLog.matchAll(/^START (\d+)$/gm)].length, startsBeforeHandoff, 'handoff does not launch a duplicate cloudflared process');
+    assert.match(afterHandoffLog, new RegExp(`STOP ${beforeHandoff.tunnelPid}`), 'the replacement owns and later shuts down the retained tunnel');
+    assert.ok(handoffSite.previewUrl.includes('trycloudflare.com'));
   } finally {
     await codeLab.stopCodeLab().catch(() => {});
     if (previousPath === undefined) delete process.env.PATH; else process.env.PATH = previousPath;

@@ -1,10 +1,12 @@
 import { getCachedGroupInfo, getCachedGroups, hydrateParticipatingGroupsOnce } from '../../core/group-runtime.js';
 import { getPrefixes } from '../../core/prefix.js';
+import { getGroupInteractionState } from '../../core/group-control.js';
 
 const PAGE_SIZE = 10;
 
 function renderInfo(meta) {
   const participants = meta.participants || [];
+  const runtimeState = getGroupInteractionState(meta.id);
   const admins = participants.filter(participant => participant.admin === 'admin' || participant.admin === 'superadmin').length;
   const created = meta.creation ? new Date(meta.creation * 1000).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' }) : '-';
   return [
@@ -15,6 +17,8 @@ function renderInfo(meta) {
     `Admin: ${admins}`,
     `Dibuat: ${created}`,
     `Deskripsi: ${meta.desc || '-'}`,
+    `Status bot: ${runtimeState.muted ? 'MUTE · tidak merespons' : 'AKTIF · menerima interaksi'}`,
+    `Sumber status: ${runtimeState.source === 'group-override' ? 'pengaturan khusus grup' : 'default global'}`,
     `Cache diperbarui: ${new Date(meta.updatedAt || meta.lastSyncedAt || Date.now()).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}`
   ].join('\n');
 }
@@ -42,18 +46,22 @@ async function sendGroupPage(sock, m, groups, requestedPage = 1) {
   const visible = groups.slice(start, start + PAGE_SIZE);
   const choices = visible.map((group, index) => ({
     key: String(index + 1),
-    label: group.subject || group.id,
+    label: `${group.subject || group.id} · ${getGroupInteractionState(group.id).muted ? 'MUTE' : 'AKTIF'}`,
     value: { action: 'detail', groupId: group.id }
   }));
+  const allStates = groups.map(group => getGroupInteractionState(group.id));
+  const activeCount = allStates.filter(state => state.active).length;
+  const mutedCount = allStates.length - activeCount;
   if (page < pageCount) choices.push({ key: '0', label: 'Halaman berikutnya', value: { action: 'page', page: page + 1 } });
   if (page > 1) choices.push({ key: '00', label: 'Halaman sebelumnya', value: { action: 'page', page: page - 1 } });
 
   const lines = [
     '*GROUP METADATA CACHE*',
     `Tersimpan ${groups.length} grup dalam database metadata. Halaman ${page}/${pageCount}.`,
+    `Status seluruh grup: ${activeCount} aktif · ${mutedCount} mute.`,
     'Balas dengan angka pada pesan ini untuk memilih grup.',
     '',
-    ...visible.map((group, index) => `${index + 1}. ${group.subject || group.id} · ${group.participants?.length || 0} anggota`)
+    ...visible.map((group, index) => `${index + 1}. ${group.subject || group.id} · ${group.participants?.length || 0} anggota · ${getGroupInteractionState(group.id).muted ? 'MUTE' : 'AKTIF'}`)
   ];
   if (page < pageCount) lines.push('', '0. Halaman berikutnya');
   if (page > 1) lines.push('00. Halaman sebelumnya');
@@ -74,7 +82,13 @@ export default {
   name: 'groupinfo', aliases: ['gcinfo', 'grouplist'], category: 'general',
   description: 'Informasi grup dari cache JSONL dengan navigasi melalui reply angka',
   async execute({ sock, m, args }) {
-    const groupId = args.find(value => value.endsWith('@g.us')) || (m.isGroup ? m.chat : '');
+    if (!m.isGroup && !m.isOwner) return m.reply('Daftar metadata dan status seluruh grup hanya tersedia untuk owner terverifikasi.');
+    // Non-owners can inspect only the group where they are currently speaking.
+    // Only the verified owner may supply an arbitrary cached Group JID.
+    const requestedGroupId = args.find(value => value.endsWith('@g.us')) || '';
+    const groupId = m.isOwner
+      ? (requestedGroupId || (m.isGroup ? m.chat : ''))
+      : (m.isGroup ? m.chat : '');
     if (groupId) {
       const meta = getCachedGroupInfo(groupId);
       if (!meta) return m.reply('Metadata grup belum tersedia di cache. Ocha akan mengisi cache saat menerima event grup berikutnya; perintah ini tidak memicu fetch berulang.');

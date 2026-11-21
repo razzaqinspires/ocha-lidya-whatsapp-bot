@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import makeWASocket, { DisconnectReason, useMultiFileAuthState, Browsers } from '@whiskeysockets/baileys';
@@ -25,18 +26,28 @@ import { initializeProviderKeys } from './ai/providers.js';
 import { startModelCatalogScheduler, stopModelCatalogScheduler } from './ai/model-catalog.js';
 import { ensureModelCatalogWorkerStarted } from './ai/model-catalog-worker-manager.js';
 import { getReconnectDelay, isValidInternationalNumber, normalizePhoneNumber, shouldRequestPairingCode, shouldStopReconnect, shouldRecoverInvalidSession } from './core/connection-policy.js';
-import { startCodeLab, stopCodeLab } from './runtime/code-lab.js';
-import { runNexoraBootstrap } from './runtime/bootstrap-agent.js';
+import { startCodeLab, stopCodeLab, prepareCodeLabHandoff, cancelCodeLabHandoff, applyHostPreflightResult } from './runtime/code-lab.js';
+import { acquireRuntimeLock } from './runtime/single-instance.js';
+import { stopNexoraBootstrapScheduler, runNexoraBootstrap } from './runtime/bootstrap-agent.js';
 
 setOutgoingMessageObserver(observeOutgoingMessage);
 
+const runtimeLock = await acquireRuntimeLock();
+if (!runtimeLock.acquired) {
+  process.stderr.write(`[OCHA LIDYA] Runtime sudah berjalan pada PID ${runtimeLock.duplicatePid}; proses kedua ditolak agar socket WhatsApp tidak ganda.\n`);
+  process.exit(0);
+}
+
 await initializeDatabase();
 await loadConfig();
+let hostPreflightResult = null;
 try {
-  await runNexoraBootstrap(getConfig().codeLab);
+  hostPreflightResult = await runNexoraBootstrap(getConfig().codeLab);
 } catch (error) {
-  logger.warn({ message: error.message }, 'Nexora dependency bootstrap incomplete; bot will continue and Code Lab will report unavailable capabilities');
+  logger.warn({ message: error.message }, 'Nexora dependency bootstrap incomplete; bot will continue and retry host provisioning autonomously');
 }
+process.env.OCHA_HOST_PREFLIGHT_COMPLETED = '1';
+applyHostPreflightResult(hostPreflightResult || {});
 await initializeContacts();
 await initializeGroupMetadata();
 await initializeProviderKeys();
@@ -75,7 +86,7 @@ if (AUTH_MODE === 'pairing' && !isValidInternationalNumber(PAIRING_NUMBER)) {
 }
 await loadStore();
 await loadPlugins();
-await startAutoGitSync();
+const autoGitSync = await startAutoGitSync();
 
 let reconnectTimer;
 let restartTimer;
@@ -106,37 +117,121 @@ function isDuplicateIncoming(key) {
   return false;
 }
 
-function requestControlledRestart({ file, event }) {
-  if (restarting || shutdownInProgress) return;
+let restartBatchInFlight = false;
+
+function runCommand(command, args, { timeoutMs = 10 * 60_000 } = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { cwd: process.cwd(), env: process.env, stdio: 'inherit', windowsHide: true });
+    let settled = false;
+    const finish = error => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error) reject(error); else resolve();
+    };
+    const timer = setTimeout(() => {
+      try { child.kill('SIGTERM'); } catch {}
+      finish(new Error(`${command} exceeded ${timeoutMs} ms`));
+    }, timeoutMs);
+    timer.unref?.();
+    child.once('error', finish);
+    child.once('close', (code, signal) => code === 0 ? finish() : finish(new Error(`${command} exited with ${code ?? signal}`)));
+  });
+}
+
+async function closeSocketForHandoff() {
+  const socket = activeSocket;
+  activeSocket = undefined;
+  if (!socket) return;
+  const ws = socket.ws;
+  let closeListener;
+  const closed = new Promise(resolve => {
+    const timer = setTimeout(resolve, 1800);
+    closeListener = () => { clearTimeout(timer); resolve(); };
+    ws?.once?.('close', closeListener);
+    if (ws?.readyState === 3) closeListener();
+  });
+  try { socket.end?.(new Error('Controlled source update handoff')); }
+  catch (error) { logger.warn({ message: error.message }, 'WhatsApp socket close during source handoff failed'); }
+  await closed;
+  if (closeListener) ws?.removeListener?.('close', closeListener);
+}
+
+async function requestControlledRestart(batch = {}) {
+  if (restarting || shutdownInProgress || restartBatchInFlight) return;
   restarting = true;
-  logger.warn({ pid: process.pid, file, event }, 'Perubahan source inti terdeteksi; proses akan dimulai ulang secara terkontrol');
+  restartBatchInFlight = true;
+  const files = Array.isArray(batch.files) ? batch.files : [batch.file].filter(Boolean);
+  logger.warn({ pid: process.pid, files, requiresInstall: Boolean(batch.requiresInstall) }, 'A stable core source update batch was detected; preparing one serialized runtime handoff');
   clearTimeout(restartTimer);
   restartTimer = setTimeout(async () => {
-    try { await stopCodeLab(); }
-    catch (error) { logger.warn({ message: error.message }, 'Code Lab cleanup before restart failed'); }
-    const socketToClose = activeSocket;
-    activeSocket = undefined;
-    try { socketToClose?.end?.(new Error(`Source changed: ${file}`)); }
-    catch (error) { logger.warn({ err: error }, 'Tidak dapat menutup socket sebelum restart'); }
+    let child;
+    try {
+      if (batch.requiresInstall) {
+        logger.info({ files }, 'Dependency manifest changed; reconciling Node dependencies before restart');
+        await runCommand('npm', ['install', '--no-audit', '--no-fund']);
+      }
 
-    const child = spawn(process.execPath, process.argv.slice(1), {
-      cwd: process.cwd(), env: process.env, detached: true, stdio: 'inherit'
-    });
-    child.once('spawn', () => {
-      logger.warn({ oldPid: process.pid, replacementPid: child.pid, file }, 'Proses pengganti berhasil dibuat oleh source watcher; proses lama akan keluar');
+      const hostBootstrapChanged = files.some(file => {
+        const relative = path.relative(process.cwd(), path.resolve(file)).replaceAll(path.sep, '/');
+        return relative.startsWith('scripts/bootstrap/');
+      });
+      child = spawn(process.execPath, process.argv.slice(1), {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          OCHA_HANDOFF_FROM_PID: String(process.pid),
+          OCHA_BOOTSTRAP_HANDOFF_CONSUMED: '0',
+          OCHA_HOST_BOOTSTRAP_FORCE: hostBootstrapChanged ? '1' : '0'
+        },
+        detached: true,
+        stdio: 'inherit',
+        windowsHide: true
+      });
+
+      child.once('error', error => {
+        restarting = false;
+        restartBatchInFlight = false;
+        logger.error({ err: error, files }, 'Replacement process could not be spawned; current process remains active');
+      });
+
+      await once(child, 'spawn');
+      const handoff = await prepareCodeLabHandoff(child.pid);
+      await closeSocketForHandoff();
+      await runtimeLock.release();
+      logger.warn({ oldPid: process.pid, replacementPid: child.pid, files, tunnelPreserved: Boolean(handoff.preserved), tunnelPid: handoff.tunnelPid || null }, 'Runtime handoff committed; old process releases its lock before replacement connects');
       child.unref();
       process.exit(0);
-    });
-    child.once('error', error => {
+    } catch (error) {
+      if (child?.pid && child.exitCode === null && child.signalCode === null) {
+        try { child.kill('SIGTERM'); } catch {}
+        const closeWait = new Promise(resolve => {
+          const timer = setTimeout(resolve, 1800);
+          child.once('close', () => { clearTimeout(timer); resolve(); });
+        });
+        await closeWait;
+        if (child.exitCode === null && child.signalCode === null) {
+          try { child.kill('SIGKILL'); } catch {}
+          await new Promise(resolve => setTimeout(resolve, 250));
+        }
+      }
+      await cancelCodeLabHandoff().catch(rollbackError => {
+        logger.error({ err: rollbackError }, 'Code Lab handoff rollback requires attention');
+      });
       restarting = false;
-      logger.error({ err: error }, 'Gagal menjalankan proses pengganti; proses tetap aktif dan mencoba pulih');
-      scheduleReconnect(0);
-    });
-  }, 900);
+      restartBatchInFlight = false;
+      logger.error({ err: error, files }, 'Controlled source update handoff failed; previous runtime ownership was restored where verifiable');
+    }
+  }, 350);
   restartTimer.unref();
 }
 
-watchSourceFiles({ onRestartRequired: requestControlledRestart });
+const sourceWatcher = watchSourceFiles({
+  onRestartRequired: requestControlledRestart,
+  onBatchStart: change => autoGitSync.pause?.(change.file),
+  onBatchSettled: batch => autoGitSync.resume?.('source update batch settled', { sync: batch?.accepted !== false })
+});
+
 
 
 async function quarantineInvalidSessionAndReconnect() {
@@ -386,8 +481,13 @@ async function shutdownRuntime(signal, exitCode = 0) {
   activeSocket = undefined;
   try { socketToClose?.end?.(new Error(`Process shutdown: ${signal}`)); } catch {}
   stopModelCatalogScheduler();
+  stopNexoraBootstrapScheduler();
+  try { await sourceWatcher.close(); } catch {}
+  try { await autoGitSync.close(); } catch {}
   try { await stopCodeLab(); }
   catch (error) { logger.error({ message: error.message }, 'Code Lab shutdown cleanup failed'); }
+  try { await runtimeLock.release(); }
+  catch (error) { logger.error({ message: error.message }, 'Runtime instance lock release failed'); }
   process.exit(exitCode);
 }
 
