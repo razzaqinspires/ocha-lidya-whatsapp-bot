@@ -10,6 +10,23 @@ import { answerMessage, isAITrigger } from '../ai/engine.js';
 import { dispatchReplySession } from './reply-sessions.js';
 import { isVerifiedOwnerMessage } from './identity.js';
 import { evaluateCooldown, shouldNotifyCooldown, inspectAntiSpam, isUserTemporarilyBanned, formatDuration } from './command-governor.js';
+import { BILLING_EXEMPT_COMMANDS } from '../rental/catalog.js';
+import { consumeTenantQuota, getTenantStatus } from '../rental/service.js';
+
+const rentalNoticeAt = new Map();
+function notifyRentalBlockOnce(key, now = Date.now()) {
+  const until = rentalNoticeAt.get(key) || 0;
+  if (until > now) return false;
+  rentalNoticeAt.set(key, now + 60_000);
+  if (rentalNoticeAt.size > 10_000) for (const [entry, expiry] of rentalNoticeAt) if (expiry <= now) rentalNoticeAt.delete(entry);
+  return true;
+}
+function shortCountdown(ms) {
+  const seconds = Math.max(1, Math.ceil(ms / 1000));
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.ceil((seconds % 3600) / 60);
+  return hours ? `${hours} jam ${minutes} menit` : `${Math.max(1, minutes)} menit`;
+}
 
 export async function dispatch(sock, message) {
   const config = getConfig();
@@ -23,12 +40,27 @@ export async function dispatch(sock, message) {
     if (sanction.banned) return;
   }
   const parsed = parseCommand(body);
+  const rentalPublicControl = Boolean(parsed && ['sewa', 'rent', 'paketsewa'].includes(String(parsed.command).toLowerCase()));
   const isOwnerMuteControl = isOwnerMuteControlMessage(message, ownerVerified);
 
-  // Muted groups have one narrow control-channel exception: verified owner
-  // may issue .mute on/off/status in that same group. No other command, AI
-  // trigger, or non-owner message is allowed through the gate.
-  if (shouldSuppressGroupInteraction(message, config) && !isOwnerMuteControl) return;
+  // Rental entitlement is enforced independently from mute overrides, so a
+  // global unmute can never accidentally reactivate an expired tenant.
+  if (message.isGroup && !ownerVerified && !rentalPublicControl && !isOwnerMuteControl) {
+    const rentalStatus = await getTenantStatus(message.chat);
+    if (rentalStatus.tenant && rentalStatus.status !== 'active') {
+      const noticeKey = `${message.chat}:subscription:${rentalStatus.status}`;
+      if (notifyRentalBlockOnce(noticeKey)) {
+        await message.reply(rentalStatus.status === 'grace'
+          ? `Masa aktif sewa grup berakhir. Masa tenggang ${shortCountdown(rentalStatus.graceRemainingMs)} masih tersedia untuk perpanjangan. Ketik .sewa.`
+          : 'Sewa grup sudah tidak aktif. Gunakan .sewa untuk membuat invoice perpanjangan.');
+      }
+      return;
+    }
+  }
+
+  // Muted groups allow only the verified owner mute control and tenant billing
+  // commands. Other commands and AI triggers remain muted.
+  if (shouldSuppressGroupInteraction(message, config) && !isOwnerMuteControl && !rentalPublicControl) return;
 
   // Priority lane 1: replies to an active command screen (e.g. `.groupinfo`
   // followed by `1`). It must consume the message before command parsing or AI.
@@ -56,6 +88,18 @@ export async function dispatch(sock, message) {
       if (auth.reason === 'owner') return message.reply('Perintah ini khusus owner.');
       if (auth.reason === 'self') return message.reply('Bot sedang dalam mode self.');
       return;
+    }
+    if (message.isGroup && !auth.owner && !BILLING_EXEMPT_COMMANDS.has(String(plugin.name || '').toLowerCase())) {
+      const quota = await consumeTenantQuota({ groupJid: message.chat, command: plugin.name, plugin });
+      if (quota.applies && !quota.allowed) {
+        const noticeKey = `${message.chat}:${quota.reason}:${quota.resetAt || quota.tenant?.expiresAt || ''}`;
+        if (notifyRentalBlockOnce(noticeKey)) {
+          if (quota.reason === 'quota') await message.reply(`Kuota harian grup telah habis (${quota.used}/${quota.limit} unit). Reset dalam ${shortCountdown(quota.remainingMs)}. Semua command tersedia kembali setelah kuota 24 jam diperbarui. Periksa .sewa status atau perpanjang melalui .sewa.`);
+          else if (quota.reason === 'grace') await message.reply(`Masa aktif sewa grup telah berakhir. Masa tenggang masih tersisa ${shortCountdown(quota.graceRemainingMs)}. Selama masa tenggang, command berbayar ditangguhkan; perpanjang melalui .sewa.`);
+          else await message.reply('Langganan grup sedang tidak aktif. Gunakan .sewa untuk membuat atau memperpanjang invoice.');
+        }
+        return;
+      }
     }
     const guardConfig = config.commandGuard || {};
     const isGuardControl = ['guard', 'commandguard', 'antispam'].includes(String(parsed.command || '').toLowerCase());
@@ -93,6 +137,17 @@ export async function dispatch(sock, message) {
   if (hasPrefix) return;
   // In prefix mode "none", parseCommand treats all text as a command; unknown natural language falls through to AI.
   if (isAITrigger(sock, message, { prefixed: false, hasKnownCommand: false })) {
+    if (message.isGroup && !ownerVerified) {
+      const quota = await consumeTenantQuota({ groupJid: message.chat, command: 'ai', plugin: { name: 'ai', description: 'AI conversation response' } });
+      if (quota.applies && !quota.allowed) {
+        const noticeKey = `${message.chat}:${quota.reason}:${quota.resetAt || quota.tenant?.expiresAt || ''}`;
+        if (notifyRentalBlockOnce(noticeKey)) {
+          if (quota.reason === 'quota') await message.reply(`Kuota penggunaan grup habis (${quota.used}/${quota.limit} unit). Reset dalam ${shortCountdown(quota.remainingMs)}. Status: .sewa status`);
+          else await message.reply('Langganan grup tidak aktif untuk sementara. Gunakan .sewa untuk memperpanjang layanan.');
+        }
+        return;
+      }
+    }
     await answerMessage(sock, message);
   }
 }

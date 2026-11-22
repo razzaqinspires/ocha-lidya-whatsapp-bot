@@ -30,6 +30,7 @@ import { getReconnectDelay, isValidInternationalNumber, normalizePhoneNumber, sh
 import { startCodeLab, stopCodeLab, prepareCodeLabHandoff, cancelCodeLabHandoff, applyHostPreflightResult } from './runtime/code-lab.js';
 import { acquireRuntimeLock } from './runtime/single-instance.js';
 import { stopNexoraBootstrapScheduler, runNexoraBootstrap } from './runtime/bootstrap-agent.js';
+import { startRentalScheduler, stopRentalScheduler } from './rental/runtime.js';
 
 setOutgoingMessageObserver(observeOutgoingMessage);
 
@@ -108,6 +109,10 @@ let shutdownInProgress = false;
 let credsSaveQueue = Promise.resolve();
 let invalidSessionRecoveryUsed = false;
 const processedIncoming = new Map();
+
+// Rental expiry, 24-hour quota windows, invoice timeout and reminders are autonomous.
+// A single in-process scheduler is restored at every npm start; no cron/systemd required.
+startRentalScheduler(() => activeSocket, { intervalMs: 60_000, runImmediately: true });
 
 function isDuplicateIncoming(key) {
   const id = key?.id;
@@ -490,6 +495,7 @@ async function shutdownRuntime(signal, exitCode = 0) {
   activeSocket = undefined;
   try { socketToClose?.end?.(new Error(`Process shutdown: ${signal}`)); } catch {}
   stopModelCatalogScheduler();
+  stopRentalScheduler();
   stopNexoraBootstrapScheduler();
   try { await sourceWatcher.close(); } catch {}
   try { await autoGitSync.close(); } catch {}

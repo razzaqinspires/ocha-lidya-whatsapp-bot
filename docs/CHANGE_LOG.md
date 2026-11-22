@@ -602,3 +602,24 @@ All notable changes to Ocha Lidya are recorded here. The newest release is liste
 ### Validation
 - Added menu-renderer tests for live plugin metadata, argument placeholders, duplicate command names, prefix/mode widgets, and the master-console block.
 - Added profile tests for consecutive-day streaks, missed-day reset, daily XP capacity, and SVG escaping.
+
+
+## [1.10.18] - 2026-11-21
+
+### Added
+- Per-group rental subscriptions with Mini, Standard, and Pro 30-day plans and shared rolling 24-hour workload-weighted quotas.
+- Customer package selection, invoice generation, QRIS/e-wallet/SeaBank instructions, customer payment reporting, and owner-only manual payment approval/rejection.
+- Owner rental console for tenant/order inspection, quota usage, audit history, price/quota adjustments, manual activation/suspension, and term extension.
+- Autonomous lifecycle scheduler for invoice expiry, quota rollover, subscription expiry, 48-hour grace, reminder delivery, and group suspension.
+- Payment QR asset supplied by the owner and native-flow registry support for list, reply, CTA, flow, address, call, and commerce payload families.
+- One hundred-feature rental capability catalog distinguishing delivered functionality from roadmap work.
+
+### Changed
+- Rental invoice terms are snapshotted at creation so later package price/quota updates do not alter pending invoices.
+- Order, payment, approval, quota, and scheduler writes are serialized per tenant to avoid duplicate billing and state races.
+- Failed group-mute side effects retry without writing redundant configuration events every scheduler cycle.
+- Raw low-level `sock.relayMessage()` payloads are left untouched; `sendInteractive` validates only registered native-flow payloads and retains text fallback.
+
+### Safety
+- QRIS is static and payment reports never activate service automatically. Owner must verify settlement before approval. Screenshots are not treated as proof of settlement.
+- Automatic payment webhooks, dynamic QRIS, refund/reversal, and payment-provider reconciliation are not included without authorized gateway credentials.

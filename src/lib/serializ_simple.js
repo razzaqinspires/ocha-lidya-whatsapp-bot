@@ -17,6 +17,7 @@ import freply from './freply.js';
 import { buildContactMessage } from './contact-card.js';
 import { registerReplySession } from '../core/reply-sessions.js';
 import { extractMessageText } from './message-text.js';
+import { normalizeNativeFlowButton } from './native-flow-registry.js';
 let callMusicModule = null;
 try {
   const callMusic = await import('./callMusic.js');
@@ -779,7 +780,7 @@ function extendSocket(sock) {
     return decoded;
   };
 
-  function buildNativeFlowBinaryNodes(buttons = [], isGroup = false) {
+  function buildNativeFlowBinaryNodes(buttons = [], isGroup = false, { flowName = 'mixed', flowVersion = '9' } = {}) {
     const randomHex = crypto.randomBytes(20).toString('hex');
     const qualityContent = {
       tag: 'quality_control',
@@ -803,7 +804,7 @@ function extendSocket(sock) {
         {
           tag: 'interactive',
           attrs: { type: 'native_flow', v: '1' },
-          content: [{ tag: 'native_flow', attrs: { v: '9', name: 'mixed' } }]
+          content: [{ tag: 'native_flow', attrs: { v: String(flowVersion), name: String(flowName) } }]
         },
         qualityContent
       ]
@@ -832,7 +833,10 @@ function extendSocket(sock) {
 
     let buttonList = Array.isArray(options.buttons) ? [...options.buttons] : [];
 
-    const resolvedListSections = listSections || sections;
+    const listButton = buttonList.find(button => ['single_select', 'list'].includes(String(button?.name || button?.type || '').toLowerCase()));
+    let embeddedListParams = {};
+    try { embeddedListParams = typeof listButton?.buttonParamsJson === 'string' ? JSON.parse(listButton.buttonParamsJson) : (listButton?.buttonParamsJson || {}); } catch {}
+    const resolvedListSections = listSections || sections || listButton?.sections || embeddedListParams.sections;
     if (resolvedListSections && Array.isArray(resolvedListSections) && resolvedListSections.length > 0) {
       const alreadyHasList = buttonList.some(b => b.type === 'single_select' || b.name === 'single_select' || b.type === 'list' || b.name === 'list');
       if (!alreadyHasList) {
@@ -882,7 +886,7 @@ function extendSocket(sock) {
       }
     }
 
-    const nonListButtons = buttonList.filter(b => b.name !== 'single_select' && b.type !== 'single_select' && b.name !== 'list' && b.type !== 'list');
+    const nonListButtons = buttonList.filter(b => !['single_select', 'list'].includes(String(b.name || b.type || '').toLowerCase()));
     if (nonListButtons.length > 0) {
       fallbackText += `\n*─── Choice ───*\n`;
       for (const btn of nonListButtons) {
@@ -893,69 +897,8 @@ function extendSocket(sock) {
     }
     if (footer) fallbackText += `\n_${footer}_`;
 
-    const nativeButtons = buttonList.map((b, idx) => {
-      let buttonName = b.type || b.name || 'quick_reply';
-      let existingParams = {};
-      if (b.buttonParamsJson) {
-        try {
-          existingParams = typeof b.buttonParamsJson === 'string' ? JSON.parse(b.buttonParamsJson) : b.buttonParamsJson;
-        } catch {}
-      }
-
-      let buttonParamsJson = {};
-      
-      if (buttonName === 'open_webview' || buttonName === 'cta_url' || buttonName === 'url') {
-        buttonName = 'cta_url';
-        const targetUrl = b.url || b.link || existingParams.url || 'https://google.com';
-        buttonParamsJson = {
-          display_text: b.title || b.display_text || existingParams.display_text || 'Open Link',
-          url: targetUrl,
-          merchant_url: b.merchant_url || existingParams.merchant_url || targetUrl,
-          webview_interaction: b.webview_interaction !== undefined ? Boolean(b.webview_interaction) : (existingParams.webview_interaction !== undefined ? Boolean(existingParams.webview_interaction) : true),
-          ...(existingParams || {}),
-          ...(b.options || {})
-        };
-      } else if (buttonName === 'cta_call' || buttonName === 'call') {
-        buttonName = 'cta_call';
-        const rawPhone = b.phone || b.phone_number || existingParams.phone || existingParams.phone_number || '6281234567890';
-        const cleanPhone = String(rawPhone).replace(/[^0-9+]/g, '');
-        buttonParamsJson = {
-          display_text: b.title || b.display_text || existingParams.display_text || 'Telephone',
-          phone: cleanPhone,
-          phone_number: cleanPhone
-        };
-      } else if (buttonName === 'cta_copy' || buttonName === 'copy') {
-        buttonName = 'cta_copy';
-        buttonParamsJson = {
-          display_text: b.title || b.display_text || existingParams.display_text || 'Copy',
-          id: b.id || b.copy_code || existingParams.id || existingParams.copy_code || `copy_${idx}`,
-          copy_code: b.copy_code || b.id || existingParams.copy_code || existingParams.id || 'COPY_ME'
-        };
-      } else if (buttonName === 'single_select' || buttonName === 'list') {
-        buttonName = 'single_select';
-        buttonParamsJson = {
-          title: b.title || b.display_text || existingParams.title || listTitle || 'Pilih Opsi',
-          sections: b.sections || b.listSections || existingParams.sections || []
-        };
-      } else if (['cta_reminder', 'cta_cancel_reminder', 'address_message', 'send_location'].includes(buttonName)) {
-        buttonParamsJson = {
-          display_text: b.title || b.display_text || existingParams.display_text || 'Continue',
-          ...(existingParams || {}),
-          ...(b.options || {})
-        };
-      } else {
-        buttonName = 'quick_reply';
-        buttonParamsJson = {
-          display_text: b.title || b.display_text || existingParams.display_text || 'Reply',
-          id: b.id || existingParams.id || `btn_${idx}`
-        };
-      }
-      
-      return {
-        name: buttonName,
-        buttonParamsJson: JSON.stringify(buttonParamsJson)
-      };
-    });
+    const normalizedButtons = buttonList.map((button, index) => normalizeNativeFlowButton(button, index));
+    const nativeButtons = normalizedButtons.map(({ name, buttonParamsJson }) => ({ name, buttonParamsJson }));
 
     let mediaPayload = null;
     const mediaSource = options.image || options.media;
@@ -1023,7 +966,8 @@ function extendSocket(sock) {
       contextInfo: finalContextInfo,
       nativeFlowMessage: {
         buttons: nativeButtons,
-        messageParamsJson: ''
+        messageParamsJson: typeof options.messageParamsJson === 'string' ? options.messageParamsJson : JSON.stringify(options.messageParamsJson || {}),
+        messageVersion: Number.isInteger(options.messageVersion) ? options.messageVersion : 1
       }
     };
 
@@ -1064,7 +1008,7 @@ function extendSocket(sock) {
     });
 
     const additionalNodes = [
-      ...buildNativeFlowBinaryNodes(nativeButtons, isGroup),
+      ...buildNativeFlowBinaryNodes(nativeButtons, isGroup, { flowName: options.nativeFlowName || 'mixed', flowVersion: options.nativeFlowVersion || '9' }),
       ...(Array.isArray(options.additionalNodes) ? options.additionalNodes : [])
     ];
 
@@ -1083,6 +1027,18 @@ function extendSocket(sock) {
         return await sock.sendMessage(targetJid, { text: fallbackText.trim() });
       }
     }
+  };
+
+  sock.sendNativeFlow = async (jid, options = {}, quoted = null) => {
+    if (!Array.isArray(options.buttons) || options.buttons.length === 0) {
+      throw new TypeError('sendNativeFlow memerlukan array buttons yang tidak kosong.');
+    }
+    return sock.sendInteractive(jid, options, quoted);
+  };
+
+  sock.getNativeFlowCapabilities = async () => {
+    const { getNativeFlowCapabilities } = await import('./native-flow-registry.js');
+    return getNativeFlowCapabilities();
   };
 
   sock.sendRichMessage = async (jid, submessages, quoted = null, options = {}) => {
