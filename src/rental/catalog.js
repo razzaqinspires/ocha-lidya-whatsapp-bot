@@ -1,23 +1,41 @@
 export const DEFAULT_PLANS = Object.freeze({
   mini: {
     id: 'mini', name: 'Mini', price: 5000, durationDays: 30,
-    dailyQuota: 120, maxGroups: 1, graceHours: 48,
-    highlights: ['Semua command tersedia', 'Kuota bersama 120 unit / 24 jam', 'Masa aktif 30 hari', 'Pengingat masa aktif']
+    dailyQuota: 120, maxMembers: 50, graceHours: 48,
+    highlights: [
+      '1 grup WhatsApp', 'Maksimal 50 anggota grup',
+      'Semua anggota dapat menggunakan fitur bot',
+      'Kuota bersama 120 unit per 24 jam',
+      'Panel admin grup: aturan, sambutan anggota baru, dan polling',
+      'Masa aktif 30 hari dan pengingat perpanjangan'
+    ]
   },
   standard: {
     id: 'standard', name: 'Standard', price: 10000, durationDays: 30,
-    dailyQuota: 350, maxGroups: 1, graceHours: 48,
-    highlights: ['Semua command tersedia', 'Kuota bersama 350 unit / 24 jam', 'Masa aktif 30 hari', 'Prioritas antrean standar']
+    dailyQuota: 350, maxMembers: 200, graceHours: 48,
+    highlights: [
+      '1 grup WhatsApp', 'Maksimal 200 anggota grup',
+      'Semua anggota dapat menggunakan fitur bot',
+      'Kuota bersama 350 unit per 24 jam',
+      'Panel admin grup: aturan, sambutan anggota baru, dan polling',
+      'Masa aktif 30 hari dan pengingat perpanjangan'
+    ]
   },
   pro: {
     id: 'pro', name: 'Pro', price: 20000, durationDays: 30,
-    dailyQuota: 1000, maxGroups: 1, graceHours: 48,
-    highlights: ['Semua command tersedia', 'Kuota bersama 1.000 unit / 24 jam', 'Masa aktif 30 hari', 'Prioritas antrean lebih tinggi']
+    dailyQuota: 1000, maxMembers: 1000, graceHours: 48,
+    highlights: [
+      '1 grup WhatsApp', 'Maksimal 1.000 anggota grup',
+      'Semua anggota dapat menggunakan fitur bot',
+      'Kuota bersama 1.000 unit per 24 jam',
+      'Panel admin grup: aturan, sambutan anggota baru, dan polling',
+      'Masa aktif 30 hari dan pengingat perpanjangan'
+    ]
   }
 });
 
 export const BILLING_EXEMPT_COMMANDS = new Set([
-  'sewa', 'rent', 'paket', 'bayar', 'owner', 'menu', 'ping', 'about', 'groupinfo'
+  'sewa', 'rent', 'paketsewa', 'paket', 'bayar', 'owner', 'menu', 'ping', 'about', 'groupinfo'
 ]);
 
 export function normalizePlanId(value) {

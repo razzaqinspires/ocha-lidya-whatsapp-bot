@@ -47,10 +47,11 @@ export async function updatePlan(planId, patch, actor = 'owner') {
   if (!Number.isInteger(next.price) || next.price < 1000 || next.price > 10_000_000) throw new Error('Harga harus Rp1.000 sampai Rp10.000.000.');
   if (!Number.isInteger(next.dailyQuota) || next.dailyQuota < 10 || next.dailyQuota > 100_000) throw new Error('Kuota harus 10 sampai 100.000 unit per 24 jam.');
   if (!Number.isInteger(next.durationDays) || next.durationDays < 1 || next.durationDays > 365) throw new Error('Durasi harus 1 sampai 365 hari.');
+  if (!Number.isInteger(next.maxMembers) || next.maxMembers < 2 || next.maxMembers > 100_000) throw new Error('Batas anggota harus 2 sampai 100.000 anggota.');
   const overrides = await getRecord('rental.settings', 'plans') || {};
   overrides[id] = next;
   await putRecord('rental.settings', 'plans', overrides, { actor, reason: `update rental plan ${id}` });
-  await putRecord('rental.audit', makeId('AUD'), { action: 'plan.updated', planId: id, actor, price: next.price, dailyQuota: next.dailyQuota, durationDays: next.durationDays, at: nowIso(Date.now()) }, { source: 'rental-service' });
+  await putRecord('rental.audit', makeId('AUD'), { action: 'plan.updated', planId: id, actor, price: next.price, dailyQuota: next.dailyQuota, maxMembers: next.maxMembers, durationDays: next.durationDays, at: nowIso(Date.now()) }, { source: 'rental-service' });
   return next;
 }
 
@@ -61,6 +62,27 @@ export async function getTenant(groupJid) {
 export async function listTenants() { return Object.values(await listRecords('rental.tenant')); }
 export async function listOrders() { return Object.values(await listRecords('rental.order')); }
 export async function getOrder(orderId) { return getRecord('rental.order', String(orderId || '').toUpperCase()); }
+
+export async function setRentalContext(userJid, groupJid, groupName = '', now = Date.now()) {
+  const user = String(userJid || '').replace(/:\d+(?=@)/, '');
+  if (!/^\d{8,15}@s\.whatsapp\.net$/.test(user)) throw new Error('Nomor WhatsApp Anda belum dapat diverifikasi. Buka chat pribadi bot setelah sistem mengenali nomor Anda.');
+  if (!validGroup(groupJid)) throw new Error('ID grup tidak valid.');
+  const meta = getGroupMetadata(groupJid);
+  const context = {
+    userJid: user, groupJid, groupName: String(groupName || meta?.subject || groupJid).slice(0, 120),
+    selectedAt: nowIso(now), expiresAt: nowIso(now + 12 * 60 * 60_000)
+  };
+  await putRecord('rental.context', user, context, { actor: user, reason: 'private rental checkout context selected from group' });
+  return context;
+}
+
+export async function getRentalContext(userJid, now = Date.now()) {
+  const user = String(userJid || '').replace(/:\d+(?=@)/, '');
+  if (!/^\d{8,15}@s\.whatsapp\.net$/.test(user)) return null;
+  const context = await getRecord('rental.context', user);
+  if (!context || !validGroup(context.groupJid) || Date.parse(context.expiresAt) <= now) return null;
+  return context;
+}
 
 export function quotaCostFor(plugin = {}, command = '') {
   const text = `${command} ${plugin.name || ''} ${plugin.description || ''} ${plugin.usage || ''}`.toLowerCase();
@@ -80,18 +102,22 @@ export async function createRentalOrder({ groupJid, requestedBy, groupName = '',
     if (tenant?.status === 'active' && Date.parse(tenant.expiresAt) > now) {
       // Active tenants may order a renewal; no duplicate pending order is created.
     }
+    const plan = (await getPlans())[normalizedPlan];
+    const meta = getGroupMetadata(groupJid);
+    const memberCount = Number(meta?.size) || Number(meta?.participants?.length) || 0;
+    if (memberCount > plan.maxMembers) {
+      throw new Error(`Grup ini memiliki ${memberCount.toLocaleString('id-ID')} anggota, sedangkan paket ${plan.name} membatasi ${plan.maxMembers.toLocaleString('id-ID')} anggota. Pilih paket dengan kapasitas lebih besar.`);
+    }
     const orders = await listOrders();
     const existing = orders.find(order => order.groupJid === groupJid && ['pending', 'payment_reported'].includes(order.status) && Date.parse(order.expiresAt) > now);
     if (existing) {
       if (existing.planId !== normalizedPlan) throw new Error(`Grup ini masih memiliki invoice ${existing.id} untuk paket ${existing.planName}. Batalkan invoice tersebut atau lanjutkan pembayarannya sebelum memilih paket lain.`);
       return { order: existing, reused: true };
     }
-    const plan = (await getPlans())[normalizedPlan];
-    const meta = getGroupMetadata(groupJid);
     const order = {
       id: makeId('RV'), groupJid, groupName: groupName || meta?.subject || groupJid,
       requestedBy, planId: normalizedPlan, planName: plan.name,
-      amount: plan.price, durationDays: plan.durationDays, dailyQuota: plan.dailyQuota, graceHours: plan.graceHours,
+      amount: plan.price, durationDays: plan.durationDays, dailyQuota: plan.dailyQuota, maxMembers: plan.maxMembers, graceHours: plan.graceHours,
       status: 'pending', createdAt: nowIso(now), expiresAt: nowIso(now + ORDER_TTL_MS),
       paymentMethod: null, paymentReportedAt: null, paymentNote: '', approvedAt: null,
       approvedBy: null, rejectedAt: null, rejectionReason: '',
@@ -135,6 +161,42 @@ export async function reportPayment(orderId, actor, note = '', now = Date.now())
   });
 }
 
+export async function attachPaymentEvidence(orderId, actor, evidence, note = '', now = Date.now()) {
+  const initial = await getOrder(orderId);
+  if (!initial) throw new Error('Order tidak ditemukan.');
+  return withLock(`tenant:${initial.groupJid}`, async () => {
+    const order = await getOrder(orderId);
+    if (!order) throw new Error('Order tidak ditemukan.');
+    if (!order.paymentMethod) throw new Error('Pilih metode pembayaran terlebih dahulu dengan .sewa pay.');
+    if (!['pending', 'payment_reported'].includes(order.status) || Date.parse(order.expiresAt) <= now) {
+      throw new Error('Invoice sudah tidak aktif. Buat invoice baru melalui .sewa plan.');
+    }
+    const existing = Array.isArray(order.paymentEvidence) ? order.paymentEvidence : [];
+    if (existing.length >= 3) throw new Error('Maksimal 3 file bukti pembayaran per invoice.');
+    const allowedMime = { jpg: 'image/jpeg', png: 'image/png', webp: 'image/webp' };
+    const extension = typeof evidence?.relativePath === 'string' ? evidence.relativePath.split('.').at(-1).toLowerCase() : '';
+    if (!evidence || typeof evidence.relativePath !== 'string' || !/^data\/rental-evidence\/[A-Z0-9-]+\/[a-f0-9-]+\.(?:jpg|png|webp)$/i.test(evidence.relativePath)
+      || !/^[a-f0-9-]{16,64}$/i.test(String(evidence.id || ''))
+      || evidence.id !== evidence.relativePath.split('/').at(-1).split('.')[0]
+      || allowedMime[extension] !== evidence.mimetype
+      || !Number.isInteger(Number(evidence.size)) || Number(evidence.size) < 1 || Number(evidence.size) > 5 * 1024 * 1024) {
+      throw new Error('Metadata file bukti pembayaran tidak valid atau melewati batas 5 MB.');
+    }
+    const normalizedActor = String(actor || '').replace(/:\d+(?=@)/, '');
+    if (!/^\d{8,15}@s\.whatsapp\.net$/.test(normalizedActor)) throw new Error('Pengirim bukti harus terverifikasi melalui nomor WhatsApp pribadi.');
+    const next = {
+      ...order,
+      status: 'payment_reported',
+      paymentReportedAt: order.paymentReportedAt || nowIso(now),
+      paymentNote: String(note || order.paymentNote || '').slice(0, 240),
+      paymentEvidence: [...existing, { ...evidence, uploadedBy: actor, uploadedAt: nowIso(now) }]
+    };
+    await putRecord('rental.order', order.id, next, { actor, reason: 'payment evidence attached; manual settlement verification required' });
+    await putRecord('rental.audit', makeId('AUD'), { action: 'payment.evidence-attached', orderId: order.id, actor, evidenceId: evidence.id, size: evidence.size, at: nowIso(now) }, { source: 'rental-service' });
+    return { order: next, reused: order.status === 'payment_reported', evidence: next.paymentEvidence.at(-1) };
+  });
+}
+
 export async function approvePayment(orderId, actor, now = Date.now()) {
   const initial = await getOrder(orderId);
   if (!initial) throw new Error('Order tidak ditemukan.');
@@ -154,6 +216,7 @@ export async function approvePayment(orderId, actor, now = Date.now()) {
     // Terms are snapshotted on the invoice. Later package edits must not alter an issued bill.
     const durationDays = Number(order.durationDays) || plan.durationDays;
     const dailyQuota = Number(order.dailyQuota) || plan.dailyQuota;
+    const maxMembers = Number(order.maxMembers) || plan.maxMembers || 50;
     const graceHours = Number(order.graceHours) || plan.graceHours;
     const previous = await getTenant(order.groupJid);
     const alreadyApplied = previous?.lastOrderId === order.id;
@@ -173,7 +236,7 @@ export async function approvePayment(orderId, actor, now = Date.now()) {
     const tenant = alreadyApplied ? previous : {
       groupJid: order.groupJid, groupName: order.groupName,
       status: 'active', manuallySuspended: false, planId: plan.id, planName: plan.name,
-      dailyQuota, activatedAt: continuing ? previous.activatedAt : nowIso(startMs), expiresAt: nowIso(expiresAt),
+      dailyQuota, maxMembers, billingContact: order.requestedBy, activatedAt: continuing ? previous.activatedAt : nowIso(startMs), expiresAt: nowIso(expiresAt),
       graceUntil: nowIso(expiresAt + graceHours * 60 * 60_000),
       lastOrderId: order.id, activatedBy: actor,
       quotaWindowResetAt: quotaResetAt,
@@ -231,9 +294,20 @@ export async function getTenantStatus(groupJid, now = Date.now()) {
   if (!tenant) return { tenant: null, status: 'not-rented', remainingMs: 0 };
   const expiry = Date.parse(tenant.expiresAt) || 0;
   const graceUntil = Date.parse(tenant.graceUntil) || expiry + 48 * 60 * 60_000;
-  const status = tenant.manuallySuspended ? 'suspended' : now < expiry ? 'active' : now < graceUntil ? 'grace' : 'suspended';
-  return { tenant: { ...tenant, status }, status, remainingMs: Math.max(0, expiry - now), graceRemainingMs: Math.max(0, graceUntil - now) };
+  const lifecycleStatus = tenant.manuallySuspended ? 'suspended' : now < expiry ? 'active' : now < graceUntil ? 'grace' : 'suspended';
+  const metadata = getGroupMetadata(groupJid);
+  const memberCount = Number(metadata?.size) || Number(metadata?.participants?.length) || 0;
+  const memberLimit = Number(tenant.maxMembers) || (await getPlans())[tenant.planId]?.maxMembers || 0;
+  const overLimit = lifecycleStatus === 'active' && memberLimit > 0 && memberCount > memberLimit;
+  const status = overLimit ? 'over-limit' : lifecycleStatus;
+  return {
+    tenant: { ...tenant, status, memberCount, maxMembers: memberLimit },
+    status, lifecycleStatus, memberCount, memberLimit, overLimit,
+    remainingMs: Math.max(0, expiry - now),
+    graceRemainingMs: Math.max(0, graceUntil - now)
+  };
 }
+
 
 export async function consumeTenantQuota({ groupJid, command, plugin = {}, now = Date.now() }) {
   if (!validGroup(groupJid)) return { applies: false, allowed: true, cost: 0 };
@@ -326,13 +400,32 @@ export async function maintainRentals(getSocket, now = Date.now()) {
         { key: 'grace', due: now >= expiry && now < graceUntil, label: 'masa aktif berakhir; masa tenggang 48 jam dimulai' },
         { key: 'grace-end', due: now >= graceUntil, label: 'masa tenggang berakhir; layanan grup ditangguhkan' }
       ];
-      return stages.filter(stage => stage.due && !marks.has(stage.key)).map(stage => ({ ...stage, groupJid: tenant.groupJid, expiresAt: tenant.expiresAt, planName: tenant.planName }));
+      return stages.filter(stage => stage.due && !marks.has(stage.key)).map(stage => ({ ...stage, groupJid: tenant.groupJid, groupName: tenant.groupName, billingContact: tenant.billingContact || '', expiresAt: tenant.expiresAt, planName: tenant.planName }));
     });
 
     for (const stage of dueReminders) {
       try {
         const graceEnd = stage.key === 'grace-end';
-        await sock.sendMessage(stage.groupJid, { text: `*OCHA LIDYA · INFORMASI SEWA*\nPengingat sewa: ${stage.label}.\nPaket: ${stage.planName}\nBerakhir: ${new Date(stage.expiresAt).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })} WIB\n${graceEnd ? 'Interaksi bot ditangguhkan sampai perpanjangan disetujui.' : 'Perpanjang melalui .sewa'}` });
+        const metadata = getGroupMetadata(stage.groupJid);
+        const adminRecipients = (metadata?.participants || [])
+          .filter(participant => ['admin', 'superadmin', true].includes(participant.admin))
+          .map(participant => String(participant.phoneNumber || '').replace(/:\d+(?=@)/, ''))
+          .filter(value => /^\d{8,15}@s\.whatsapp\.net$/.test(value));
+        const billingContact = /^\d{8,15}@s\.whatsapp\.net$/.test(stage.billingContact) ? stage.billingContact : '';
+        const adminTargets = [...new Set(adminRecipients)].filter(value => value !== billingContact).slice(0, 5);
+        const reminder = `*OCHA LIDYA · INFORMASI SEWA*\nGrup: ${stage.groupName || stage.groupJid}\nPengingat: ${stage.label}.\nPaket: ${stage.planName}\nBerakhir: ${new Date(stage.expiresAt).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })} WIB\n${graceEnd ? 'Masa tenggang telah berakhir; interaksi bot grup ditangguhkan.' : 'Perpanjang melalui .sewa di grup tujuan, lalu selesaikan transaksi di chat pribadi.'}`;
+        let delivered = false;
+        if (billingContact) {
+          try { await sock.sendMessage(billingContact, { text: reminder }); delivered = true; }
+          catch (deliveryError) { logger.warn({ recipient: billingContact, groupJid: stage.groupJid, message: deliveryError.message }, 'Private billing-contact reminder failed; trying group admins'); }
+        }
+        if (!delivered) {
+          for (const recipient of adminTargets) {
+            try { await sock.sendMessage(recipient, { text: reminder }); delivered = true; break; }
+            catch (deliveryError) { logger.warn({ recipient, groupJid: stage.groupJid, message: deliveryError.message }, 'Private group-admin reminder delivery failed'); }
+          }
+        }
+        if (!delivered) throw new Error('No billing contact or verified group admin could receive the private reminder.');
         await withLock(`tenant:${stage.groupJid}`, async () => {
           const latest = await getTenant(stage.groupJid);
           if (!latest || latest.expiresAt !== stage.expiresAt) return;
@@ -373,7 +466,7 @@ export async function activateTenantManually(groupJid, actor, days = 30) {
     const duration = Math.max(1, Math.min(365, Number(days) || 30));
     const expiry = now + duration * DAY_MS;
     const previous = await getTenant(groupJid);
-    const next = { groupJid, groupName: getGroupMetadata(groupJid)?.subject || groupJid, status: 'active', manuallySuspended: false, planId: 'standard', planName: plan.name, dailyQuota: plan.dailyQuota, activatedAt: nowIso(now), expiresAt: nowIso(expiry), graceUntil: nowIso(expiry + 48 * 60 * 60_000), quotaWindowResetAt: now + DAY_MS, lastOrderId: null, activatedBy: actor, reminderMarks: [], createdAt: previous?.createdAt || nowIso(now), updatedAt: nowIso(now), version: (previous?.version || 0) + 1 };
+    const next = { groupJid, groupName: getGroupMetadata(groupJid)?.subject || groupJid, status: 'active', manuallySuspended: false, planId: 'standard', planName: plan.name, dailyQuota: plan.dailyQuota, maxMembers: plan.maxMembers, activatedAt: nowIso(now), expiresAt: nowIso(expiry), graceUntil: nowIso(expiry + 48 * 60 * 60_000), quotaWindowResetAt: now + DAY_MS, lastOrderId: null, activatedBy: actor, reminderMarks: [], createdAt: previous?.createdAt || nowIso(now), updatedAt: nowIso(now), version: (previous?.version || 0) + 1 };
     await putRecord('rental.tenant', groupJid, next, { actor, reason: 'manual activation by owner' });
     await putRecord('rental.usage', groupJid, { tenantId: groupJid, used: 0, startedAt: now, resetAt: now + DAY_MS, breakdown: {}, updatedAt: nowIso(now) }, { source: 'rental-quota', reason: 'manual activation quota initialized' });
     await setGroupInteractionMuted(groupJid, false, { actor, reason: 'rental manually activated by owner' });

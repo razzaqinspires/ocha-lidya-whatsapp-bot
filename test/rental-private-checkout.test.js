@@ -1,0 +1,45 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
+
+test('group rental command sends private instructions and acknowledges once; group proof media is rejected', async () => {
+  const pluginUrl = pathToFileURL(path.resolve('src/plugins/general/sewa.js')).href;
+  const metadataUrl = pathToFileURL(path.resolve('src/core/group-metadata.js')).href;
+  const serviceUrl = pathToFileURL(path.resolve('src/rental/service.js')).href;
+  const temp = await fs.mkdtemp(path.join(os.tmpdir(), `ocha-sewa-route-${process.pid}-`));
+  const script = `
+    import assert from 'node:assert/strict';
+    const plugin = (await import(${JSON.stringify(pluginUrl)})).default;
+    const metadata = await import(${JSON.stringify(metadataUrl)});
+    const service = await import(${JSON.stringify(serviceUrl)});
+    const group = '120363765432109876@g.us';
+    const sender = '6281234567890@s.whatsapp.net';
+    await metadata.upsertGroupMetadata({ id: group, subject: 'Grup Uji Checkout', participants: [{ id: sender, admin: 'admin' }] });
+    const sent = [];
+    const sock = { sendMessage: async (jid, payload) => { sent.push({ jid, payload }); }, groupMetadata: async () => metadata.getGroupMetadata(group) };
+    const makeMessage = (body, type = 'conversation') => ({ isGroup: true, chat: group, sender, senderPn: sender, body, type, key: { remoteJid: group, id: 'message-' + sent.length, participant: sender }, reply: async text => sent.push({ jid: group, payload: { text, reply: true } }) });
+    await plugin.execute({ sock, m: makeMessage('.sewa'), args: [] });
+    assert.equal(sent.filter(item => item.jid === sender).length, 1, 'first group invocation sends one private message');
+    assert.match(sent.find(item => item.jid === sender).payload.text, /CHECKOUT PRIBADI/);
+    assert.match(sent.find(item => item.jid === sender).payload.text, /12 jam/);
+    assert.equal(sent.filter(item => item.jid === group && item.payload.reply).length, 1, 'first group invocation gets one acknowledgement');
+    await plugin.execute({ sock, m: makeMessage('.sewa'), args: [] });
+    assert.equal(sent.filter(item => item.jid === sender).length, 2, 'each invocation refreshes the private instructions');
+    assert.equal(sent.filter(item => item.jid === group && item.payload.reply).length, 1, 'repeated group invocations are acknowledged only once within the throttle window');
+    const photoMessage = makeMessage('.sewa bukti RV-TEST', 'imageMessage');
+    photoMessage.message = { imageMessage: { mimetype: 'image/jpeg' } };
+    await plugin.execute({ sock, m: photoMessage, args: ['bukti', 'RV-TEST'] });
+    assert.ok(sent.some(item => item.jid === group && item.payload.delete), 'bot attempts to remove evidence sent to the group');
+    const privateNotice = sent.filter(item => item.jid === sender).at(-1).payload.text;
+    assert.match(privateNotice, /kirim ulang bukti lewat chat pribadi/i);
+    const context = await service.getRentalContext(sender);
+    assert.equal(context.groupJid, group);
+  `;
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], { cwd: temp, encoding: 'utf8', timeout: 30_000 });
+  await fs.rm(temp, { recursive: true, force: true });
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+});

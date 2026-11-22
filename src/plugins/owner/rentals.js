@@ -6,7 +6,7 @@ const wib = value => new Date(value).toLocaleString('id-ID', { timeZone: 'Asia/J
 
 export default {
   name: 'rentals', aliases: ['rentaladmin', 'sewaadmin'], category: 'owner', ownerOnly: true, privateOnly: true,
-  usage: '<status|list|pending|usage|audit|show|approve|reject|suspend|activate|extend|setprice|setquota|plans>',
+  usage: '<status|list|pending|usage|audit|show|approve|reject|suspend|activate|extend|setprice|setquota|setmembers|plans>',
   description: 'Administrasi tenant sewa, pembayaran, paket, kuota dan masa aktif',
   async execute({ sock, m, args }) {
     const action = String(args[0] || 'status').toLowerCase();
@@ -17,15 +17,15 @@ export default {
     }
     if (action === 'plans' || action === 'paket') {
       const plans = await getPlans();
-      return m.reply(`*RENTAL PACKAGES*\n${Object.values(plans).map(p => `${p.id.toUpperCase()} · ${p.name}\nHarga: ${formatRupiah(p.price)} / ${p.durationDays} hari\nKuota: ${p.dailyQuota} unit / 24 jam\nGrace: ${p.graceHours} jam`).join('\n\n')}\n\nAtur: .rentals setprice <plan> <nominal>\nAtur kuota: .rentals setquota <plan> <unit>`);
+      return m.reply(`*RENTAL PACKAGES*\n${Object.values(plans).map(p => `${p.id.toUpperCase()} · ${p.name}\nHarga: ${formatRupiah(p.price)} / ${p.durationDays} hari\nKuota bersama: ${p.dailyQuota} unit / 24 jam\nBatas anggota: ${Number(p.maxMembers || 0).toLocaleString('id-ID')}\nGrace: ${p.graceHours} jam`).join('\n\n')}\n\nAtur harga: .rentals setprice <plan> <nominal>\nAtur kuota: .rentals setquota <plan> <unit>\nAtur anggota: .rentals setmembers <plan> <jumlah>`);
     }
-    if (action === 'setprice' || action === 'setquota') {
+    if (['setprice', 'setquota', 'setmembers'].includes(action)) {
       const planId = normalizePlanId(args[1]);
       const value = Number(args[2]);
       if (!planId || !Number.isSafeInteger(value)) return m.reply(`Format: .rentals ${action} <mini|standard|pro> <angka>`);
-      const patch = action === 'setprice' ? { price: value } : { dailyQuota: value };
+      const patch = action === 'setprice' ? { price: value } : action === 'setquota' ? { dailyQuota: value } : { maxMembers: value };
       const plan = await updatePlan(planId, patch, m.sender);
-      return m.reply(`Paket ${plan.name} diperbarui.\nHarga: ${formatRupiah(plan.price)}\nKuota: ${plan.dailyQuota} unit / 24 jam.`);
+      return m.reply(`Paket ${plan.name} diperbarui.\nHarga: ${formatRupiah(plan.price)}\nKuota: ${plan.dailyQuota} unit / 24 jam\nBatas anggota: ${Number(plan.maxMembers).toLocaleString('id-ID')}.`);
     }
     if (action === 'list' || action === 'tenant') {
       const tenants = await listTenants();
@@ -34,15 +34,15 @@ export default {
       for (const tenant of tenants.slice(0, 60)) {
         const status = await getTenantStatus(tenant.groupJid);
         const quota = await getQuotaStatus(tenant.groupJid);
-        lines.push(`${tenant.groupName}\n${tenant.groupJid}\n${tenant.planName} · ${status.status.toUpperCase()}\nExpiry: ${wib(tenant.expiresAt)} · Kuota: ${quota.used}/${quota.limit}`);
+        lines.push(`${tenant.groupName}\n${tenant.groupJid}\n${tenant.planName} · ${status.status.toUpperCase()}\nAnggota: ${Number(status.memberCount || 0)}/${Number(status.memberLimit || 0)}\nExpiry: ${wib(tenant.expiresAt)} · Kuota: ${quota.used}/${quota.limit}`);
       }
       return m.reply(`*DAFTAR TENANT (${tenants.length})*\n\n${lines.join('\n\n')}`);
     }
     if (action === 'pending' || action === 'orders') {
       const orders = await listOrders();
-      const pending = orders.filter(order => ['pending', 'payment_reported'].includes(order.status)).sort((a,b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 50);
+      const pending = orders.filter(order => ['pending', 'payment_reported'].includes(order.status)).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 50);
       if (!pending.length) return m.reply('Tidak ada invoice yang menunggu.');
-      return m.reply(`*PENDING RENTAL ORDERS*\n${pending.map(order => `${order.id} · ${order.status.toUpperCase()}\n${order.groupName}\n${order.planName} · ${formatRupiah(order.amount)}\nMetode: ${order.paymentMethod || '-'}\nBatas: ${wib(order.expiresAt)}`).join('\n\n')}`);
+      return m.reply(`*PENDING RENTAL ORDERS*\n${pending.map(order => `${order.id} · ${order.status.toUpperCase()}\n${order.groupName}\n${order.planName} · ${formatRupiah(order.amount)}\nMetode: ${order.paymentMethod || '-'} · Bukti: ${(order.paymentEvidence || []).length}\nBatas: ${wib(order.expiresAt)}`).join('\n\n')}`);
     }
     if (action === 'usage' || action === 'kuota') {
       const jid = args[1];
@@ -51,7 +51,7 @@ export default {
       if (!tenantStatus.tenant) return m.reply('Tenant tidak ditemukan.');
       const quota = await getQuotaStatus(jid);
       const top = Object.entries(quota.breakdown || {}).sort((a, b) => b[1] - a[1]).slice(0, 15);
-      return m.reply(`*RENTAL QUOTA DETAIL*\n${tenantStatus.tenant.groupName}\nStatus: ${tenantStatus.status.toUpperCase()}\nPaket: ${tenantStatus.tenant.planName}\nTerpakai: ${quota.used}/${quota.limit} unit\nSisa: ${quota.remaining} unit\nReset: ${wib(quota.resetAt)}\n\n*Penggunaan per command*\n${top.length ? top.map(([name, cost]) => `• ${name}: ${cost} unit`).join('\n') : 'Belum ada penggunaan pada periode ini.'}`);
+      return m.reply(`*RENTAL QUOTA DETAIL*\n${tenantStatus.tenant.groupName}\nStatus: ${tenantStatus.status.toUpperCase()}\nPaket: ${tenantStatus.tenant.planName}\nAnggota: ${Number(tenantStatus.memberCount || 0)}/${Number(tenantStatus.memberLimit || 0)}\nTerpakai: ${quota.used}/${quota.limit} unit\nSisa: ${quota.remaining} unit\nReset: ${wib(quota.resetAt)}\n\n*Penggunaan per command*\n${top.length ? top.map(([name, cost]) => `• ${name}: ${cost} unit`).join('\n') : 'Belum ada penggunaan pada periode ini.'}`);
     }
     if (action === 'audit' || action === 'log') {
       const filter = String(args[1] || '').toLowerCase();
@@ -64,22 +64,28 @@ export default {
       if (!id) return m.reply('Format: .rentals show <order-id>');
       const order = (await listOrders()).find(item => item.id.toLowerCase() === id.toLowerCase());
       if (!order) return m.reply('Order tidak ditemukan.');
-      return m.reply(`*ORDER DETAIL*\nID: ${order.id}\nGrup: ${order.groupName}\nJID: ${order.groupJid}\nPemesan: ${order.requestedBy}\nPaket: ${order.planName}\nNominal: ${formatRupiah(order.amount)}\nStatus: ${order.status}\nMetode: ${order.paymentMethod || '-'}\nDibuat: ${wib(order.createdAt)}\nExpired: ${wib(order.expiresAt)}\nLaporan bayar: ${order.paymentReportedAt ? wib(order.paymentReportedAt) : '-'}\nCatatan: ${order.paymentNote || '-'}`);
+      const evidence = (order.paymentEvidence || []).map((item, index) => `${index + 1}. ${item.mimetype || 'image'} · ${(Number(item.size || 0) / 1024).toFixed(1)} KB · ${item.relativePath}`).join('\n') || 'Belum ada';
+      return m.reply(`*ORDER DETAIL*\nID: ${order.id}\nGrup: ${order.groupName}\nJID: ${order.groupJid}\nPemesan: ${order.requestedBy}\nPaket: ${order.planName}\nNominal: ${formatRupiah(order.amount)}\nBatas anggota: ${Number(order.maxMembers || 0).toLocaleString('id-ID')}\nStatus: ${order.status}\nMetode: ${order.paymentMethod || '-'}\nDibuat: ${wib(order.createdAt)}\nExpired: ${wib(order.expiresAt)}\nLaporan bayar: ${order.paymentReportedAt ? wib(order.paymentReportedAt) : '-'}\nCatatan: ${order.paymentNote || '-'}\n\n*BUKTI PEMBAYARAN*\n${evidence}\n\nBuka gambar bukti dari pesan masuk pribadi owner.`);
     }
     if (action === 'approve' || action === 'confirm') {
       const id = args[1];
       if (!id) return m.reply('Format: .rentals approve <order-id>');
       const result = await approvePayment(id, m.sender);
       if (!result.reused) {
-        try { await sock.sendMessage(result.tenant.groupJid, { text: `*PEMBAYARAN TERVERIFIKASI · SEWA AKTIF*\nPaket: ${result.tenant.planName}\nAktif sampai: ${wib(result.tenant.expiresAt)}\nKuota: ${result.tenant.dailyQuota} unit / 24 jam\nSemua command kini tersedia sesuai kuota grup.` }); } catch {}
+        try { await sock.sendMessage(result.tenant.groupJid, { text: `*PEMBAYARAN TERVERIFIKASI · SEWA AKTIF*\nPaket: ${result.tenant.planName}\nAktif sampai: ${wib(result.tenant.expiresAt)}\nKuota bersama: ${result.tenant.dailyQuota} unit / 24 jam\nBatas anggota: ${Number(result.tenant.maxMembers || 0).toLocaleString('id-ID')}\nSeluruh anggota dapat menggunakan fitur bot sesuai kuota grup.` }); } catch {}
+        if (result.order.requestedBy?.endsWith('@s.whatsapp.net')) {
+          try { await sock.sendMessage(result.order.requestedBy, { text: `Pembayaran invoice ${result.order.id} telah diverifikasi. Sewa grup *${result.tenant.groupName}* aktif sampai ${wib(result.tenant.expiresAt)}. Paket ${result.tenant.planName}, maksimal ${Number(result.tenant.maxMembers || 0).toLocaleString('id-ID')} anggota dan kuota bersama ${result.tenant.dailyQuota} unit/24 jam.` }); } catch {}
+        }
       }
-      return m.reply(`Order ${result.order.id} ${result.reused ? 'sudah pernah' : 'berhasil'} disetujui.\nTenant: ${result.tenant.groupName}\nExpiry: ${wib(result.tenant.expiresAt)}\nGroup mute override: ACTIVE.`);
+      return m.reply(`Order ${result.order.id} ${result.reused ? 'sudah pernah' : 'berhasil'} disetujui.\nTenant: ${result.tenant.groupName}\nExpiry: ${wib(result.tenant.expiresAt)}\nBatas anggota: ${Number(result.tenant.maxMembers || 0).toLocaleString('id-ID')}\nGroup mute override: ACTIVE.`);
     }
     if (action === 'reject') {
       const id = args[1];
       if (!id) return m.reply('Format: .rentals reject <order-id> [alasan]');
       const order = await rejectOrder(id, m.sender, args.slice(2).join(' ') || 'Pembayaran belum dapat diverifikasi.');
-      try { await sock.sendMessage(order.groupJid, { text: `Invoice ${order.id} belum dapat disetujui. Alasan: ${order.rejectionReason}\nHubungi owner untuk tindak lanjut.` }); } catch {}
+      if (order.requestedBy?.endsWith('@s.whatsapp.net')) {
+        try { await sock.sendMessage(order.requestedBy, { text: `Invoice ${order.id} belum dapat disetujui. Alasan: ${order.rejectionReason}\nSilakan hubungi owner dengan menyebutkan ID invoice tersebut.` }); } catch {}
+      }
       return m.reply(`Order ${order.id} ditolak. Status tidak mengaktifkan layanan.`);
     }
     if (action === 'suspend') {
@@ -100,6 +106,6 @@ export default {
       const tenant = await extendTenant(jid, m.sender, Number(args[2]) || 30, m.key?.id || m.message?.key?.id || '');
       return m.reply(`Masa sewa ${tenant.groupName} diperpanjang sampai ${wib(tenant.expiresAt)}.`);
     }
-    return m.reply('RENTAL OWNER CONSOLE\n.rentals status\n.rentals plans\n.rentals list\n.rentals pending\n.rentals usage <group-jid>\n.rentals audit [group-jid|order-id]\n.rentals show <order-id>\n.rentals approve <order-id>\n.rentals reject <order-id> [alasan]\n.rentals suspend <group-jid> [alasan]\n.rentals activate <group-jid> [hari]\n.rentals extend <group-jid> [hari]\n.rentals setprice <plan> <nominal>\n.rentals setquota <plan> <unit>');
+    return m.reply('RENTAL OWNER CONSOLE\n.rentals status\n.rentals plans\n.rentals list\n.rentals pending\n.rentals usage <group-jid>\n.rentals audit [group-jid|order-id]\n.rentals show <order-id>\n.rentals approve <order-id>\n.rentals reject <order-id> [alasan]\n.rentals suspend <group-jid> [alasan]\n.rentals activate <group-jid> [hari]\n.rentals extend <group-jid> [hari]\n.rentals setprice <plan> <nominal>\n.rentals setquota <plan> <unit>\n.rentals setmembers <plan> <jumlah>');
   }
 };

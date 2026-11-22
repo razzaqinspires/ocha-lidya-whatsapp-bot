@@ -123,11 +123,11 @@ function profileAchievements(profile) {
   return achievements.slice(-6);
 }
 
-function profileView(profile, isOwner = false) {
+function profileView(profile, isOwner = false, referenceNow = new Date()) {
   const level = levelFromXp(profile.xp);
   const currentFloor = xpRequiredForLevel(level);
   const nextFloor = xpRequiredForLevel(level + 1);
-  const today = todayKey();
+  const today = todayKey(referenceNow);
   const todayOrdinal = dayOrdinal(today);
   const lastActiveOrdinal = dayOrdinal(profile.lastActiveDate);
   const daysSinceActive = lastActiveOrdinal === null ? Infinity : todayOrdinal - lastActiveOrdinal;
@@ -162,7 +162,7 @@ export async function recordUserInteraction({ userId, displayName, messageId, te
   if (!userId) return null;
   await ensureReady();
   const profile = normalize(profiles.get(userId) || makeDefault(userId, displayName), userId);
-  if (messageId && profile.recentMessageIds.includes(messageId)) return profileView(profile, isOwner);
+  if (messageId && profile.recentMessageIds.includes(messageId)) return profileView(profile, isOwner, now);
   profile.displayName = isOwner
     ? String(getConfig().bot.ownerName || getConfig().bot.creatorName || 'Arifi Razzaq')
     : cleanName(displayName || profile.displayName);
@@ -196,7 +196,7 @@ export async function recordUserInteraction({ userId, displayName, messageId, te
   profiles.set(userId, profile);
   while (profiles.size > MAX_PROFILES) profiles.delete(profiles.keys().next().value);
   await putRecord(NAMESPACE, userId, profile, { source: 'relationship-engine' });
-  return profileView(profile, isOwner);
+  return profileView(profile, isOwner, now);
 }
 
 export function getRelationshipPrompt(profile, isOwner = false) {

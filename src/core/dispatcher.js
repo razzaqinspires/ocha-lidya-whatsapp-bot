@@ -50,9 +50,12 @@ export async function dispatch(sock, message) {
     if (rentalStatus.tenant && rentalStatus.status !== 'active') {
       const noticeKey = `${message.chat}:subscription:${rentalStatus.status}`;
       if (notifyRentalBlockOnce(noticeKey)) {
-        await message.reply(rentalStatus.status === 'grace'
+        const notice = rentalStatus.status === 'grace'
           ? `Masa aktif sewa grup berakhir. Masa tenggang ${shortCountdown(rentalStatus.graceRemainingMs)} masih tersedia untuk perpanjangan. Ketik .sewa.`
-          : 'Sewa grup sudah tidak aktif. Gunakan .sewa untuk membuat invoice perpanjangan.');
+          : rentalStatus.status === 'over-limit'
+            ? `Jumlah anggota grup (${rentalStatus.memberCount}) melebihi batas paket (${rentalStatus.memberLimit}). Kurangi anggota atau hubungi admin untuk meningkatkan paket. Ketik .sewa.`
+            : 'Sewa grup sudah tidak aktif. Gunakan .sewa untuk membuat invoice perpanjangan.';
+        await message.reply(notice);
       }
       return;
     }

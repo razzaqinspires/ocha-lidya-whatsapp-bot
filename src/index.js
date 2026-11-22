@@ -31,6 +31,8 @@ import { startCodeLab, stopCodeLab, prepareCodeLabHandoff, cancelCodeLabHandoff,
 import { acquireRuntimeLock } from './runtime/single-instance.js';
 import { stopNexoraBootstrapScheduler, runNexoraBootstrap } from './runtime/bootstrap-agent.js';
 import { startRentalScheduler, stopRentalScheduler } from './rental/runtime.js';
+import { handleGroupWelcome } from './core/group-tools.js';
+import { getTenantStatus } from './rental/service.js';
 
 setOutgoingMessageObserver(observeOutgoingMessage);
 
@@ -465,7 +467,13 @@ async function start() {
       void handleGroupsUpdate(sock, payload).catch(error => logger.error({ err: error }, 'Group metadata event cache failed'));
     });
     sock.ev.on('group-participants.update', update => {
-      void handleGroupParticipantsUpdate(sock, update).catch(error => logger.error({ err: error, groupId: update?.id }, 'Group participant cache update failed'));
+      void (async () => {
+        await handleGroupParticipantsUpdate(sock, update);
+        if (update?.action === 'add') {
+          const rental = await getTenantStatus(update.id);
+          if (rental.status === 'active') await handleGroupWelcome(sock, update.id, update.participants || [], 'add');
+        }
+      })().catch(error => logger.error({ err: error, groupId: update?.id }, 'Group participant cache/welcome handling failed'));
     });
 
     sock.ev.on('messages.update', updates => {

@@ -1,3 +1,24 @@
+## [1.10.19] - 2026-11-22
+
+### Added
+- Private rental checkout routing: `.sewa` in a group stores a 12-hour group context and sends all checkout information to the verified user's DM.
+- Group acknowledgement throttling (45 seconds per group/user) and a safe fallback when a private message cannot be delivered.
+- Package member limits (Mini 50, Standard 200, Pro 1,000), order-time capacity checks, over-limit tenant enforcement, and owner `.rentals setmembers` control.
+- Private payment-evidence upload for JPG/PNG/WEBP images up to 5 MB, a three-image per-invoice cap, private owner forwarding, audit metadata, and strict MIME/path/size/actor validation.
+- `.gadmin` group admin toolbox for status, group rules, welcome messages, polls, and announcements; saved rules are readable by all group members.
+- Detailed Indonesian customer guide and updated 100-item implemented-vs-roadmap rental catalog.
+
+### Changed
+- Customer checkout, QRIS/account instructions, payment reporting, and payment evidence are handled only in private chat.
+- Accidental payment-evidence images sent with a rental command in a group are rejected; the bot attempts deletion and asks the sender to resend privately.
+- Rental expiry reminders are delivered privately to the billing contact or verified group admins.
+- Owner payment approval announces activation in the target group and privately confirms it to the requester; rejection notifications are private.
+- Profile streak rendering now uses the interaction timestamp when returning a recorded interaction, removing a clock-dependent test inconsistency.
+
+### Validation
+- Added targeted tests for DM routing, one-time group acknowledgement, group evidence rejection/deletion attempt, checkout-context expiry, package member-cap enforcement, evidence validation, and group rules/welcome persistence.
+- Full suite: 175 passed, 2 skipped, 0 failed (177 total); `npm run check`: 159 JavaScript files checked successfully.
+
 ## [1.10.15] - 2026-11-21
 
 - Changed group activation to an in-context owner control: the verified owner sends `.mute off` inside the target group; `.mute on` mutes that same group.

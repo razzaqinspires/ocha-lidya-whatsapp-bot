@@ -538,7 +538,7 @@ ocha-lidya-bot/
 
 ## 18. Version and change history
 
-Current package version: **1.10.18** (configuration schema v27).
+Current package version: **1.10.19** (configuration schema v27).
 
 See [`docs/CHANGE_LOG.md`](docs/CHANGE_LOG.md) for release history and [`docs/DATABASE_DESIGN.md`](docs/DATABASE_DESIGN.md) for persistence internals.
 
@@ -656,26 +656,34 @@ See `docs/MENU_AND_COMMAND_REGISTRY.md` and `docs/USER_PROFILES.md` for plugin m
 Configuration schema: v27. Existing installations migrate to menu descriptions OFF, pagination OFF, cooldown OFF, and anti-spam OFF. These controls are global, not per-user preferences.
 
 
-## Rental subscriptions and checkout (v1.10.18)
+## Rental subscriptions and private checkout (v1.10.19)
 
-Ocha includes an optional rental subscription for each WhatsApp group. The initial owner-configurable packages are:
+Ocha supports optional rental subscriptions for one WhatsApp group per tenant. The initial package settings are:
 
-| Plan | Price / 30 days | Shared quota / rolling 24h |
-|---|---:|---:|
-| Mini | Rp5.000 | 120 weighted units |
-| Standard | Rp10.000 | 350 weighted units |
-| Pro | Rp20.000 | 1.000 weighted units |
+| Plan | Price / 30 days | Maximum members | Shared quota / rolling 24h |
+|---|---:|---:|---:|
+| Mini | Rp5.000 | 50 | 120 weighted units |
+| Standard | Rp10.000 | 200 | 350 weighted units |
+| Pro | Rp20.000 | 1,000 | 1,000 weighted units |
 
-All ordinary commands remain available while the group subscription is active. The service applies workload-weighted units (routine 1, AI/media 3, web/search/project 5, code execution 12). Billing and essential status commands are exempt. Every participant in a group consumes the same shared tenant quota. Its 24-hour window is anchored to activation, is persisted by the autonomous scheduler, and is shown with a countdown by `.sewa status`.
+These are configurable starting values. All group members may use the bot features available to group participants while the subscription is active. Members share one tenant quota. The current workload weights are routine 1, AI/media 3, web/search/download/project 5, and code execution/build/deploy 12. Selected billing and status commands are quota-exempt. The 24-hour usage window is anchored to activation and reset by the rental scheduler.
 
-Customer commands, issued inside the group:
+**All checkout and payment steps run in the user's private chat with the bot.** In the target group, a WhatsApp admin sends `.sewa`. Ocha stores that group as the user's checkout context, sends instructions privately, and posts one short group acknowledgement (throttled for 45 seconds). No invoice, QRIS, bank/e-wallet details, payment report, or proof is processed in the group. The private context expires after 12 hours and can be changed by sending `.sewa` in another group. The bot rechecks WhatsApp admin status before creating an order or processing payment actions.
 
-- `.sewa` — choose a package.
-- `.sewa plan <mini|standard|pro>` — create or reuse a pending invoice (group owner/admin only).
-- `.sewa pay <invoice> <qris|ovo|gopay|dana|seabank>` — select payment method.
-- `.sewa paid <invoice>` — report that a transfer was made; this is not payment verification.
-- `.sewa status` — subscription, expiration countdown, quota and reset countdown.
+Customer private-chat commands:
+
+- `.sewa` or `.sewa help` — package catalogue and checkout guide.
+- `.sewa context` — selected group and context expiry.
+- `.sewa plan <mini|standard|pro>` — create/reuse an invoice for the selected group.
+- `.sewa pay <invoice> <qris|ovo|gopay|dana|seabank>` — select payment method and privately receive payment details.
+- `.sewa paid <invoice>` — report that payment was made; manual verification is still required.
+- Send a JPG/PNG/WEBP image up to 5 MB with caption `.sewa bukti <invoice> [note]` — attach payment evidence privately (up to three images per invoice).
+- `.sewa status` — subscription state, group member count/cap, expiry and shared quota.
 - `.sewa cancel <invoice>` — cancel a pending invoice.
+
+Group admin toolbox (active rental required): `.gadmin info`, `.gadmin aturan`, `.gadmin aturan <text>`, `.gadmin aturan hapus`, `.gadmin welcome on [text]`, `.gadmin welcome off`, `.gadmin poll Question | Option 1 | Option 2`, and `.gadmin announce <text>`. All participants may read stored rules; only verified WhatsApp admins may change rules, welcome settings, polling, and announcements. Welcome messages trigger when a new member joins.
+
+If a proof image is accidentally posted in a group with `.sewa bukti`, the bot refuses to use it and attempts to delete the group message. If it cannot delete the message, the sender is asked to remove it manually and resend it privately. Image proof never activates a subscription by itself.
 
 Owner-only private commands:
 
@@ -683,17 +691,13 @@ Owner-only private commands:
 - `.rentals approve <invoice>` and `.rentals reject <invoice> [reason]`.
 - `.rentals usage <group-jid>` and `.rentals audit [group-jid|invoice]`.
 - `.rentals suspend <group-jid> [reason]`, `.rentals activate <group-jid> [days]`, `.rentals extend <group-jid> [days]`.
-- `.rentals setprice <plan> <amount>` and `.rentals setquota <plan> <units>`.
+- `.rentals setprice <plan> <amount>`, `.rentals setquota <plan> <units>`, `.rentals setmembers <plan> <members>`.
 
-Payment destinations configured for this release:
+An invoice expires after 12 hours. The initial subscription term is 30 days, followed by a 48-hour grace period. During grace, ordinary bot interactions are paused but billing/renewal commands remain available. After grace, the tenant is suspended. Expiry reminders are delivered privately to the billing contact or verified group admins.
 
-- QRIS static merchant image: RAZZAQ VENTURES. The artwork visibly displays NMID `ID102654115459` and category label `A01`.
-- OVO / GoPay / DANA: `0831-9390-5842`, recipient ARIFI RAZZAQ.
-- SeaBank: `901250543509`, recipient ARIFI RAZZAQ.
+Payment uses static QRIS and configured e-wallet/bank instructions. Payment is manually verified by the owner against the actual merchant/bank settlement before `.rentals approve <invoice>`. QRIS is not dynamically bound to an invoice. Signed payment webhooks, automatic settlement reconciliation, automatic refunds, and a customer web dashboard are not delivered in this release.
 
-A customer report only changes the invoice to `payment_reported`. A human owner must check the actual merchant/bank settlement and run `.rentals approve <invoice>`. QRIS is static, not dynamically bound to the invoice; screenshots are never considered proof of settlement. Automatic QRIS generation, signed payment webhooks, and provider transaction reconciliation require an authorized payment-gateway account and are not part of this release.
-
-Every invoice snapshots its amount, quota and subscription term. Later price changes do not alter pending invoices. An invoice expires after 12 hours. A successful subscription lasts 30 days, then enters a 48-hour grace period. During grace, normal bot functions are paused but billing/renewal commands remain accessible. At the end of grace, the tenant is suspended and its group is muted. The internal scheduler starts automatically with `npm start`; it reconciles invoice timeout, subscription status, reminders and persisted 24-hour quota rollover without cron/systemd.
+See [`docs/RENTAL_USER_GUIDE.md`](docs/RENTAL_USER_GUIDE.md) for the full customer guide and [`docs/RENTAL_100_FEATURE_CATALOG.md`](docs/RENTAL_100_FEATURE_CATALOG.md) for implemented capabilities versus roadmap.
 
 The internal native-flow registry supports lossless parameter forwarding for the registered sample button types. It distinguishes stable, observed and experimental payloads; it does not promise that all WhatsApp clients or business accounts render experimental commerce/call flows. The raw low-level `sock.relayMessage()` path is left untouched. `sendInteractive`/`sendNativeFlow` validate registered payloads and retain a text fallback.
 

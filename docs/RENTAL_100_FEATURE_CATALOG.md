@@ -1,148 +1,162 @@
-# Ocha Rental Platform — 100-Feature Capability Catalog
+# Ocha Rental Platform — Katalog Kapabilitas
 
-Version baseline: v1.10.18
+Versi: **1.10.19**
 
-This catalog deliberately separates **implemented in this release** from **roadmap**. A roadmap item is not exposed as a working command and must not be marketed as delivered until code, authorization, persistence, and tests exist.
+Dokumen ini membedakan fitur yang sudah diimplementasikan dan diuji dari rencana lanjutan. Item roadmap bukan command yang dapat dijanjikan kepada pelanggan.
 
-## Commercial model currently implemented
+## Model paket bawaan
 
-| Plan | Price | Term | Shared quota / rolling 24h | Groups |
-|---|---:|---:|---:|---:|
-| Mini | Rp5.000 | 30 days | 120 weighted units | 1 |
-| Standard | Rp10.000 | 30 days | 350 weighted units | 1 |
-| Pro | Rp20.000 | 30 days | 1.000 weighted units | 1 |
+| Paket | Harga awal | Durasi | Kuota bersama / 24 jam | Maksimum anggota | Grup |
+|---|---:|---:|---:|---:|---:|
+| Mini | Rp5.000 | 30 hari | 120 unit | 50 | 1 |
+| Standard | Rp10.000 | 30 hari | 350 unit | 200 | 1 |
+| Pro | Rp20.000 | 30 hari | 1.000 unit | 1.000 | 1 |
 
-The amounts are the owner's initial price settings, not a claim about market-wide pricing. All ordinary commands remain available while the subscription is active; they consume different quota weights. Current default weights: routine command 1, AI/media 3, web/search/project 5, code execution 12. Billing/status/help controls are exempt. Quota is shared by all participants in the tenant group and resets on a rolling 24-hour schedule anchored to activation.
+Harga tersebut adalah nilai awal konfigurasi proyek, bukan klaim harga pasar. Setiap tenant adalah satu grup WhatsApp. Semua anggota memakai satu kuota bersama. Bobot bawaan: command rutin 1, AI/media 3, pencarian/web/unduhan/proyek 5, eksekusi kode/build/deploy 12. Billing dan kontrol status tertentu dikecualikan dari kuota. Kuota di-reset berdasarkan jendela 24 jam yang dimulai saat aktivasi.
 
-Subscription term is 30 days. The current grace period is 48 hours. During grace, billing and renewal controls remain available but ordinary bot interactions are blocked. After grace, the tenant is suspended and group interaction is muted. Expiration is evaluated by the internal Node.js scheduler started by `npm start`.
+Durasi bawaan 30 hari dengan masa tenggang 48 jam. Selama masa tenggang, interaksi bot biasa dibatasi tetapi kontrol billing tetap tersedia. Setelah tenggang berakhir, tenant ditangguhkan dan interaksi grup dibatasi.
 
-## Implemented capabilities
+## Kapabilitas aktif (1–100)
 
-### Catalog, tenant and order lifecycle
-1. Three configurable rental tiers (Mini, Standard, Pro).
-2. Owner-editable plan prices.
-3. Owner-editable plan quota limits.
-4. Thirty-day default subscription term.
-5. Group-JID tenant identity.
-6. Group owner/admin authorization for order creation.
-7. One active pending invoice per group.
-8. Invoice reuse when the same plan is selected again.
-9. Unique invoice identifiers.
-10. Twelve-hour invoice expiration.
-11. Immutable plan price snapshot on each invoice.
-12. Immutable plan quota and term snapshot on each invoice.
-13. Pending-order listing for owner.
-14. Invoice detail lookup for owner.
-15. Customer invoice cancellation.
-16. Owner rejection of payment reports.
-17. Owner approval of verified payment.
-18. Idempotent repeated approval.
-19. Append-only rental audit events for principal order actions.
-20. Manual tenant activation by owner.
-21. Manual tenant suspension by owner.
-22. Owner extension of an existing subscription.
-23. Renewal time appended to a still-valid or in-grace subscription.
-24. Tenant state reporting (active, grace, suspended).
-25. Aggregate tenant and approved-revenue summary.
+### Katalog, tenant dan invoice
+1. Tiga paket sewa awal: Mini, Standard, dan Pro.
+2. Harga paket dapat diubah owner.
+3. Kuota paket dapat diubah owner.
+4. Batas anggota paket dapat diubah owner.
+5. Durasi paket tersimpan sebagai nilai paket.
+6. Identitas tenant berbasis Group JID.
+7. Satu tenant untuk satu grup WhatsApp.
+8. Satu invoice aktif menunggu per grup.
+9. Invoice pending dipakai ulang untuk pemilihan paket yang sama.
+10. Invoice tidak dapat diganti paket saat masih ada invoice lain yang menunggu.
+11. ID invoice unik.
+12. Invoice kedaluwarsa setelah 12 jam.
+13. Snapshot nominal invoice tidak berubah ketika harga paket diperbarui.
+14. Snapshot kuota invoice tidak berubah ketika kuota paket diperbarui.
+15. Snapshot durasi dan maksimum anggota tersimpan pada invoice.
+16. Daftar invoice pending untuk owner.
+17. Detail invoice untuk owner.
+18. Pembatalan invoice pelanggan selama status masih dapat dibatalkan.
+19. Penolakan laporan pembayaran oleh owner.
+20. Persetujuan pembayaran manual oleh owner.
+21. Persetujuan berulang bersifat idempotent.
+22. Aktivasi tenant manual oleh owner.
+23. Penangguhan tenant manual oleh owner.
+24. Perpanjangan tenant manual oleh owner.
+25. Waktu perpanjangan ditambahkan ke masa sewa yang masih berlaku/masa tenggang.
 
-### Checkout and payment
-26. Interactive package selector using `single_select`.
-27. Text fallback for package selection.
-28. Interactive payment-method selector.
-29. Static QRIS image delivery from the project asset.
-30. OVO transfer instructions.
-31. GoPay transfer instructions.
-32. DANA transfer instructions.
-33. SeaBank transfer instructions.
-34. Copy-to-clipboard button for account details where supported.
-35. Quick-reply action to report payment.
-36. Customer payment-report state.
-37. Private owner notification for reported payment.
-38. Explicit manual verification gate before activation.
-39. QRIS screenshot is not treated as proof of settlement.
-40. Invoice payment deadline and payment-method audit.
+### Checkout pribadi dan transaksi
+26. `.sewa` dari grup menyimpan grup tujuan sebagai konteks checkout pribadi.
+27. Detail paket, invoice, rekening/QRIS, laporan bayar, dan bukti transaksi diarahkan ke DM.
+28. Pesan konfirmasi grup dikirim setelah DM berhasil dikirim.
+29. Konfirmasi grup dibatasi 45 detik per kombinasi grup dan pengguna.
+30. Kegagalan pengiriman DM tidak mengaku bahwa instruksi telah terkirim dan tidak membuat invoice.
+31. Sesi checkout disimpan per nomor PN pengguna.
+32. Sesi checkout berlaku 12 jam.
+33. Satu pengguna menyimpan satu konteks grup checkout terakhir.
+34. Pengguna dapat mengganti konteks dengan menjalankan `.sewa` di grup lain.
+35. Status admin grup diperiksa sebelum tindakan transaksi.
+36. Metadata admin diperbarui bila cache lebih lama dari lima menit.
+37. Metadata yang terlalu usang (lebih dari 30 menit setelah refresh gagal) ditolak untuk tindakan pembayaran.
+38. Katalog paket interaktif dengan fallback teks.
+39. Pilihan metode pembayaran interaktif dengan fallback teks.
+40. QRIS statis dikirim secara pribadi.
+41. OVO, GoPay, DANA, dan SeaBank memiliki instruksi transfer.
+42. Informasi pembayaran tidak ditampilkan melalui command `.sewa` di grup.
+43. Laporan pembayaran mengubah status ke `payment_reported`, bukan `approved`.
+44. Owner diberi notifikasi pribadi saat pembayaran dilaporkan.
+45. Screenshot tidak dianggap bukti dana masuk secara otomatis.
 
-### Quota and enforcement
-41. Shared quota at group/tenant scope.
-42. Per-command workload-weighted quota consumption.
-43. Routine command weight.
-44. AI/media workload weight.
-45. Web/search/project workload weight.
-46. Code execution workload weight.
-47. Exempt billing and essential status commands.
-48. Rolling 24-hour quota window.
-49. Persistent quota usage record.
-50. Per-command usage breakdown.
-51. Remaining quota reporting.
-52. Quota reset countdown.
-53. Atomic in-process tenant lock for quota writes.
-54. Grace-period interaction gate.
-55. Automatic mute after grace expires.
+### Bukti pembayaran dan keamanan
+46. Foto bukti hanya diterima melalui chat pribadi.
+47. Pesan gambar bukti yang salah dikirim ke grup tidak diproses sebagai bukti.
+48. Bot mencoba menghapus pesan media grup bila memiliki izin, dan meminta penghapusan manual bila gagal.
+49. Bukti menerima JPG, PNG, dan WEBP berdasarkan signature file (magic bytes).
+50. Maksimum ukuran gambar bukti 5 MB.
+51. Maksimum tiga bukti per invoice.
+52. File bukti disimpan di direktori privat dengan permission file ketat.
+53. Nama file bukti memakai UUID.
+54. Path bukti dibatasi ke direktori `data/rental-evidence`.
+55. Metadata MIME, ukuran, identitas upload dan waktu upload dicatat.
+56. Metadata bukti ditambahkan ke audit rental.
+57. Bukti diteruskan ke owner secara pribadi.
+58. Jika pengiriman gambar owner gagal, sistem masih mencoba mengirim notifikasi teks.
+59. Bukti tidak mengaktifkan tenant secara otomatis.
+60. Tidak ada permintaan PIN, OTP, CVV atau kredensial perbankan.
 
-### Autonomous operations and serializer
-56. Rental lifecycle scheduler starts automatically from `npm start`.
-57. Scheduler recovery after process restart.
-58. Sixty-second lifecycle reconciliation loop.
-59. Pending invoice expiration reconciliation.
-60. Active-to-grace transition.
-61. Grace-to-suspended transition.
-62. Automatic quota rollover persistence.
-63. 72-hour expiry reminder.
-64. 24-hour expiry reminder.
-65. Grace-period start reminder.
-66. Reminder deduplication marks.
-67. Retry of reminder delivery failures.
-68. Per-group operation serialization for payment/order mutations.
-69. `quick_reply` native-flow registry entry.
-70. `single_select` native-flow registry entry.
-71. `cta_url` native-flow registry entry.
-72. `cta_copy` native-flow registry entry.
-73. `cta_call` native-flow registry entry.
-74. Observed native-flow entries for location, reminder, address and catalog payloads.
-75. Experimental native-flow entries for Galaxy/Flow, voice-call, call-permission and commerce payloads.
-76. Lossless preservation of unknown vendor-specific fields for registered payload types.
-77. Validation of required native-flow fields.
-78. HTTP/HTTPS validation for CTA URLs.
-79. Text fallback when interactive relay fails.
-80. Raw `sock.relayMessage()` remains available and is not rewritten by `sendInteractive`.
+### Kuota dan penegakan tenant
+61. Kuota bersama pada level grup.
+62. Pembobotan penggunaan berdasarkan beban command.
+63. Bobot command ringan.
+64. Bobot AI dan media.
+65. Bobot web, pencarian, unduhan, dan proyek.
+66. Bobot eksekusi, build, dan deploy.
+67. Command billing dan status tertentu dibebaskan dari kuota.
+68. Jendela kuota 24 jam persisten.
+69. Reset kuota otomatis melalui scheduler.
+70. Pemakaian per command disimpan.
+71. Penggunaan dan sisa kuota ditampilkan.
+72. Hitung mundur reset kuota ditampilkan.
+73. Lock tenant mencegah update order/quota tumpang tindih dalam satu proses.
+74. Gate status langganan aktif/grace/suspended.
+75. Tenant ditangguhkan setelah grace period berakhir.
+76. Jumlah anggota diperiksa saat invoice dibuat.
+77. Tenant aktif menjadi `over-limit` bila cache anggota melampaui batas paket.
+78. Status sewa menampilkan jumlah anggota dan batasnya.
+79. Akses command berkuota dibatasi saat over-limit.
+80. Tenant kembali dapat digunakan saat jumlah anggota kembali dalam limit dan metadata tersinkron.
 
-## Roadmap — not yet implemented
+### Operasi otomatis dan perangkat admin grup
+81. Scheduler rental dimulai otomatis melalui `npm start`.
+82. Scheduler merekonsiliasi invoice kedaluwarsa dan status tenant.
+83. Scheduler memulihkan reset kuota setelah restart.
+84. Pengingat sekitar 72 jam sebelum kedaluwarsa.
+85. Pengingat sekitar 24 jam sebelum kedaluwarsa.
+86. Pengingat saat masa tenggang dimulai.
+87. Pengingat saat masa tenggang berakhir.
+88. Pengingat dikirim ke kontak billing secara pribadi.
+89. Jika billing contact tidak tersedia, pengingat mencoba admin grup dengan PN terverifikasi.
+90. Penanda pengingat menghindari pengiriman berulang.
+91. Kegagalan pengingat akan dicoba kembali.
+92. `.gadmin` panel admin grup tersedia selama tenant aktif.
+93. Perintah pengelolaan `.gadmin` memeriksa admin WhatsApp.
+94. `.gadmin info` menampilkan paket, anggota, kuota dan pengaturan.
+95. `.gadmin aturan` memungkinkan semua anggota membaca aturan grup tersimpan.
+96. Admin dapat menyimpan/menghapus aturan grup (maksimal 1.500 karakter).
+97. Admin dapat mengaktifkan/menonaktifkan sambutan anggota baru.
+98. Sambutan anggota baru mendukung mention PN yang diketahui dan pesan khusus.
+99. Admin dapat membuat polling dengan 2–12 pilihan.
+100. Admin dapat mengirim pengumuman tanpa mention massal.
 
-### Billing automation and payment reconciliation
-81. Dynamic QRIS generation through an authorized payment gateway.
-82. Signed payment webhook receiver.
-83. Webhook signature verification and replay protection.
-84. Automatic transaction reconciliation against provider settlement records.
-85. Refund and reversal workflow.
-86. Partial payment and underpayment handling.
-87. Overpayment and duplicate-transfer handling.
-88. Automated payment receipt PDF.
-89. Customer-uploaded evidence inbox with review queue (evidence is not proof of settlement).
-90. Automated overdue-payment reminders and invoice resend.
+## Roadmap — belum diimplementasikan
 
-### Subscription and tenant controls
-91. Multi-group packages per customer account.
-92. Customer account linking across several groups.
-93. Tenant-level admins separate from WhatsApp group admins.
-94. Plan upgrades and downgrades with proration.
-95. Pause/resume subscription with remaining-term retention.
-96. Promo codes, coupons and referral attribution.
-97. Trial period and one-time trial abuse controls.
-98. Tenant self-service dashboard.
-99. Customer data export and deletion request workflow.
-100. Revenue analytics, cohort retention and churn reporting.
+101. Dynamic QRIS melalui payment gateway berizin.
+102. Webhook pembayaran bertanda tangan.
+103. Verifikasi signature webhook dan perlindungan replay.
+104. Rekonsiliasi otomatis ke catatan settlement bank/merchant.
+105. Refund dan reversal workflow.
+106. Partial payment dan underpayment.
+107. Penanganan overpayment dan transfer duplikat.
+108. Receipt/invoice PDF otomatis.
+109. Customer dashboard berbasis web.
+110. Multi-group subscription dalam satu akun pelanggan.
+111. Pengaitan akun pelanggan ke beberapa grup.
+112. Tenant admin terpisah dari admin WhatsApp.
+113. Prorata upgrade/downgrade.
+114. Pause/resume dengan sisa masa aktif.
+115. Kupon, promo code dan referral attribution.
+116. Trial period dan pencegahan penyalahgunaan trial.
+117. Alur pengembalian saldo pelanggan.
+118. Ekspor dan penghapusan data pelanggan.
+119. Analitik pendapatan, cohort retention dan churn.
+120. SLA, tiket dukungan dan dashboard operasional pelanggan.
 
-## Payment safety notes
+## Catatan keselamatan pembayaran
 
-The QRIS asset is a static merchant-presented code. The visible artwork identifies the merchant as RAZZAQ VENTURES and displays NMID `ID102654115459` and category label `A01`. The QR payload itself is not treated as a machine-verified bank settlement record. Customer `.sewa paid <invoice>` only changes the order to `payment_reported`; only an owner checking the actual incoming transaction can run `.rentals approve <invoice>`.
+QRIS dalam proyek adalah QRIS statis, tidak unik per invoice dan tidak memvalidasi settlement secara otomatis. Laporan `.sewa paid <invoice>` hanya mencatat pernyataan pelanggan. Foto bukti hanya lampiran untuk pemeriksaan manual. Hanya owner yang memeriksa mutasi atau dashboard merchant dan menjalankan `.rentals approve <invoice>` yang dapat mengaktifkan tenant.
 
-The configured transfer instructions are:
+Jangan mengaktifkan tenant hanya berdasarkan screenshot atau pesan pelanggan. Untuk pembayaran otomatis, tambahkan payment gateway resmi, verifikasi webhook di sisi server, cek status transaksi melalui API provider, dan simpan transaction ID provider dengan unique constraint.
 
-- OVO / GoPay / DANA: `0831-9390-5842`, recipient ARIFI RAZZAQ.
-- SeaBank: `901250543509`, recipient ARIFI RAZZAQ.
+## Kompatibilitas native flow
 
-No PIN, OTP, CVV, or bank login credential is requested or stored. Do not enable automatic activation based on an image or text screenshot. To automate settlement, add a licensed/authorized payment gateway, use its server-side transaction query or signed webhook, and persist its unique provider transaction ID with a unique constraint before marking an order paid.
-
-## Native-flow compatibility policy
-
-The registry is a payload serializer/validation layer, not a guarantee that every WhatsApp client or account supports every experimental interaction. Stable entries are the preferred experience. Experimental entries are passed through only when their required structure validates; a plain-text fallback must remain available. The owner's raw `sock.relayMessage()` example is an independent low-level path and is intentionally not rewritten by the new `sendInteractive` helper.
+Registry native flow adalah lapisan validasi/serialisasi payload, bukan jaminan bahwa seluruh versi WhatsApp atau jenis akun mendukung semua interaksi. Gunakan tipe stabil sebagai jalur utama dan pertahankan fallback teks. Payload eksperimental tidak boleh dijanjikan sebagai fitur yang selalu tampil di setiap perangkat.
