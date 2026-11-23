@@ -333,6 +333,131 @@ export async function consumeTenantQuota({ groupJid, command, plugin = {}, now =
   });
 }
 
+
+function normalizeReviewComment(value) {
+  return String(value || '')
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, '[email disamarkan]')
+    .replace(/\b(?:\+?62|0)\d{8,13}\b/g, '[nomor disamarkan]')
+    .replace(/https?:\/\/\S+/gi, '[tautan dihapus]')
+    .replace(/\s+/g, ' ').trim().slice(0, 240);
+}
+
+export async function submitRentalReview({ groupJid, reviewerJid, rating, comment = '', now = Date.now() }) {
+  if (!validGroup(groupJid)) throw new Error('Grup ulasan tidak valid.');
+  const reviewer = String(reviewerJid || '').replace(/:\d+(?=@)/, '');
+  if (!/^\d{8,15}@s\.whatsapp\.net$/.test(reviewer)) throw new Error('Ulasan hanya dapat dikirim dari nomor WhatsApp pribadi yang terverifikasi.');
+  const score = Number(rating);
+  if (!Number.isInteger(score) || score < 1 || score > 5) throw new Error('Rating harus berupa angka bulat 1 sampai 5.');
+  const tenant = await getTenant(groupJid);
+  if (!tenant?.lastOrderId) throw new Error('Ulasan hanya dapat diberikan oleh pelanggan yang memiliki riwayat langganan terverifikasi.');
+  const order = await getOrder(tenant.lastOrderId);
+  if (!order || order.groupJid !== groupJid || order.status !== 'approved') throw new Error('Riwayat pembayaran grup ini belum terverifikasi. Ulasan belum dapat dikirim.');
+  const reviewerHash = crypto.createHash('sha256').update(reviewer).digest('hex').slice(0, 24);
+  const key = `${order.id}:${reviewerHash}`;
+  const existing = await getRecord('rental.review', key);
+  if (existing) return { review: existing, duplicate: true };
+  const review = {
+    id: makeId('REV'), groupJid, groupName: String(tenant.groupName || order.groupName || 'Grup pelanggan').slice(0, 120),
+    orderId: order.id, planId: order.planId, planName: order.planName,
+    reviewerHash, rating: score, comment: normalizeReviewComment(comment),
+    createdAt: nowIso(now), verifiedPurchase: true
+  };
+  await putRecord('rental.review', key, review, { actor: reviewerHash, reason: 'verified rental customer review' });
+  await putRecord('rental.audit', makeId('AUD'), { action: 'review.submitted', groupJid, orderId: order.id, rating: score, reviewerHash, at: review.createdAt }, { source: 'rental-service' });
+  return { review, duplicate: false };
+}
+
+export async function getRentalReviewSummary(groupJid = '') {
+  if (groupJid && !validGroup(groupJid)) throw new Error('Grup ulasan tidak valid.');
+  const rows = Object.values(await listRecords('rental.review'))
+    .filter(review => review?.verifiedPurchase === true && (!groupJid || review.groupJid === groupJid));
+  const distribution = Object.fromEntries([1, 2, 3, 4, 5].map(score => [score, rows.filter(review => review.rating === score).length]));
+  const total = rows.length;
+  const average = total ? rows.reduce((sum, review) => sum + Number(review.rating || 0), 0) / total : 0;
+  return {
+    total, average: Number(average.toFixed(2)), distribution,
+    reviews: rows.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))).slice(0, 5)
+      .map(({ rating, comment, planName, createdAt, groupName }) => ({ rating, comment, planName, createdAt, groupName }))
+  };
+}
+
+function sanitizeSupportMessage(value) {
+  const message = String(value || '').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (message.length < 12) throw new Error('Masukan minimal 12 karakter agar tim dapat memahami kendalanya.');
+  if (message.length > 2000) throw new Error('Masukan maksimal 2.000 karakter. Pecah menjadi beberapa poin bila lebih panjang.');
+  if (/(?:password|kata\s+sandi|api[ _-]?key|access[ _-]?token|refresh[ _-]?token|private[ _-]?key|otp|cvv)\s*[:=]/i.test(message)) {
+    throw new Error('Jangan kirim password, token, OTP, private key, atau data pembayaran rahasia melalui tiket dukungan.');
+  }
+  return message;
+}
+
+export async function createRentalSupportTicket({ groupJid, requesterJid, requesterName = '', category = 'masukan', message, now = Date.now() }) {
+  if (!validGroup(groupJid)) throw new Error('Grup dukungan tidak valid. Pilih grup melalui .sewa di dalam grup tujuan.');
+  const requester = String(requesterJid || '').replace(/:\d+(?=@)/, '');
+  if (!/^\d{8,15}@s\.whatsapp\.net$/.test(requester)) throw new Error('Pengirim tiket harus berupa identitas WhatsApp pribadi yang terverifikasi.');
+  const kind = String(category || 'masukan').toLowerCase();
+  if (!['masukan', 'saran', 'keluhan', 'konsultasi', 'teknis'].includes(kind)) throw new Error('Kategori tiket tidak dikenal.');
+  const body = sanitizeSupportMessage(message);
+  const requesterHash = crypto.createHash('sha256').update(requester).digest('hex').slice(0, 24);
+  const contentHash = crypto.createHash('sha256').update(body.toLocaleLowerCase('id-ID')).digest('hex');
+  return withLock(`support:${groupJid}:${requesterHash}`, async () => {
+    const previous = Object.values(await listRecords('rental.support'))
+      .find(ticket => ticket.groupJid === groupJid && ticket.requesterHash === requesterHash
+        && ticket.contentHash === contentHash && Number(now) - Date.parse(ticket.createdAt || '') >= 0
+        && Number(now) - Date.parse(ticket.createdAt || '') < 10 * 60_000);
+    if (previous) return { ticket: previous, duplicate: true };
+    const tenant = await getTenant(groupJid);
+    const metadata = getGroupMetadata(groupJid);
+    const ticket = {
+      id: makeId('SUP'), groupJid,
+      groupName: String(tenant?.groupName || metadata?.subject || groupJid).replace(/[\r\n\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120),
+      requesterJid: requester, requesterHash,
+      requesterName: String(requesterName || 'Pelanggan').replace(/[\r\n\u0000-\u001f]/g, ' ').trim().slice(0, 64),
+      category: kind, message: body, contentHash,
+      status: 'open', createdAt: nowIso(now), updatedAt: nowIso(now),
+      response: '', handledBy: null, closedAt: null
+    };
+    await putRecord('rental.support', ticket.id, ticket, { actor: requesterHash, reason: `rental customer ${kind} ticket` });
+    await putRecord('rental.audit', makeId('AUD'), { action: 'support.created', ticketId: ticket.id, groupJid, category: kind, requesterHash, at: ticket.createdAt }, { source: 'rental-service' });
+    return { ticket, duplicate: false };
+  });
+}
+
+export async function getRentalSupportTicket(ticketId) {
+  return getRecord('rental.support', String(ticketId || '').toUpperCase());
+}
+
+export async function listRentalSupportTickets({ status = 'open', limit = 40 } = {}) {
+  const wanted = String(status || 'open').toLowerCase();
+  const rows = Object.values(await listRecords('rental.support'))
+    .filter(ticket => wanted === 'all' || ticket.status === wanted)
+    .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+  return { total: rows.length, tickets: rows.slice(0, Math.max(1, Math.min(100, Number(limit) || 40))) };
+}
+
+export async function updateRentalSupportTicket(ticketId, { status, response = '' } = {}, actor = 'owner', now = Date.now()) {
+  const id = String(ticketId || '').toUpperCase();
+  if (!/^SUP-[A-Z0-9-]{8,64}$/.test(id)) throw new Error('ID tiket dukungan tidak valid.');
+  const nextStatus = String(status || '').toLowerCase();
+  if (!['answered', 'closed'].includes(nextStatus)) throw new Error('Status tiket hanya boleh answered atau closed.');
+  const note = String(response || '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 1500);
+  return withLock(`support-ticket:${id}`, async () => {
+    const current = await getRentalSupportTicket(id);
+    if (!current) throw new Error('Tiket dukungan tidak ditemukan.');
+    const next = {
+      ...current, status: nextStatus,
+      response: note || current.response,
+      handledBy: String(actor || 'owner').slice(0, 120),
+      updatedAt: nowIso(now),
+      ...(nextStatus === 'closed' ? { closedAt: nowIso(now) } : {})
+    };
+    await putRecord('rental.support', id, next, { actor, reason: `rental support ticket ${next.status}` });
+    await putRecord('rental.audit', makeId('AUD'), { action: `support.${next.status}`, ticketId: id, groupJid: next.groupJid, actor, at: next.updatedAt }, { source: 'rental-service' });
+    return next;
+  });
+}
+
 export async function getQuotaStatus(groupJid, now = Date.now()) {
   const tenant = await getTenant(groupJid);
   if (!tenant) return null;

@@ -1,5 +1,5 @@
 export default {
-  name: 'owner', aliases: ['creator'], category: 'general', description: 'Kirim kartu kontak owner bot',
+  name: 'owner', aliases: ['creator'], category: 'general', fullButton: false, description: 'Kirim kartu kontak owner bot',
   async execute({ m, config }) {
     const number = String(config.bot.owner || '').replace(/\D/g, '');
     if (!number) return m.reply('Nomor owner belum dikonfigurasi.');

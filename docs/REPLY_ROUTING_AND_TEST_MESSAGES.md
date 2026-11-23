@@ -62,14 +62,19 @@ All lab commands are owner-only. They send real outgoing test messages to the cu
 
 | Command | Payload / purpose |
 |---|---|
-| `.test types` | Curated `proto.Message` message-key reference |
-| `.test stubtypes` | Runtime `WAMessageStubType` enum names and values |
-| `.test button halo` | Project `ButtonBuilder` with a native-flow quick reply |
-| `.test quick_reply [text]` | Two quick-reply buttons |
-| `.test nativeflow [url]` | Quick reply, URL, call and copy CTA buttons |
+| `.test types` / `.test stubtypes` | Curated `proto.Message` keys and runtime `WAMessageStubType` enum values |
+| `.test identity` (private chat) | Raw/alternate/PN/LID JIDs, normalized sender, addressing mode, bot identity, chat type, and message metadata |
+| `.test inspect` (private chat) | Parsed message type, body, callback action, selected ID/row, params JSON, quote and mention metadata |
+| `.test response <label>` | Confirmation handler for quick-reply/list test callbacks |
+| `.test nativeflow all` | Sends all five pages from the current eval fixture, in order |
+| `.test nativeflow 1` … `.test nativeflow 5` | Sends one page: core 8 actions; Galaxy/catalog/address; voice call; call permission; MPM/review-and-pay/order-details |
+| `.test carousel [thumbnail-url-1] [thumbnail-url-2]` | Two-card image carousel with prepared media and reply/CTA controls |
+| `.test button [text]` | Project `ButtonBuilder` with a native-flow quick reply callback |
+| `.test quick_reply [text]` | Two quick-reply buttons routed to `.test response ...` |
+| `.test nativeflow [https-url]` | Compact quick reply, URL, call and copy CTA buttons |
 | `.test cta_url <https-url>` | CTA URL native-flow button |
 | `.test cta_call <number>` | CTA call native-flow button (`phone_number`) |
-| `.test selection` | Native-flow `single_select` with two rows |
+| `.test selection` | Native-flow `single_select` with two command callback rows |
 | `.test location_button` | `send_location` native-flow action |
 | `.test address_button` | `address_message` native-flow action |
 | `.test catalog_button` | `cta_catalog` action (account capability-dependent) |
@@ -86,4 +91,4 @@ All lab commands are owner-only. They send real outgoing test messages to the cu
 | `.test airich [text]` | Project AI rich-response builder |
 | `.test carousel` | Two-card interactive carousel |
 
-`<video-url>` and `<image-url>` must be reachable from the bot host and return compatible media. A successful relay/send call or protocol ACK does not prove that every WhatsApp version renders the card/action identically. Reminder CTA names and other native-flow controls are client-/server-capability-dependent and need live validation. `eventMessage` is the supported high-level dated-event payload in this lab; a standalone WhatsApp date-picker UI is not exposed by Baileys' normal `sendMessage` content API, so it is not mislabeled as a button. The lab does not emulate incoming button taps or create fake `WAMessageStubType` events.
+`<video-url>` and `<image-url>` must be reachable from the bot host and return compatible media. A successful relay/send call or protocol ACK does not prove that every WhatsApp version renders the card/action identically. Baileys issue [#2465](https://github.com/WhiskeySockets/Baileys/issues/2465) reports a list message that relays but does not appear as an interactive list on some clients; treat this as a client/server compatibility limitation rather than a guaranteed bot-side fix. Issue [#2652](https://github.com/WhiskeySockets/Baileys/issues/2652) reports business interactive messages whose first `messages.upsert` is a content-less stub and whose full interactive message arrives later. Ocha skips `raw.message`-less upserts before its duplicate-message gate, so the stub does not consume the later full-content message ID. Reminder CTA names and other native-flow controls are client-/server-capability-dependent and need live validation. `eventMessage` is the supported high-level dated-event payload in this lab; a standalone WhatsApp date-picker UI is not exposed by Baileys' normal `sendMessage` content API, so it is not mislabeled as a button. The lab does not create fake `WAMessageStubType` events. Quick-reply and list-row test IDs use `.test response ...` and are routed through normal prefixed-command parsing after the serializer extracts the selected ID. The `interactiveResponseMessage.nativeFlowResponseMessage` result includes a `name`, `version`, and JSON `paramsJson`; the serializer preserves its full parameter object and normalizes common ID/row-ID fields. CTA URL/call/copy and some location/reminder actions may be handled entirely by the WhatsApp client, so they are not guaranteed to send a callback to the bot.

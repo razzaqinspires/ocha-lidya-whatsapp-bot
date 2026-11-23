@@ -124,16 +124,16 @@ test('Project Library rejects traversal and secret material before writing a rep
   process.env.OCHA_PROJECT_LIBRARY_ROOT = root;
   try {
     await assert.rejects(saveWebsiteProject({
-      ownerId: 'user-safety@s.whatsapp.net',
+      ownerId: '6285555555555@s.whatsapp.net',
       title: 'Unsafe',
       files: { '../outside.html': '<h1>bad</h1>', 'index.html': '<h1>ok</h1>' }
     }), /Path repository tidak aman/);
     await assert.rejects(saveWebsiteProject({
-      ownerId: 'user-safety@s.whatsapp.net',
+      ownerId: '6285555555555@s.whatsapp.net',
       title: 'Secret',
       files: { 'index.html': '<h1>ok</h1>', 'assets/app.js': 'const x="ghp_abcdefghijklmnopqrstuvwxyz0123456789";' }
     }), /secret/i);
-    assert.equal((await listUserProjects({ ownerId: 'user-safety@s.whatsapp.net' })).length, 0);
+    assert.equal((await listUserProjects({ ownerId: '6285555555555@s.whatsapp.net' })).length, 0);
   } finally {
     if (previousRoot === undefined) delete process.env.OCHA_PROJECT_LIBRARY_ROOT;
     else process.env.OCHA_PROJECT_LIBRARY_ROOT = previousRoot;
@@ -157,6 +157,30 @@ test('Project Library export rechecks edited files and refuses obvious secret le
   } finally {
     if (previousRoot === undefined) delete process.env.OCHA_PROJECT_LIBRARY_ROOT;
     else process.env.OCHA_PROJECT_LIBRARY_ROOT = previousRoot;
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('default Project Library stores projects inside the matching per-user roo container', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ocha-project-roo-root-'));
+  const previousProjectRoot = process.env.OCHA_PROJECT_LIBRARY_ROOT;
+  const previousRooRoot = process.env.OCHA_ROO_ROOT;
+  const owner = '6283333333333@s.whatsapp.net';
+  try {
+    process.env.OCHA_PROJECT_LIBRARY_ROOT = '';
+    process.env.OCHA_ROO_ROOT = path.join(root, 'roo');
+    const saved = await saveWebsiteProject({
+      ownerId: owner, chatId: 'roo-private-chat', title: 'Roo Isolation Test',
+      files: { 'index.html': '<!doctype html><title>Roo test</title>' }
+    });
+    assert.equal(projectUserKey(`${owner.split('@')[0]}:13@s.whatsapp.net`), projectUserKey(owner), 'device-scoped JIDs must resolve to the same private roo namespace');
+    const expected = path.join(process.env.OCHA_ROO_ROOT, projectUserKey(owner), 'projects');
+    assert.ok(saved.path.startsWith(expected));
+    assert.equal((await listUserProjects({ ownerId: '6284444444444@s.whatsapp.net' })).length, 0);
+    assert.equal((await getWebsiteProject({ ownerId: owner, projectId: saved.projectId })).slug, 'roo-isolation-test');
+  } finally {
+    if (previousProjectRoot === undefined) delete process.env.OCHA_PROJECT_LIBRARY_ROOT; else process.env.OCHA_PROJECT_LIBRARY_ROOT = previousProjectRoot;
+    if (previousRooRoot === undefined) delete process.env.OCHA_ROO_ROOT; else process.env.OCHA_ROO_ROOT = previousRooRoot;
     await fs.rm(root, { recursive: true, force: true });
   }
 });

@@ -1,3 +1,123 @@
+# Changelog
+
+## [1.10.25] - 2026-11-23
+
+### Added
+- Expanded Ocha's versioned operational self-model with identity, session scope, relationship statistics, decision protocol, capability provenance, authority boundary, and explicit non-consciousness contract.
+- Added owner-only rental support queue commands: `.rentals support [open|answered|closed|all]`, `.rentals reply <ticket-id> <message>`, and `.rentals close <ticket-id> [note]`.
+- Added customer support intake through `.sewa masukan`, `.sewa saran`, `.sewa keluhan`, and `.sewa konsultasi`; duplicate submissions are deduplicated and tickets are auditable.
+- Added post-approval request for an honest, transaction-backed review without requiring a positive score.
+- Added higher rank milestones through Paragon, Nova, Cosmic, Apex, Transcendent, Nexus, and Singularity, followed by unbounded dynamic Singularity tiers for continued high-level progression.
+
+### Changed
+- Expanded default AI context to 96 recent turns and 96,000 input characters; raised requested output budget to 32,768 tokens and per-provider timeout to 60 seconds while retaining the 180-second shared task deadline.
+- Completion recovery now continues until the shared deadline or a no-progress guard instead of stopping after a fixed number of attempts.
+- Memory facts are relevance-ranked against the active query and can fill a larger adaptive context budget. The application has no fixed total fact-count cap; individual notes are bounded to 16,000 characters for storage safety.
+- Historical private-conversation search selects more relevant excerpts based on the active input budget instead of a fixed 32-result ceiling.
+- XP awards now require a valid daily first contact or unique meaningful content; repeating low-signal messages no longer farms XP. The durable profile retains message/content fingerprints without the previous 500/1,000-entry truncation.
+- Relationship progress remains separate from authorization: level, rank, trust, and familiarity never grant access to owner commands or another user's memory.
+- New-contact tone is explicitly reserved and mildly distant while staying respectful; owner affection is only included in the verified owner's private-chat prompt. Group/public conversations remain professional.
+- Per-user encrypted `data/roo/<sha256-user-id>/` archives remain the source of record. Group conversations do not load private long-term memory.
+
+### Validation
+- Focused memory/identity/profile/vault/rental suite: 29 passed, 0 failed. Configuration and group-mute migration suite: 12 passed, 0 failed. Owner rental support plugin was exercised end-to-end with a mocked socket: ticket listing, owner DM reply, and close transition succeeded.
+- Full repository suite: 224 passed, 6 blocked by the missing `chokidar` package in this build environment, 2 skipped. `npm install` could not complete within the build environment; `chokidar` is declared in `package.json` and is installed by the target startup bootstrap. `npm run check` validates all 184 JavaScript files.
+- Live WhatsApp rendering, provider continuation, and the full suite must still be rerun on the deployment server after declared dependencies are installed.
+
+## [1.10.24] - 2026-11-23
+
+- Extended the adaptive AI runtime defaults to 48 history turns, 48,000 input characters, 16,384 requested output tokens, 45-second provider timeout, and 180-second shared job deadline.
+- Increased truncation recovery to up to eight continuation attempts within one absolute deadline.
+- Removed the fixed reply-depth fork: verified AI reply anchors retain their complete parent lineage with cycle detection; the prompt receives a recent bounded excerpt.
+- Added owner-only `.aiset speed deep` profile for the full extended reasoning envelope.
+- Updated identity, archive, XP/rank, and AI engine documentation for schema v32.
+- Preserved provider, WhatsApp payload, disk-capacity, and project isolation safeguards.
+
+## [1.10.23] - 2026-11-23
+
+### Added
+- Added a versioned Ocha Identity Kernel with stable operational persona traits, private-owner warmth in verified DMs, reserved-but-respectful behavior for new contacts, and professional group tone. It explicitly does not claim consciousness, AGI, or ASI.
+- Added encrypted per-user `roo/<sha256-id>` storage for long-term private conversation archives, memory snapshots, relationship profiles, project repositories, indexes, and project history.
+- Added one-time idempotent migration of legacy private-DM AI turns into each sender's encrypted vault. Migration retains original timestamps, skips group and ambiguous cross-chat rows, and does not rewrite the legacy append-only journal.
+- Added `.memori status|fakta [page]|cari <query>|terbaru|ekspor|hapus-fakta <phrase>` for private self-service memory/archive operations.
+- Added unbounded arbitrary-precision XP and levels, expanded ranks through Eternal, familiarity roles through Mitra Tepercaya, no daily XP ceiling, and per-user locking for concurrent profile updates.
+- Added verified rental comparison, member estimator, features/FAQ, transaction-backed public ratings, one-review-per-approved-invoice, upgrade, and renewal commands under `.sewa`.
+- Added per-user serialized memory writes and tests for migration isolation, idempotence, concurrency, and default `roo` project location.
+
+### Changed
+- Raised schema v31 AI defaults to 30-second per-provider timeout, 120-second shared job deadline, requested 8,192 output tokens, 24 recent history turns, and 24,000 user-input characters. Provider-level hard limits still apply.
+- Truncated output may receive up to four deadline-bound continuation attempts on the originating provider.
+- Project Library now uses the same normalized SHA-256 user namespace as the encrypted User Vault by default; legacy project folders are copied into that private namespace without overwriting existing destination data.
+- Historical retrieval now includes up to 12 relevant excerpts and preserves original imported timestamps in the encrypted search index.
+- Removed application event-count and XP daily caps. Physical disk limits, provider context/token ceilings, WhatsApp payload limits, and Project Builder resource quotas remain explicit safety controls.
+
+### Validation
+- New identity, vault migration, user-vault, memory concurrency, profile/XP concurrency, rental, provider-deadline, configuration, and project-library focused tests are run separately.
+- Full `npm test` still requires all declared dependencies to be installed on the target runtime. Live provider and WhatsApp-client behavior must be validated after deployment.
+
+## [1.10.22] - 2026-11-23
+
+### Added
+- Added live plugin/capability grounding to AI prompts, plus deterministic command-directory explanations for quoted `.menu`/command listings.
+- Added explicit natural-language command invocation through the shared `executeRegisteredPlugin` policy gate. Only `.ping`, `.about`, and `.profile` are currently allowlisted with `aiCallable: true`; aliases inherit the canonical plugin policy.
+- Added sender-scoped opt-in long-term memory in the namespaced repository, with private-chat-only controls, 20-fact bounds, secret/sensitive fact rejection, and matching/full deletion.
+- Added deterministic guards for unsupported Tic-Tac-Toe/game requests and legacy fabricated-board continuations when no real game plugin is installed.
+- Added common Markdown-to-WhatsApp formatting normalization, bounded output continuation, long-message chunking, and reply-anchor registration for delivered chunks.
+- Added regression tests for WhatsApp formatting, code-fence splitting, completion inspection, command intent, game state guards, memory consent, and AI UI-plan validation.
+- Recovered queued/generated AI jobs now use the same completion inspection, WhatsApp formatter, validated UI delivery, and per-chunk reply-anchor pipeline as live responses.
+
+### Changed
+- AI output defaults are now 900 output tokens, 8 recent history turns, 5,000 input characters, and 100 ms coalescing through configuration schema v29. The migration updates only known prior shipped defaults and preserves other owner overrides.
+- AI replies use WhatsApp-native markers (`*bold*`, `_italic_`, `~strikethrough~`, monospace/backtick, and triple-backtick code blocks) rather than leaking `**Markdown**` syntax.
+- AI message UI remains text-first. Quick replies/lists/copy/URL CTAs are validated; image/video/carousel output requires a registered backend media capability and is not invented by the model.
+- Truncated provider outputs receive up to two bounded continuation attempts on the originating provider; unresolved truncation is explicitly disclosed rather than silently presented as complete.
+
+### Validation
+- Focused regression set: 46 passed, 0 failed. `npm run check`: 175 JavaScript files checked successfully.
+- Four integration test files could not execute in this build container because `chokidar` is not installed; this is an environment dependency limitation, not a passing test.
+- Live WhatsApp delivery, client-side button rendering, and provider continuation are not simulated by unit tests and still require a live deployment check.
+
+## [1.10.21] - 2026-11-23
+
+### Added
+- Added owner-controlled `.buttons full all` adaptive command UI with aliases `.button`, `.fullbutton`, `.commandbutton`, `.buttonmode`, and `.uibuttons`.
+- Added per-command policy evaluation, live registry audit/dry-run, persistent owner exclusions, plugin-defined safe actions, and alias inheritance from canonical plugin metadata.
+- Added Quick Reply for one to three actions and Single Select for four to eight actions; long/code/progress/diagnostic output keeps the original text transport.
+- Added permanent UI exemptions for commands that own a carousel, explicit Native Flow, image/contact card, menu pagination, checkout, or reply-session flow.
+- Added schema v28 configuration and focused tests for action discovery, button type selection, alias inheritance, exemptions, temporary wrapping/restoration, and text fallback.
+
+### Changed
+- Dispatcher installs the adaptive reply adapter only after command authorization/guard/quota checks and restores the original serializer reply method in `finally`.
+- Legacy `.buttons on/off/status` now controls the adaptive full-button setting while preserving the legacy `ui.buttonsEnabled` field.
+- Group admin responses expose safe follow-up actions for group info, saved rules, and the admin help screen.
+
+### Validation
+- Full automated suite: 195 passed, 2 skipped, 0 failed (197 total).
+- `npm run check`: 165 JavaScript files checked successfully.
+- Static command/alias audit: 101 distinct registered command tokens; no alias collisions found. Runtime plugin-loader import was unavailable in this build container because `chokidar` is not installed.
+- Live WhatsApp rendering was not exercised in this container; after enabling, validate Native Flow rendering on the target WhatsApp clients.
+
+## [1.10.20] - 2026-11-23
+
+### Added
+- Expanded owner-only `.test` Native Flow lab into five independently runnable test pages, covering quick replies, single-select, CTA URL/call/copy, send location, reminders, Galaxy Flow, catalog/address forms, voice-call request, call permission, MPM, review-and-pay, and order-detail payloads.
+- Added `.test identity` and `.test inspect` output for chat/sender PN-LID metadata, addressing mode, bot identity, message metadata, and parsed Native Flow callback fields.
+- Added `.yts`, `.ytmp3`, `.ytmp4`, and `.ytm` YouTube commands. Search results use uploaded thumbnail media in carousel cards and offer MP3 plus every detected MP4 resolution; `.ytmp4` can also show or download a selected quality.
+- Added an isolated audio-only path for `.ytm`: unique temporary folder per request, yt-dlp cache disabled, MP3-only post-processing, and no call into the MP4 downloader.
+- Added YouTube command, installation, resource-limit, and licensing guidance.
+
+### Changed
+- Native Flow response parsing now preserves the full `paramsJson`, extracts nested IDs/row IDs, and exposes normalized response metadata to the standard command dispatcher.
+- All quick-reply/list callbacks in the message lab now carry `.test response ...` command IDs so taps can be verified through normal command routing. CTA URL/call/copy and other app-native actions are explicitly treated as WhatsApp-client actions, not guaranteed bot callbacks.
+- Carousel cards can prepare image URLs/Buffers with Baileys `prepareWAMessageMedia` and `waUploadToServer` before relay; each card's buttons are normalized losslessly.
+- Resolved sender PN metadata is also copied into the serializer identity inspector after the connection pipeline resolves it.
+
+### Validation
+- Full automated suite: 186 passed, 2 skipped, 0 failed (188 total); `npm run check`: 163 JavaScript files checked successfully.
+- Added tests for interactive message text, nested Native Flow response parsing, YouTube URL validation, MP4 resolution extraction, MP3/MP4 selection rows, and metadata formatting.
+- Native Flow schema review follows Baileys `WAProto.proto`; relay success does not guarantee that every WhatsApp account/device/client renders every experimental action or sends a bot callback.
+- Local YouTube unit tests do not perform live downloads. The current build environment does not have `yt-dlp` installed, so live search/download must be tested on the target server after installing `yt-dlp` and FFmpeg/ffprobe.
+
 ## [1.10.19] - 2026-11-22
 
 ### Added

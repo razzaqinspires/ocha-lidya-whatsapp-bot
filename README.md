@@ -2,6 +2,16 @@
 
 Ocha Lidya is a modular WhatsApp automation framework built with native Node.js ESM and `@whiskeysockets/baileys`. The project separates WhatsApp transport, message serialization, command dispatch, plugin execution, persistent configuration, and durable JSONL storage.
 
+## Persistent Ocha identity, isolated roo memory, and expanded AI reasoning envelope (v1.10.25)
+
+The AI prompt now receives the live plugin/capability registry, so it can explain only features that actually exist. Explicit natural-language requests such as `tolong jalankan perintah ping` are resolved against the active plugin registry and are executable only for plugins explicitly marked `aiCallable: true`. The current allowlist is `.ping`, `.about`, and `.profile`; all calls pass the same authentication, role, quota, anti-spam, cooldown, and chat-scope checks as direct commands. Owner/system/developer commands remain direct-command-only.
+
+AI text is normalized to WhatsApp formatting before delivery (`*bold*`, `_italic_`, `~strikethrough~`, inline monospace, and triple-backtick code blocks). Long output is split with code-fence preservation, and provider-reported truncation can receive deadline-driven continuation attempts until the shared job deadline or a no-progress guard. New private-DM turns are archived in encrypted per-user `data/roo/<sha256-user-id>/` journals; an idempotent migration imports eligible legacy private history while excluding group conversations. The archive has no application event-count cap, while model context remains provider-bounded and retrieval selects relevant history rather than transmitting everything. The active in-memory conversation cache is only a performance layer; the encrypted per-user archive remains the durable source of record. Explicit facts are stored in the same user's encrypted vault (no application fact-count ceiling; one memory note is bounded to 16,000 characters for storage safety). Ocha uses a persistent operational identity kernel, verified-owner relationship style, and independent per-user privacy partitions; this is not a consciousness claim. The bot rejects unsupported games when no game engine is installed. Text remains the default response type; validated quick replies, lists, copy, and user-supplied URL actions are available, while image/video/carousel delivery requires a registered backend media capability. New customer-support commands include `.sewa masukan`, `.sewa saran`, `.sewa keluhan`, and `.sewa konsultasi`; owner handles the queue with `.rentals support`, `.rentals reply`, and `.rentals close`. XP uses arbitrary-precision progression without a daily cap and awards repeatable progress only for unique meaningful contributions; dynamic Singularity rank tiers continue beyond level 1,000,000. See `docs/OCHA_IDENTITY_AND_PRIVATE_VAULT.md`, `docs/AI_ENGINE.md`, `docs/USER_PROFILES.md`, and `docs/RENTAL_USER_GUIDE.md`.
+
+## Adaptive full-button command engine (v1.10.21)
+
+Owner-only `.buttons full all` enables adaptive buttons for all eligible commands and aliases. The engine chooses Quick Reply, Single Select, or text per response; explicit feature UIs and session-driven screens remain exempt. Run `.buttons full audit` before enabling in a live group. See `docs/COMMAND_BUTTON_ENGINE.md`.
+
 ## Global command governance and AI command authoring (v1.10.17)
 
 Global menu preferences are owner-controlled with `.setmenu descriptions on|off`, `.setmenu pages on|off`, `.setmenu limit <10-200>`, and `.setmenu status`. All users see the same menu. Pagination is off by default; when enabled, users reply to the menu message with a page number. Adaptive command cooldown and anti-spam are independent global controls: `.guard cooldown on|off`, `.guard antispam on|off`, and `.guard status`. Cooldowns are calculated per sender/chat/command from workload metadata; anti-spam uses an initial notice, five counted daily strikes, and escalating temporary suspensions. `.createcmd <instruction>` uses the configured AI provider chain and active plugin inventory to draft a plugin in an existing plugin folder. Reply to code or use `.createcmd => <source>` to wrap existing code without rewriting it. Review with `.createcmd show <id>` and install with `.createcmd apply <id>`.
@@ -24,9 +34,9 @@ The Nexora host preflight now defaults to `containerRuntime: 'auto'`: it validat
 
 Owner verification is recalculated by the backend for each message using Baileys PN metadata or a previously verified owner-only LID→PN mapping. Chat claims, display names, conversation history, and stale `isOwner` flags are not authorization. Configuration inspection is handled locally and only in the verified owner's private chat; non-secret settings are shown while API keys, tokens, passwords, WhatsApp sessions, and private keys remain redacted and are never sent to the LLM. See `docs/OWNER_SECURITY.md`.
 
-## AI response performance (v1.10.0)
+## AI response performance and resource envelope (v1.10.25)
 
-The default AI profile is Boost after the schema v12 migration. It uses an 80 ms message-coalescing window, 3 history turns, a 180-token output budget, up to 3 eligible API key attempts per provider with fair round-robin rotation, a 3.5-second per-provider timeout, and a 14-second total fallback deadline. Use `.aiset speed boost`, `.aiset speed fast`, or `.aiset speed balanced` to switch profiles. Provider telemetry, job checkpoints, and conversation journal writes are queued asynchronously so they do not block the response-critical path; hot conversation history and quoted-reply anchors are updated immediately. See `docs/AI_ENGINE.md` for trade-offs and operational details.
+Schema v34 ships with a 100 ms coalescing window, 96 recent history turns, a 96,000-character user-input ceiling, a 32,768-token requested output budget, a 60-second per-provider timeout, and a 180-second shared job deadline. Provider truncation can trigger continuation attempts until the shared deadline or no-progress guard. Reply threads keep their parent lineage; memory and historical excerpts are relevance-ranked and adapt to the configured prompt budget. These are application defaults, not a claim that upstream providers have unlimited context or output. Use `.aiset speed boost`, `.aiset speed fast`, `.aiset speed balanced`, or `.aiset speed deep` to select supported profiles. Provider telemetry and non-critical journal writes remain off the response-critical path. See `docs/AI_ENGINE.md` for trade-offs and `docs/OCHA_IDENTITY_AND_PRIVATE_VAULT.md` for long-term archive design.
 
 ## 1. Project identity
 
@@ -102,9 +112,15 @@ GROQ_API_KEY=
 DEEPSEEK_API_KEY=
 GITHUB_PAT=
 
+# Optional non-secret YouTube integration overrides
+YT_DLP_BIN=yt-dlp
+FFMPEG_LOCATION=
+YOUTUBE_MAX_DOWNLOAD_MB=48
+YOUTUBE_MAX_DURATION_SECONDS=1800
+YOUTUBE_SEARCH_RESULTS=5
 ```
 
-Do not put bot name, owner number, prefixes, bot mode, feature flags, database paths, archive limits, execution switches, or runtime limits in `.env`. Those are managed through `src/config.js` and persisted in the JSONL database. WhatsApp login mode, pairing number, session folder, and connection timeouts are non-secret application settings persisted in the JSONL configuration database. Only `GITHUB_PAT` and provider API keys belong in `.env`. Public identity fields (`bot.ownerName`, `bot.creatorName`, `bot.organization`, and `bot.publicCreatorDisclosure`) are non-secret application configuration; the AI prompt receives only this explicit allowlist, never the raw config object or secret vault.
+Do not put bot name, owner number, prefixes, bot mode, feature flags, database paths, archive limits, execution switches, or runtime limits in `.env`. Those are managed through `src/config.js` and persisted in the JSONL database. WhatsApp login mode, pairing number, session folder, and connection timeouts are non-secret application settings persisted in the JSONL configuration database. Only `GITHUB_PAT` and provider API keys are credentials. The optional YouTube variables above are non-secret executable/limit overrides; they do not replace `src/config.js` for ordinary bot settings. Public identity fields (`bot.ownerName`, `bot.creatorName`, `bot.organization`, and `bot.publicCreatorDisclosure`) are non-secret application configuration; the AI prompt receives only this explicit allowlist, never the raw config object or secret vault.
 
 Never commit `.env`, WhatsApp sessions, database journals, archives, or runtime logs.
 
@@ -248,12 +264,16 @@ Default settings are declared in `src/config.js`; runtime changes are persisted 
 | `logging.color` | `auto` | Enable terminal colors when attached to a TTY |
 | `logging.timeZone` | `Asia/Jakarta` | Timestamp timezone for application logs |
 | `mode` | `public` | `public` or `self` |
-| `ui.buttonsEnabled` | `true` | Legacy preference only; command responses remain text-first for compatibility |
+| `ui.buttonsEnabled` | `true` | Legacy state mirrored by `.buttons on/off`; the adaptive adapter reads `ui.fullButton.enabled` |
+| `ui.fullButton.enabled` | `false` | Opt-in adaptive command UI; owner enables it with `.buttons full all` |
 | `groupMetadata.initialSync` | `true` | Perform a single initial batch load of participating group metadata |
 | `groupMetadata.fetchCooldownMs` | 600,000 ms | Cooldown for a one-time lazy fetch of a group missing from cache |
-| `ai.timeoutMs` | 7,000 ms | Per-key request timeout in the fast profile |
-| `ai.totalBudgetMs` | `45000` | Advisory fallback budget; it never truncates exhaustive key validation |
-| `ai.coalesceMs` | 350 ms | Merge rapid adjacent messages from one sender into a single AI turn |
+| `ai.timeoutMs` | 60,000 ms | Per-provider request timeout in the standard profile; speed profiles may override it |
+| `ai.totalBudgetMs` | 180,000 ms | Shared absolute budget for one AI job, including output continuation |
+| `ai.maxOutputTokens` | 32,768 | Requested output budget; upstream model ceilings still apply |
+| `ai.historyMessages` | 96 | Recent turns supplied to the model; long-term archive remains searchable |
+| `ai.maxInputChars` | 96,000 | Application input envelope; provider context limits still apply |
+| `ai.coalesceMs` | 100 ms | Merge rapid adjacent messages from one sender into a single AI turn |
 | `prefix.mode` | `multi` | `single`, `multi`, or `none` |
 | `prefix.single` | `.` | Single prefix |
 | `prefix.list` | `. ! / #` | Multi-prefix list |
@@ -320,11 +340,11 @@ Default multi-prefix values are `.`, `!`, `/`, and `#`.
 | `.nexora workers 1-4` | — | Set simultaneous worker count (not session count) |
 | `.nexora runtime docker/podman` | — | Select the container runtime |
 | `.aiset on/off` | `.aiconfig` | Enable or disable AI |
-| `.aiset speed boost/fast/balanced` | — | Switch between Boost, fast, and retry-tolerant balanced profiles |
+| `.aiset speed boost/fast/balanced/deep` | — | Switch between low-latency, balanced, and extended reasoning profiles |
 | `.aiset order <providers>` | — | Set provider fallback order |
 | `.aiset model <provider> <model>` | — | Override one provider's model ID |
 | `.aiset identity on/off` | — | Control public disclosure of creator and organization identity |
-| `.buttons on/off/status` | `.buttonmode` | Owner control for interactive replies |
+| `.buttons full all/off/status/audit` | `.button`, `.fullbutton`, `.commandbutton` | Owner control for the adaptive UI engine and per-command audit |
 | `.master status` | `.masterconfig` | Show master runner switches |
 | `.master eval on/off` | — | Enable/disable JavaScript evaluation |
 | `.master cli on/off` | — | Enable/disable shell CLI directly; no global `exec` prerequisite |
@@ -333,6 +353,10 @@ Default multi-prefix values are `.`, `!`, `/`, and `#`.
 | `.joingc <url>` | `.joingroup` | Owner-only private command; joins a group using an official WhatsApp invite link and starts it muted |
 | `.mute on/off/status` | `.groupmute` | Owner-only in-group control for the current group; private `.mute on all` is an emergency global mute |
 | `.test <type> <options>` | `.testmsg`, `.messagetest` | Owner-only Baileys message lab: native-flow, hydrated template, event/date, poll, PTV, view-once, AI rich, and carousel |
+| `.yts <query>` | `.ytsearch` | YouTube thumbnail carousel; each result offers MP3 and all detected MP4 resolutions |
+| `.ytmp3 <url>` | — | Download audio as MP3 |
+| `.ytmp4 <url> [resolution]` | — | Show available MP4 resolutions, or download a selected quality |
+| `.ytm <song title>` | `.ytmusic`, `.ytplay` | Search and send audio only using an isolated temporary job directory |
 
 All owner plugins use `ownerOnly: true`. The private group inventory from `.groupinfo` is limited to the verified owner; users in a group can still inspect that current group's cached metadata. `.joingc` is private-chat-only and accepts only a direct HTTPS invitation link hosted at `chat.whatsapp.com`; it verifies invite metadata when the Baileys socket supports it before joining. Newly joined groups start muted. To activate a group, the verified owner must send `.mute off` inside that group; `.mute on` mutes it again. Non-owner mute messages are silently ignored. Private owner chat supports `.mute on all` as an emergency mute; `.mute off all` and bulk activation are disabled. `.groupinfo` lists the local participating-group inventory, refreshed on connection startup and throttled to one full sync per five minutes.
 
@@ -538,7 +562,7 @@ ocha-lidya-bot/
 
 ## 18. Version and change history
 
-Current package version: **1.10.19** (configuration schema v27).
+Current package version: **1.10.21** (configuration schema v28).
 
 See [`docs/CHANGE_LOG.md`](docs/CHANGE_LOG.md) for release history and [`docs/DATABASE_DESIGN.md`](docs/DATABASE_DESIGN.md) for persistence internals.
 
@@ -556,9 +580,9 @@ DEEPSEEK_API_KEY=
 OPENAI_API_KEY=
 ```
 
-The engine warms a bounded in-memory history cache once at startup, rotates sibling keys for key-specific authentication failures, and immediately advances to the next provider for account quota/rate-limit, billing, network, timeout, server, or model/request failures. It records per-key hits and response classifications, coalesces messages arriving within 350 ms from the same sender, and falls back across providers. If all keys are unavailable, AI enters silent maintenance and privately reports the inventory to the owner. Public model identity: Nexora-2.0-Flash. Delivery recovery is at-least-once if the process crashes during WhatsApp send. AI conversation turns are isolated by chat and sender.
+The engine warms a bounded in-memory history cache once at startup, rotates sibling keys for key-specific authentication failures, and immediately advances to the next provider for account quota/rate-limit, billing, network, timeout, server, or model/request failures. It records per-key hits and response classifications, coalesces messages arriving within the configured 100 ms default from the same sender, and falls back across providers. If all keys are unavailable, AI enters silent maintenance and privately reports the inventory to the owner. Public model identity: Nexora-2.0-Flash. Delivery recovery is at-least-once if the process crashes during WhatsApp send. AI conversation turns are isolated by chat and sender.
 
-Owner commands: `.aistatus`, `.aiset on`, `.aiset off`, `.aiset speed boost`, `.aiset speed fast`, `.aiset speed balanced`, `.aiset order groq,gemini,deepseek,openai`, `.aiset model <provider> <model>`, `.buttons on`, `.buttons off`, and `.buttons status`. Interactive replies are enabled by default; `.buttons off` switches all `m.reply()` command responses to plain text.
+Owner commands: `.aistatus`, `.aiset on`, `.aiset off`, `.aiset speed boost`, `.aiset speed fast`, `.aiset speed balanced`, `.aiset speed deep`, `.aiset order groq,gemini,deepseek,openai`, `.aiset model <provider> <model>`, `.buttons full all`, `.buttons full audit`, `.buttons full off`, and `.buttons status`. Adaptive command buttons are opt-in; existing custom plugin interfaces remain independent of this switch.
 
 See [docs/AI_ENGINE.md](docs/AI_ENGINE.md) for provider model defaults, API details, recovery semantics, and operational guidance. Free tiers are not unlimited and depend on provider account, region, and quota; OpenAI and DeepSeek API usage should be treated as paid unless the account explicitly shows credits.
 
@@ -571,7 +595,7 @@ The first connection performs one `groupFetchAllParticipating()` batch and persi
 
 `.groupinfo` in a private chat is available only to the verified owner and lists groups already in the metadata cache with active/mute status. Reply to the exact list message with `1`-`10` to open a group; `0` advances a page and `00` returns to the previous page. Reply `0` to a detail view to return to the list. `.groupinfo` inside a group shows that group's cache. It does not force repeated metadata requests. See [`docs/CONTACTS_AND_GROUP_CACHE.md`](docs/CONTACTS_AND_GROUP_CACHE.md) for event semantics, file formats, PN/LID resolution order, and recovery behavior.
 
-Command responses use the serializer's ordinary text transport by default. This keeps every response readable, searchable, selectable, and copyable in standard WhatsApp clients. `.menu` and `.groupinfo` show explicit command syntax as text. A quoted reply to an active command screen is routed through the command-session lane before AI detection; these in-memory sessions are sender-bound and expire after 10 minutes by default. In groups, AI quoted-reply activation requires a known AI answer message ID, not merely any message authored by the bot. AI reply chains preserve up to 8 linked AI turns and 12,000 characters of context. See [`docs/REPLY_ROUTING_AND_TEST_MESSAGES.md`](docs/REPLY_ROUTING_AND_TEST_MESSAGES.md). The legacy `ui.buttonsEnabled` setting and `.buttons on/off/status` command remain for configuration compatibility, but ON does not wrap all command replies in native-flow payloads. Interactive APIs are available only to explicit feature implementations after client compatibility testing; a successful relay/ACK does not guarantee that a WhatsApp client can render the message.
+Command responses remain text-first by default. The owner can opt into the adaptive full-button engine with `.buttons full all`, inspect its per-command decisions using `.buttons full audit`, and manage exceptions using `.buttons full exclude add/remove <command|alias>`. The engine inherits a plugin's policy for every alias, chooses Quick Reply for 1–3 safe actions and Single Select for 4–8, and keeps long/code/progress/diagnostic replies in text. Commands that already own a carousel, Native Flow, image/contact card, checkout, menu pagination, or reply-session are excluded. The adapter is scoped to one plugin execution and restores the serializer reply function after completion. Taps re-enter the normal dispatcher and do not bypass authorization. See [`docs/COMMAND_BUTTON_ENGINE.md`](docs/COMMAND_BUTTON_ENGINE.md). A successful relay/ACK still does not guarantee identical Native Flow rendering on every WhatsApp client.
 
 
 ## 21. Ocha Master Console, group mute, and message-flow telemetry
@@ -679,6 +703,9 @@ Customer private-chat commands:
 - `.sewa paid <invoice>` — report that payment was made; manual verification is still required.
 - Send a JPG/PNG/WEBP image up to 5 MB with caption `.sewa bukti <invoice> [note]` — attach payment evidence privately (up to three images per invoice).
 - `.sewa status` — subscription state, group member count/cap, expiry and shared quota.
+- `.sewa rating` / `.sewa testimoni` — verified review summary.
+- `.sewa ulasan <1-5> [komentar]` — one honest review per approved invoice.
+- `.sewa masukan|saran|keluhan|konsultasi <pesan>` — open a support ticket privately.
 - `.sewa cancel <invoice>` — cancel a pending invoice.
 
 Group admin toolbox (active rental required): `.gadmin info`, `.gadmin aturan`, `.gadmin aturan <text>`, `.gadmin aturan hapus`, `.gadmin welcome on [text]`, `.gadmin welcome off`, `.gadmin poll Question | Option 1 | Option 2`, and `.gadmin announce <text>`. All participants may read stored rules; only verified WhatsApp admins may change rules, welcome settings, polling, and announcements. Welcome messages trigger when a new member joins.
@@ -692,6 +719,7 @@ Owner-only private commands:
 - `.rentals usage <group-jid>` and `.rentals audit [group-jid|invoice]`.
 - `.rentals suspend <group-jid> [reason]`, `.rentals activate <group-jid> [days]`, `.rentals extend <group-jid> [days]`.
 - `.rentals setprice <plan> <amount>`, `.rentals setquota <plan> <units>`, `.rentals setmembers <plan> <members>`.
+- `.rentals support [open|answered|closed|all]`, `.rentals reply <ticket-id> <message>`, and `.rentals close <ticket-id> [note]` manage customer support tickets.
 
 An invoice expires after 12 hours. The initial subscription term is 30 days, followed by a 48-hour grace period. During grace, ordinary bot interactions are paused but billing/renewal commands remain available. After grace, the tenant is suspended. Expiry reminders are delivered privately to the billing contact or verified group admins.
 
@@ -699,6 +727,8 @@ Payment uses static QRIS and configured e-wallet/bank instructions. Payment is m
 
 See [`docs/RENTAL_USER_GUIDE.md`](docs/RENTAL_USER_GUIDE.md) for the full customer guide and [`docs/RENTAL_100_FEATURE_CATALOG.md`](docs/RENTAL_100_FEATURE_CATALOG.md) for implemented capabilities versus roadmap.
 
-The internal native-flow registry supports lossless parameter forwarding for the registered sample button types. It distinguishes stable, observed and experimental payloads; it does not promise that all WhatsApp clients or business accounts render experimental commerce/call flows. The raw low-level `sock.relayMessage()` path is left untouched. `sendInteractive`/`sendNativeFlow` validate registered payloads and retain a text fallback.
+The internal native-flow registry supports lossless parameter forwarding for the registered sample button types. It distinguishes stable, observed and experimental payloads; it does not promise that all WhatsApp clients or business accounts render experimental commerce/call flows. The raw low-level `sock.relayMessage()` path is left untouched. `sendInteractive`/`sendNativeFlow` validate registered payloads and retain a text fallback. The owner-only `.test nativeflow all` sends five pages based on the current evaluation fixture; `.test identity` and `.test inspect` expose PN/LID and parsed-response diagnostics. Quick-reply and single-select test IDs route through `.test response ...`; URL, call, copy, and location controls may be handled entirely by the WhatsApp app and are not guaranteed to send a bot callback. See [`docs/NATIVE_FLOW_SERIALIZER.md`](docs/NATIVE_FLOW_SERIALIZER.md).
+
+YouTube commands use `yt-dlp` plus FFmpeg/ffprobe installed on the host; these are system tools, not npm dependencies. `.yts`, `.ytmp3`, `.ytmp4`, and audio-only `.ytm` are documented in [`docs/YOUTUBE_COMMANDS.md`](docs/YOUTUBE_COMMANDS.md). The current bot environment variables support executable path and download-size/duration limits; live retrieval still depends on YouTube availability and format changes.
 
 See `docs/RENTAL_100_FEATURE_CATALOG.md` for the distinction between implemented capabilities and the roadmap. The catalog does not market dynamic QR, automatic refunds, payment webhooks or a customer web dashboard as delivered.

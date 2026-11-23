@@ -41,14 +41,16 @@ export default {
     if (action === 'speed') {
       const [level] = rest;
       const profile = String(level || '').toLowerCase();
-      if (!['boost', 'fast', 'balanced'].includes(profile)) return m.reply('Gunakan: .aiset speed boost | fast | balanced');
+      if (!['boost', 'fast', 'balanced', 'deep'].includes(profile)) return m.reply('Gunakan: .aiset speed boost | fast | balanced | deep');
       await updateConfig(config => {
         if (profile === 'boost') {
           config.ai.timeoutMs = 3500; config.ai.totalBudgetMs = 14000; config.ai.historyMessages = 3; config.ai.maxOutputTokens = 180; config.ai.temperature = 0.5; config.ai.maxInputChars = 3500; config.ai.coalesceMs = 80;
         } else if (profile === 'fast') {
           config.ai.timeoutMs = 4500; config.ai.totalBudgetMs = 20000; config.ai.historyMessages = 4; config.ai.maxOutputTokens = 220; config.ai.temperature = 0.55; config.ai.maxInputChars = 4500; config.ai.coalesceMs = 120;
+        } else if (profile === 'balanced') {
+          config.ai.timeoutMs = 30000; config.ai.totalBudgetMs = 90000; config.ai.historyMessages = 24; config.ai.maxOutputTokens = 8192; config.ai.maxInputChars = 24000; config.ai.coalesceMs = 150;
         } else {
-          config.ai.timeoutMs = 12000; config.ai.totalBudgetMs = 90000; config.ai.historyMessages = 12; config.ai.maxOutputTokens = 850; config.ai.coalesceMs = 400;
+          config.ai.timeoutMs = 45000; config.ai.totalBudgetMs = 180000; config.ai.historyMessages = 48; config.ai.maxOutputTokens = 16384; config.ai.maxInputChars = 48000; config.ai.coalesceMs = 100;
         }
       }, { actor: m.sender, reason: `AI speed profile ${profile}` });
       return m.reply(`Profil AI ${profile} diterapkan.`);
@@ -57,7 +59,7 @@ export default {
     return m.reply([
       'Pengaturan AI:',
       '.aiset on/off',
-      '.aiset speed boost/fast/balanced',
+      '.aiset speed boost/fast/balanced/deep',
       '.aiset order groq,gemini,deepseek,openai  (urutan prioritas + fallback otomatis)',
       '.aiset free-only on/off  (default ON, cegah biaya provider berbayar)',
       '.aimodels status | refresh  (katalog model provider)',

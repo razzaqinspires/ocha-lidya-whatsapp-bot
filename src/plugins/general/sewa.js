@@ -8,7 +8,8 @@ import { ensureGroupMetadata } from '../../core/group-runtime.js';
 import {
   getQuotaStatus, getTenantStatus, createRentalOrder, setOrderPaymentMethod,
   reportPayment, attachPaymentEvidence, cancelOrder, getOrder, getPlans,
-  setRentalContext, getRentalContext
+  setRentalContext, getRentalContext, submitRentalReview, getRentalReviewSummary,
+  getTenant, createRentalSupportTicket
 } from '../../rental/service.js';
 import { PAYMENT_METHODS, normalizePaymentMethod } from '../../rental/payment-methods.js';
 import { formatRupiah } from '../../rental/catalog.js';
@@ -74,6 +75,33 @@ function planDescription(plan) {
 function catalogText(plans) {
   return `*OCHA LIDYA · PAKET SEWA GRUP*\n\n${Object.values(plans).map(planDescription).join('\n\n')}`
     + `\n\n*Cara menghitung kuota*\n• Command ringan: 1 unit\n• AI dan media: 3 unit\n• Pencarian, unduhan, website, dan proyek: 5 unit\n• Eksekusi kode/build/deploy: 12 unit\n\nKuota digunakan bersama oleh semua anggota grup, bukan kuota per orang. Reset 24 jam mengikuti waktu aktivasi. Status, menu, dan perintah pembayaran tidak memotong kuota.\n\n*Cara mulai*\n1. Pastikan Anda admin grup tujuan.\n2. Di grup tersebut, ketik *.sewa*.\n3. Lanjutkan semua langkah di chat pribadi bot.\n4. Ketik *.sewa plan mini* (atau standard/pro) untuk membuat invoice.\n5. Pilih metode pembayaran, transfer sesuai nominal, lalu laporkan atau kirim foto bukti.\n6. Layanan aktif setelah owner memverifikasi dana masuk.`;
+}
+function comparisonText(plans) {
+  return `*PERBANDINGAN PAKET SEWA*\n\n${Object.values(plans).map(plan => [
+    `*${plan.name}*`, `Harga: ${formatRupiah(plan.price)} / ${plan.durationDays} hari`,
+    `Kapasitas: ${Number(plan.maxMembers).toLocaleString('id-ID')} anggota`,
+    `Kuota: ${Number(plan.dailyQuota).toLocaleString('id-ID')} unit / 24 jam`
+  ].join('\n')).join('\n\n')}\n\nPaket tidak memberi akses ke command owner/developer. Semua anggota tetap tunduk pada izin command dan kebijakan keamanan bot.`;
+}
+function rentalFaq() {
+  return [
+    '*FAQ SEWA OCHA LIDYA*',
+    '1. Pembayaran dilakukan di mana? Semua transaksi hanya melalui chat pribadi bot.',
+    '2. Kapan grup aktif? Setelah owner memverifikasi dana masuk, bukan hanya dari screenshot.',
+    '3. Apakah kuota untuk setiap anggota? Tidak, kuota dipakai bersama oleh semua anggota grup.',
+    '4. Kapan kuota reset? Setiap 24 jam berdasarkan jendela aktivasi grup.',
+    '5. Bisa ganti paket? Buat invoice paket baru lewat .sewa upgrade <mini|standard|pro>.',
+    '6. Apakah level/XP membuka fitur owner? Tidak. Akses ditentukan role WhatsApp dan policy backend.',
+    '7. Bagaimana memberi ulasan? Pelanggan terverifikasi dapat memakai .sewa ulasan <1-5> [komentar].',
+    '8. Bagaimana menyampaikan saran atau kendala? Gunakan .sewa masukan <pesan> atau .sewa konsultasi <pesan> di chat pribadi.'
+  ].join('\n');
+}
+async function sendReviewSummary(message) {
+  const summary = await getRentalReviewSummary();
+  const average = summary.total ? `${summary.average.toFixed(2)}/5` : 'Belum ada ulasan terverifikasi';
+  const distribution = [5, 4, 3, 2, 1].map(score => `${score}★ ${summary.distribution[score] || 0}`).join('  ·  ');
+  const comments = summary.reviews.filter(item => item.comment).map(item => `“${item.comment}” — ${item.planName}, ${item.rating}/5`).join('\n');
+  return message.reply(`*RATING SEWA OCHA LIDYA*\nRata-rata: *${average}*\nTotal ulasan pembelian terverifikasi: ${summary.total}\n${distribution}${comments ? `\n\n*ULASAN TERBARU*\n${comments}` : ''}\n\nRating hanya dihitung dari transaksi yang terverifikasi. Tidak ada rating buatan atau pengulangan ulasan untuk satu invoice.`);
 }
 async function sendPlans(sock, message) {
   const plans = await getPlans();
@@ -217,8 +245,8 @@ async function requirePrivateContext(sock, message, { admin = true } = {}) {
 }
 
 export default {
-  name: 'sewa', aliases: ['rent', 'paketsewa'], category: 'general',
-  usage: '[status|plan <mini|standard|pro>|pay <invoice> <metode>|paid <invoice>|bukti <invoice>|cancel <invoice>]',
+  name: 'sewa', aliases: ['rent', 'paketsewa'], category: 'general', fullButton: false,
+  usage: '[bandingkan|estimasi <anggota>|faq|rating|testimoni|ulasan <1-5> [komentar]|masukan <pesan>|konsultasi <pesan>|status|plan|upgrade|perpanjang|pay|paid|bukti|cancel]',
   description: 'Paket sewa, invoice dan pembayaran pribadi per grup WhatsApp',
   async execute({ sock, m, args }) {
     if (m.isGroup) return sendGroupRedirect(sock, m, args);
@@ -227,10 +255,34 @@ export default {
     if (['packages', 'paket', 'list', 'help', 'bantuan'].includes(action)) {
       if (action === 'help' || action === 'bantuan') {
         const context = await getRentalContext(getSenderJid(m));
-        return m.reply(`*PANDUAN SEWA OCHA LIDYA*\n${context ? `Grup terpilih: ${context.groupName}` : 'Grup belum dipilih.'}\n\n.sewa — lihat paket\n.sewa plan <mini|standard|pro> — buat invoice\n.sewa pay <invoice> <qris|ovo|gopay|dana|seabank> — pilih pembayaran\n.sewa paid <invoice> — laporkan pembayaran\n.sewa bukti <invoice> — kirim foto bukti dengan caption command ini\n.sewa status — lihat masa aktif dan kuota\n.sewa cancel <invoice> — batalkan invoice\n\nPemesanan dan pembayaran hanya diproses di chat pribadi. Untuk memilih grup, ketik .sewa di grup tujuan. Hanya admin grup yang dapat membuat invoice dan mengelola pembayaran.`);
+        return m.reply(`*PANDUAN SEWA OCHA LIDYA*\n${context ? `Grup terpilih: ${context.groupName}` : 'Grup belum dipilih.'}\n\n.sewa — lihat paket\n.sewa bandingkan — bandingkan paket\n.sewa estimasi <anggota> — rekomendasi kapasitas\n.sewa fitur / .sewa faq — fitur dan pertanyaan umum\n.sewa rating / testimoni — rating dan ulasan pelanggan terverifikasi\n.sewa ulasan <1-5> [komentar] — kirim satu ulasan per invoice terverifikasi\n.sewa masukan <pesan> — buat tiket saran/kendala layanan\n.sewa konsultasi <pesan> — minta konsultasi paket atau teknis\n.sewa plan <mini|standard|pro> — buat invoice\n.sewa upgrade <paket> — upgrade paket\n.sewa perpanjang — perpanjang paket aktif\n.sewa pay <invoice> <qris|ovo|gopay|dana|seabank> — pilih pembayaran\n.sewa paid <invoice> — laporkan pembayaran\n.sewa bukti <invoice> — kirim foto bukti melalui chat pribadi\n.sewa status — masa aktif dan kuota\n.sewa cancel <invoice> — batalkan invoice\n\nPemesanan, dukungan, dan pembayaran hanya diproses di chat pribadi. Untuk memilih grup, ketik .sewa di grup tujuan. Hanya admin grup yang dapat membuat invoice dan mengelola transaksi.`);
       }
       return sendPlans(sock, m);
     }
+
+    if (['rating', 'reviews', 'ulasan-terbaru', 'testimoni'].includes(action) || (action === 'ulasan' && !args[1])) {
+      return sendReviewSummary(m);
+    }
+    if (['bandingkan', 'compare', 'perbandingan'].includes(action)) {
+      return m.reply(comparisonText(await getPlans()));
+    }
+    if (['estimasi', 'kalkulator', 'rekomendasi'].includes(action)) {
+      const members = Number(String(args[1] || '').replace(/[^0-9]/g, ''));
+      if (!Number.isSafeInteger(members) || members < 1 || members > 100000) {
+        return m.reply('Format: .sewa estimasi <jumlah_anggota>. Masukkan angka 1 sampai 100000.');
+      }
+      const plans = Object.values(await getPlans()).sort((a, b) => a.price - b.price);
+      const recommended = plans.find(plan => members <= plan.maxMembers);
+      if (!recommended) {
+        return m.reply(`Untuk ${members.toLocaleString('id-ID')} anggota, kapasitas paket saat ini belum mencukupi. Paket terbesar menampung ${Math.max(...plans.map(plan => plan.maxMembers)).toLocaleString('id-ID')} anggota. Hubungi owner untuk konsultasi kapasitas khusus.`);
+      }
+      return m.reply(`*ESTIMASI PAKET SEWA*\nJumlah anggota: ${members.toLocaleString('id-ID')}\nRekomendasi: *${recommended.name}*\nHarga: ${formatRupiah(recommended.price)} / ${recommended.durationDays} hari\nKapasitas: ${Number(recommended.maxMembers).toLocaleString('id-ID')} anggota\nKuota bersama: ${Number(recommended.dailyQuota).toLocaleString('id-ID')} unit/24 jam\n\nIni estimasi kapasitas, bukan invoice. Untuk transaksi, pilih grup tujuan dengan .sewa di grup lalu lanjutkan di chat pribadi.`);
+    }
+    if (['fitur', 'features'].includes(action)) {
+      const plans = await getPlans();
+      return m.reply(`${catalogText(plans)}\n\n*KEAMANAN DAN KETERSEDIAAN*\nPaket sewa membuka penggunaan fitur yang memang tersedia untuk grup. Fitur sensitif tetap memerlukan hak admin/owner. Ketersediaan command mengikuti konfigurasi server dan dapat berubah saat maintenance.`);
+    }
+    if (['faq', 'tanya'].includes(action)) return m.reply(rentalFaq());
 
     if (action === 'context' || action === 'grup') {
       const context = await getRentalContext(getSenderJid(m));
@@ -238,7 +290,39 @@ export default {
     }
 
     const { sender, context } = await requirePrivateContext(sock, m, { admin: true });
+    if (['masukan', 'feedback', 'saran', 'keluhan', 'konsultasi', 'support'].includes(action)) {
+      const raw = args.slice(1).join(' ').trim();
+      const category = ['saran', 'keluhan', 'konsultasi'].includes(action) ? action : 'masukan';
+      if (raw.length < 12) {
+        return m.reply(`Format: .sewa ${action === 'konsultasi' ? 'konsultasi' : 'masukan'} <pesan>\nJelaskan kebutuhan atau kendala minimal 12 karakter. Jangan sertakan password, OTP, API key, atau data pembayaran rahasia.`);
+      }
+      const result = await createRentalSupportTicket({
+        groupJid: context.groupJid, requesterJid: sender, requesterName: m.pushName,
+        category, message: raw
+      });
+      const ticket = result.ticket;
+      try {
+        await sock.sendMessage(OWNER_JID(), { text: `*TIKET PELANGGAN SEWA · ${ticket.id}*\nKategori: ${ticket.category.toUpperCase()}\nGrup: ${ticket.groupName}\nPengirim: ${ticket.requesterName}\nWhatsApp: ${ticket.requesterJid}\nWaktu: ${dateWib(ticket.createdAt)}\n\n${ticket.message}\n\nBalas: .rentals reply ${ticket.id} <pesan>\nTutup: .rentals close ${ticket.id}` });
+      } catch (error) {
+        // The ticket remains in the owner queue even when the immediate DM fails.
+      }
+      return m.reply(result.duplicate
+        ? `Pesan yang sama sudah tercatat sebagai tiket *${ticket.id}*. Tiket masih menunggu tindak lanjut.`
+        : `*MASUKAN BERHASIL DICATAT*\nID tiket: *${ticket.id}*\nKategori: ${ticket.category}\nGrup: ${ticket.groupName}\nStatus: MENUNGGU TINDAK LANJUT\n\nTim Razzaq Ventures menerima masukan ini. Simpan ID tiket untuk rujukan. Respons owner akan dikirim melalui chat pribadi.`);
+    }
     const groupJid = context.groupJid;
+
+    if (action === 'ulasan' || action === 'review') {
+      const rating = Number(args[1]);
+      if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+        return m.reply('Format: .sewa ulasan <1-5> [komentar]. Hanya pelanggan dengan invoice yang telah disetujui dapat mengirim satu ulasan untuk setiap invoice.');
+      }
+      const comment = args.slice(2).join(' ').slice(0, 240);
+      const result = await submitRentalReview({ groupJid, reviewerJid: sender, rating, comment });
+      return m.reply(result.duplicate
+        ? `Ulasan untuk invoice terverifikasi ini sudah pernah dikirim dengan rating ${result.review.rating}/5. Ulasan yang sama tidak dihitung dua kali.`
+        : `Terima kasih. Ulasan ${rating}/5 telah tercatat untuk transaksi terverifikasi paket ${result.review.planName}. Rating publik hanya dihitung dari transaksi sah.`);
+    }
 
     if (action === 'status' || action === 'cek') {
       const status = await getTenantStatus(groupJid);
@@ -249,8 +333,10 @@ export default {
       return m.reply(`*STATUS SEWA OCHA LIDYA*\nGrup: ${tenant.groupName}\nPaket: ${tenant.planName}\nStatus: *${statusLabel}*\nAnggota: ${Number(status.memberCount).toLocaleString('id-ID')}/${Number(status.memberLimit).toLocaleString('id-ID')} orang\nMasa aktif sampai: ${dateWib(tenant.expiresAt)}\nSisa masa aktif: ${prettyDuration(status.remainingMs)}\n${status.status === 'grace' ? `Masa tenggang: ${prettyDuration(status.graceRemainingMs)}\n` : ''}${status.overLimit ? 'Kurangi jumlah anggota atau buat invoice paket dengan kapasitas lebih besar.\n' : ''}Kuota 24 jam: ${quota.used}/${quota.limit} unit\nSisa kuota: ${quota.remaining} unit\nReset kuota: ${dateWib(quota.resetAt)}\nHitung mundur reset: ${prettyDuration(quota.remainingMs)}\n\nPerpanjang atau tingkatkan kapasitas: .sewa plan <paket>`);
     }
 
-    if (action === 'plan' || action === 'paketkan') {
-      const planId = String(args[1] || '').toLowerCase();
+    if (['plan', 'paketkan', 'upgrade', 'perpanjang', 'renew'].includes(action)) {
+      const currentTenant = await getTenant(groupJid);
+      const requestedPlan = String(args[1] || '').toLowerCase();
+      const planId = requestedPlan || (['perpanjang', 'renew'].includes(action) ? currentTenant?.planId : '');
       if (!planId) return sendPlans(sock, m);
       const result = await createRentalOrder({ groupJid, requestedBy: sender, groupName: context.groupName, planId });
       return sendPaymentMenu(sock, m, result.order);

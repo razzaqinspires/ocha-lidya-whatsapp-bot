@@ -27,7 +27,7 @@ export default {
       `AI: ${status.enabled ? 'ENABLED' : 'DISABLED'}`,
       `Maintenance: ${manager.maintenance.active ? `ACTIVE sejak ${manager.maintenance.since}` : 'OFF'}`,
       `Creator identity: ${identity.creatorName} · ${identity.organization} · public ${identity.disclosureEnabled ? 'ON' : 'OFF'}`,
-      `Relationship profiles: ${relationships.profiles} · XP ${relationships.xpPerInteraction}/interaksi · daily cap ${relationships.dailyXpCap}`,
+      `Relationship profiles cached: ${relationships.cachedProfiles} · XP ${relationships.xpPerEligibleInteraction}/eligible interaction · cooldown ${relationships.xpCooldownMs}ms · progression ${relationships.progression}`,
       `Key rotation: seluruh key aktif dicoba berurutan (round-robin) sebelum fallback`,
       `Provider order: ${(status.providerOrder || []).join(' → ') || 'groq → gemini → deepseek → openai'}`,
       `Free-only routing: ${status.freeOnly === false ? 'OFF (paid providers allowed)' : 'ON (Groq/Gemini free model allowlist)'}`,

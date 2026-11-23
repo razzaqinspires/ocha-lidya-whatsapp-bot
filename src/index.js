@@ -439,6 +439,14 @@ async function start() {
           if (senderPn) {
             message.sender = senderPn;
             message.senderPn = senderPn;
+            if (message.identity?.sender) {
+              message.identity.sender.jidPn = senderPn;
+              message.identity.sender.normalizedJid = senderPn;
+              if (!message.isGroup) {
+                message.identity.chat.jidPn = senderPn;
+                message.identity.chat.normalizedJid = senderPn;
+              }
+            }
           }
           message.isOwner = isVerifiedOwnerMessage({ ...message, senderPn }, getConfig().bot.owner);
           logger.debug({

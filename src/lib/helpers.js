@@ -9,6 +9,7 @@ import {
   generateWAMessageFromContent
 } from '@whiskeysockets/baileys';
 import crypto from 'node:crypto';
+import { normalizeNativeFlowButton } from './native-flow-registry.js';
 const { randomBytes, randomUUID } = crypto;
 
 let sharp;
@@ -1383,27 +1384,86 @@ class Carousel extends BaseBuilder {
   }
   addCard(card) {
     const cards = Array.isArray(card) ? card : [card];
+    if (!cards.length || cards.some(item => !item || typeof item !== 'object' || Array.isArray(item))) {
+      throw new TypeError('Carousel card harus berupa object.');
+    }
     this._cards.push(...cards);
     return this;
   }
-  build(jid, options = {}) {
+  async #prepareCard(card, index) {
+    const next = { ...card };
+    const header = { ...(card.header || {}) };
+    const imageSource = header.imageUrl ?? header.image ?? card.imageUrl ?? card.image;
+    delete header.imageUrl;
+    delete header.image;
+    delete next.imageUrl;
+    delete next.image;
+
+    if (imageSource) {
+      if (typeof this.#client.waUploadToServer !== 'function') {
+        throw new Error(`Carousel card #${index + 1} memiliki gambar tetapi sock.waUploadToServer tidak tersedia.`);
+      }
+      const image = Buffer.isBuffer(imageSource) ? imageSource : { url: String(imageSource) };
+      const prepared = await prepareWAMessageMedia({ image }, { upload: this.#client.waUploadToServer });
+      if (!prepared?.imageMessage) throw new Error(`Gambar carousel card #${index + 1} gagal dipersiapkan.`);
+      header.imageMessage = prepared.imageMessage;
+      header.hasMediaAttachment = true;
+    } else if (header.imageMessage || header.videoMessage || header.documentMessage || header.jpegThumbnail) {
+      header.hasMediaAttachment = true;
+    }
+
+    const nativeFlowMessage = card.nativeFlowMessage ? { ...card.nativeFlowMessage } : undefined;
+    if (nativeFlowMessage && Array.isArray(nativeFlowMessage.buttons)) {
+      nativeFlowMessage.buttons = nativeFlowMessage.buttons.map((button, buttonIndex) => {
+        const normalized = normalizeNativeFlowButton(button, buttonIndex);
+        return { name: normalized.name, buttonParamsJson: normalized.buttonParamsJson };
+      });
+      if (typeof nativeFlowMessage.messageParamsJson !== 'string') {
+        nativeFlowMessage.messageParamsJson = JSON.stringify(nativeFlowMessage.messageParamsJson || {});
+      }
+      if (!Number.isInteger(nativeFlowMessage.messageVersion)) nativeFlowMessage.messageVersion = 1;
+    }
+
+    return {
+      ...next,
+      header,
+      ...(nativeFlowMessage ? { nativeFlowMessage } : {})
+    };
+  }
+  async build(jid, options = {}) {
+    if (this._cards.length < 2) throw new Error('Carousel memerlukan sedikitnya 2 kartu.');
+    if (this._cards.length > 10) throw new Error('Carousel dibatasi maksimal 10 kartu per pesan.');
+    const cards = [];
+    for (let index = 0; index < this._cards.length; index += 1) {
+      cards.push(await this.#prepareCard(this._cards[index], index));
+    }
+    const userJid = options.userJid || this.#client.user?.id || this.#client.authState?.creds?.me?.id;
     return generateWAMessageFromContent(
       jid,
       {
         ...this._extraPayload,
+        messageContextInfo: {
+          deviceListMetadata: {},
+          deviceListMetadataVersion: 2
+        },
         interactiveMessage: {
-          header: { hasMediaAttachment: false },
+          header: {
+            ...(this._title ? { title: this._title } : {}),
+            ...(this._subtitle ? { subtitle: this._subtitle } : {}),
+            hasMediaAttachment: false
+          },
           body: { text: this._body },
           footer: { text: this._footer },
           contextInfo: this._contextInfo,
-          carouselMessage: { cards: this._cards },
+          carouselMessage: { cards, messageVersion: 1 },
         },
       },
-      { ...options }
+      { ...options, userJid }
     );
   }
   async send(jid, options = {}) {
-    const msg = await this.build(jid, options);
+    const { quoted, ...relayOptions } = options;
+    const msg = await this.build(jid, { ...options, quoted });
     return await this.#client.relayMessage(msg.key.remoteJid, msg.message, {
       messageId: msg.key.id,
       additionalNodes: [
@@ -1419,7 +1479,7 @@ class Carousel extends BaseBuilder {
           ],
         },
       ],
-      ...options,
+      ...relayOptions,
     });
   }
 }

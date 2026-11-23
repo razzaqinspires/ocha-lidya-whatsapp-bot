@@ -8,25 +8,23 @@ Project Library is the durable source repository and task-memory layer for the n
 
 The project owner key is derived from the sender PN JID supplied by the WhatsApp message pipeline after Baileys sender resolution. Raw phone numbers are not used as directory names. A SHA-256-derived user key namespaces each user's repository, project metadata, active-project pointer, export preference, and version history.
 
-Default local layout when Ocha runs as root:
+Default local layout in v1.10.24 is integrated into the same per-user `roo` namespace as private AI memory and conversation history:
 
 ```text
-/root/ocha-project-library/
-  <user-hash>/
-    <repository-slug>/
-      index.html
-      assets/...
-      README.md
-      .git/                 # local repository history when Git is available
-  .control/
-    projects/<user-hash>/   # project manifests and task memory
-    active/                 # selected project per user/chat
-    preferences/            # ZIP export preference per user
-  .history/<user-hash>/<project-id>/  # bounded ZIP snapshots
-  .tmp/                    # short-lived export archives only
+data/roo/<sha256-normalized-user-id>/
+  projects/<repository-slug>/
+    index.html
+    assets/...
+    README.md
+    .git/                    # local Git history where available
+  .control/projects/         # per-user manifests and task memory
+  .control/active/           # selected project pointers, hashed per chat
+  .control/preferences/      # ZIP export preference
+  .history/<project-id>/     # prior project snapshots
+  .tmp/                      # temporary export archives
 ```
 
-A non-root service account defaults to `$HOME/.local/share/ocha-lidya/projects`. An administrator can override this with `codeLab.projectLibraryRoot` or `OCHA_PROJECT_LIBRARY_ROOT`. The library and private per-user directories use restrictive filesystem permissions. The user-facing assistant does not reveal the full host root path by default.
+The default path now matches the User Vault's normalized SHA-256 identity key. Existing legacy repositories under `/root/ocha-project-library` (root service) or `$HOME/.local/share/ocha-lidya/projects` (non-root service) are copied into the new per-user root on first access without overwriting an existing destination. The legacy source is retained. An administrator can override the root with `codeLab.projectLibraryRoot` or `OCHA_PROJECT_LIBRARY_ROOT`. Directories/files use restrictive permissions. The user-facing assistant does not reveal the host path by default.
 
 This is a **logical per-user filesystem workspace**, not a dedicated long-lived Docker/Podman container. Website generation writes static source files directly into the bounded library. Actual code execution remains in Code Lab's isolated, temporary runtime workers. Do not describe Project Library as a stronger OS/container security boundary.
 

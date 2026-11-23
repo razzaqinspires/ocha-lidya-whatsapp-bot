@@ -27,7 +27,12 @@ function sha(value, length = 32) {
 
 export function projectUserKey(userId) {
   if (!userId || typeof userId !== 'string') throw new TypeError('Identitas pengguna wajib tersedia untuk mengakses Project Library.');
-  return sha(userId, 32);
+  const normalized = userId.trim().replace(/:\d+(?=@)/, '');
+  if (!/^(?:\d{8,20}@(s\.whatsapp\.net|lid)|\d{8,20})$/i.test(normalized)) {
+    throw new TypeError('Identitas pengguna tidak valid untuk Project Library.');
+  }
+  // Use exactly the same normalized identity and SHA-256 namespace as User Vault.
+  return sha(normalized, 64);
 }
 
 function cleanText(value, max = 1000) {
@@ -99,15 +104,22 @@ function normalizeProjectMemory(memory = {}, fallback = {}) {
   };
 }
 
-function rootPath() {
+function configuredProjectRoot() {
   let configured = process.env.OCHA_PROJECT_LIBRARY_ROOT || '';
   if (!configured) {
     try { configured = getConfig().codeLab?.projectLibraryRoot || ''; } catch {}
   }
-  if (configured) return path.resolve(configured);
+  return configured ? path.resolve(configured) : '';
+}
+function legacyProjectRoot() {
   return process.getuid?.() === 0
     ? '/root/ocha-project-library'
     : path.join(os.homedir(), '.local', 'share', 'ocha-lidya', 'projects');
+}
+function rootPath() {
+  const configured = configuredProjectRoot();
+  if (configured) return configured;
+  return path.resolve(process.env.OCHA_ROO_ROOT || path.join(process.cwd(), 'data', 'roo'));
 }
 
 async function ensureRealDirectory(directory, mode = 0o700) {
@@ -120,8 +132,10 @@ async function ensureRealDirectory(directory, mode = 0o700) {
 
 function roots() {
   const root = rootPath();
+  const perUserRoo = !configuredProjectRoot();
   return {
-    root,
+    root, perUserRoo,
+    legacyRoot: perUserRoo ? legacyProjectRoot() : '',
     control: path.join(root, '.control'),
     projectsMeta: path.join(root, '.control', 'projects'),
     active: path.join(root, '.control', 'active'),
@@ -134,10 +148,96 @@ function roots() {
 async function ensureLibrary() {
   const locations = roots();
   await ensureRealDirectory(locations.root, 0o700);
-  for (const dir of [locations.control, locations.projectsMeta, locations.active, locations.preferences, locations.history, locations.temp]) {
-    await ensureRealDirectory(dir, 0o700);
+  // Explicit legacy/custom roots keep their old layout. The default layout is
+  // per-user under roo/<sha256>, with no shared metadata or history directory.
+  if (!locations.perUserRoo) {
+    for (const dir of [locations.control, locations.projectsMeta, locations.active, locations.preferences, locations.history, locations.temp]) {
+      await ensureRealDirectory(dir, 0o700);
+    }
   }
   return locations;
+}
+
+function userContainer(locations, userKey) {
+  return resolveInside(locations.root, userKey);
+}
+function userDirectory(locations, userKey) {
+  return locations.perUserRoo
+    ? resolveInside(userContainer(locations, userKey), 'projects')
+    : resolveInside(locations.root, userKey);
+}
+function metadataDirectory(locations, userKey) {
+  return locations.perUserRoo
+    ? resolveInside(userContainer(locations, userKey), '.control', 'projects')
+    : resolveInside(locations.projectsMeta, userKey);
+}
+function activeDirectory(locations, userKey) {
+  return locations.perUserRoo
+    ? resolveInside(userContainer(locations, userKey), '.control', 'active')
+    : locations.active;
+}
+function preferenceDirectory(locations, userKey) {
+  return locations.perUserRoo
+    ? resolveInside(userContainer(locations, userKey), '.control', 'preferences')
+    : locations.preferences;
+}
+function projectHistoryRoot(locations, userKey) {
+  return locations.perUserRoo
+    ? resolveInside(userContainer(locations, userKey), '.history')
+    : resolveInside(locations.history, userKey);
+}
+function projectTempRoot(locations, userKey) {
+  return locations.perUserRoo
+    ? resolveInside(userContainer(locations, userKey), '.tmp')
+    : locations.temp;
+}
+
+async function copyLegacyTree(source, destination) {
+  const sourceStat = await fs.lstat(source).catch(error => error.code === 'ENOENT' ? null : Promise.reject(error));
+  if (!sourceStat || sourceStat.isSymbolicLink()) return false;
+  const destinationStat = await fs.lstat(destination).catch(error => error.code === 'ENOENT' ? null : Promise.reject(error));
+  if (destinationStat) return false; // Never overwrite data already present in the new roo container.
+  if (sourceStat.isDirectory()) {
+    await ensureRealDirectory(destination, 0o700);
+    for (const entry of await fs.readdir(source, { withFileTypes: true })) {
+      if (entry.isSymbolicLink()) continue;
+      await copyLegacyTree(path.join(source, entry.name), path.join(destination, entry.name));
+    }
+    return true;
+  }
+  if (!sourceStat.isFile()) return false;
+  await ensureRealDirectory(path.dirname(destination), 0o700);
+  await fs.copyFile(source, destination, 1).catch(error => {
+    if (error.code !== 'EEXIST') throw error;
+  });
+  await fs.chmod(destination, 0o600).catch(() => {});
+  return true;
+}
+
+async function migrateLegacyProjectContainer(locations, userKey) {
+  if (!locations.perUserRoo || !locations.legacyRoot || path.resolve(locations.legacyRoot) === path.resolve(locations.root)) return;
+  const container = userContainer(locations, userKey);
+  await ensureRealDirectory(container, 0o700);
+  const marker = resolveInside(container, '.legacy-project-library-migrated');
+  if (await fs.stat(marker).catch(() => null)) return;
+  const oldKey = userKey.slice(0, 32);
+  const legacy = locations.legacyRoot;
+  await copyLegacyTree(path.join(legacy, oldKey), userDirectory(locations, userKey));
+  await copyLegacyTree(path.join(legacy, '.control', 'projects', oldKey), metadataDirectory(locations, userKey));
+  const oldActive = path.join(legacy, '.control', 'active');
+  const newActive = activeDirectory(locations, userKey);
+  for (const entry of await fs.readdir(oldActive, { withFileTypes: true }).catch(() => [])) {
+    if (!entry.isFile() || entry.isSymbolicLink() || !entry.name.startsWith(`${oldKey}-`)) continue;
+    await copyLegacyTree(path.join(oldActive, entry.name), path.join(newActive, entry.name.slice(oldKey.length + 1)));
+  }
+  await copyLegacyTree(
+    path.join(legacy, '.control', 'preferences', `${oldKey}.json`),
+    path.join(preferenceDirectory(locations, userKey), 'preferences.json')
+  );
+  await copyLegacyTree(path.join(legacy, '.history', oldKey), projectHistoryRoot(locations, userKey));
+  await fs.writeFile(marker, `${JSON.stringify({ version: 1, migratedAt: new Date().toISOString(), from: legacy })}\n`, { mode: 0o600, flag: 'wx' }).catch(error => {
+    if (error.code !== 'EEXIST') throw error;
+  });
 }
 
 function resolveInside(parent, ...parts) {
@@ -146,21 +246,15 @@ function resolveInside(parent, ...parts) {
   return resolved;
 }
 
-function userDirectory(locations, userKey) {
-  return resolveInside(locations.root, userKey);
-}
-function metadataDirectory(locations, userKey) {
-  return resolveInside(locations.projectsMeta, userKey);
-}
 function metadataPath(locations, userKey, projectId) {
   if (!/^[a-f0-9-]{36}$/i.test(String(projectId))) throw new Error('ID proyek tidak valid.');
   return resolveInside(metadataDirectory(locations, userKey), `${projectId}.json`);
 }
 function activePath(locations, userKey, chatId) {
-  return resolveInside(locations.active, `${userKey}-${sha(chatId, 20)}.json`);
+  return resolveInside(activeDirectory(locations, userKey), locations.perUserRoo ? `${sha(chatId, 20)}.json` : `${userKey}-${sha(chatId, 20)}.json`);
 }
 function preferencePath(locations, userKey) {
-  return resolveInside(locations.preferences, `${userKey}.json`);
+  return resolveInside(preferenceDirectory(locations, userKey), locations.perUserRoo ? 'preferences.json' : `${userKey}.json`);
 }
 
 async function atomicJson(file, value) {
@@ -414,6 +508,7 @@ async function cleanupUserDirectory(directory, activeSlug) {
 export async function listUserProjects({ ownerId }) {
   const userKey = projectUserKey(ownerId);
   const locations = await ensureLibrary();
+  await migrateLegacyProjectContainer(locations, userKey);
   const rows = await listUserMetadata(locations, userKey);
   return rows.map(item => ({
     id: item.projectId, slug: item.slug, name: item.name, summary: item.summary,
@@ -425,6 +520,7 @@ export async function listUserProjects({ ownerId }) {
 export async function getWebsiteProject({ ownerId, projectId, slug, includeFiles = true }) {
   const userKey = projectUserKey(ownerId);
   const locations = await ensureLibrary();
+  await migrateLegacyProjectContainer(locations, userKey);
   let metadata = null;
   if (projectId && /^[a-f0-9-]{36}$/i.test(String(projectId))) metadata = await getMeta(locations, userKey, projectId);
   else if (slug || projectId) {
@@ -443,6 +539,7 @@ export async function getWebsiteProject({ ownerId, projectId, slug, includeFiles
 export async function getActiveWebsiteProject({ ownerId, chatId = '', includeFiles = true }) {
   const userKey = projectUserKey(ownerId);
   const locations = await ensureLibrary();
+  await migrateLegacyProjectContainer(locations, userKey);
   const active = await readJson(activePath(locations, userKey, chatId));
   if (!active?.projectId) return null;
   const metadata = await getMeta(locations, userKey, active.projectId);
@@ -458,6 +555,7 @@ export async function getActiveWebsiteProject({ ownerId, chatId = '', includeFil
 export async function setActiveWebsiteProject({ ownerId, chatId = '', projectId }) {
   const userKey = projectUserKey(ownerId);
   const locations = await ensureLibrary();
+  await migrateLegacyProjectContainer(locations, userKey);
   const metadata = await getMeta(locations, userKey, projectId);
   if (!metadata) throw new Error('Proyek tidak ditemukan pada library pengguna ini.');
   await atomicJson(activePath(locations, userKey, chatId), { projectId, updatedAt: new Date().toISOString() });
@@ -467,6 +565,7 @@ export async function setActiveWebsiteProject({ ownerId, chatId = '', projectId 
 export async function getProjectExportPreference({ ownerId }) {
   const userKey = projectUserKey(ownerId);
   const locations = await ensureLibrary();
+  await migrateLegacyProjectContainer(locations, userKey);
   const value = await readJson(preferencePath(locations, userKey));
   return ['ask', 'always', 'off'].includes(value?.exportMode) ? value.exportMode : 'ask';
 }
@@ -475,6 +574,7 @@ export async function setProjectExportPreference({ ownerId, mode }) {
   if (!['ask', 'always', 'off'].includes(mode)) throw new Error('Mode ekspor harus ask, always, atau off.');
   const userKey = projectUserKey(ownerId);
   const locations = await ensureLibrary();
+  await migrateLegacyProjectContainer(locations, userKey);
   const file = preferencePath(locations, userKey);
   const previous = await readJson(file) || {};
   await atomicJson(file, { ...previous, exportMode: mode, updatedAt: new Date().toISOString() });
@@ -512,6 +612,7 @@ async function calculateUserStorageBytes(projectDirectory, historyDirectory) {
 export async function saveWebsiteProject({ ownerId, chatId = '', projectId = null, title, summary = '', files, projectMemory = {}, task = '' }) {
   const userKey = projectUserKey(ownerId);
   const locations = await ensureLibrary();
+  await migrateLegacyProjectContainer(locations, userKey);
   const normalized = normalizeFiles(files);
   const taskText = cleanText(task, 1000);
   // Serialize all writes to one user's library, not merely one project, so quota
@@ -577,7 +678,7 @@ export async function saveWebsiteProject({ ownerId, chatId = '', projectId = nul
       if (existing) {
         await cleanupUserDirectory(userDir, slug);
         const oldProjectPath = resolveInside(userDir, existing.slug);
-        const historyDirectory = resolveInside(locations.history, userKey, projectIdValue);
+        const historyDirectory = resolveInside(projectHistoryRoot(locations, userKey), projectIdValue);
         await ensureRealDirectory(historyDirectory, 0o700);
         const snapshotName = `v${String(existing.version).padStart(4, '0')}.zip`;
         const snapshotPath = path.join(historyDirectory, snapshotName);
@@ -613,14 +714,14 @@ export async function saveWebsiteProject({ ownerId, chatId = '', projectId = nul
       await fs.rename(stage, projectPath);
       repositoryInstalled = true;
       await fs.chmod(projectPath, 0o700).catch(() => {});
-      const actualUsage = await calculateUserStorageBytes(userDir, resolveInside(locations.history, userKey));
+      const actualUsage = await calculateUserStorageBytes(userDir, projectHistoryRoot(locations, userKey));
       if (actualUsage > MAX_USER_STORAGE_BYTES) throw new Error(`Kuota penyimpanan aktual Project Library terlampaui (${Math.ceil(actualUsage / 1024 / 1024)} MB dari ${Math.round(MAX_USER_STORAGE_BYTES / 1024 / 1024)} MB). Kurangi aset atau versi lama sebelum melanjutkan.`);
       const finalMeta = metadataPath(locations, userKey, projectIdValue);
       await atomicJson(finalMeta, metadata);
       metadataSaved = true;
       if (metadata.snapshots.length > MAX_SNAPSHOTS) {
         try {
-          metadata.snapshots = await pruneSnapshots(resolveInside(locations.history, userKey, projectIdValue), metadata.snapshots);
+          metadata.snapshots = await pruneSnapshots(resolveInside(projectHistoryRoot(locations, userKey), projectIdValue), metadata.snapshots);
           await atomicJson(finalMeta, metadata);
         } catch (error) {
           logger.warn({ projectId: projectIdValue, code: error.code }, 'Project history pruning deferred');
@@ -649,6 +750,7 @@ export async function saveWebsiteProject({ ownerId, chatId = '', projectId = nul
 export async function getProjectHistory({ ownerId, projectId }) {
   const userKey = projectUserKey(ownerId);
   const locations = await ensureLibrary();
+  await migrateLegacyProjectContainer(locations, userKey);
   const metadata = await getMeta(locations, userKey, projectId);
   if (!metadata) throw new Error('Repository tidak ditemukan atau bukan milik pengguna ini.');
   return [...(metadata.snapshots || [])].map(item => ({ version: item.version, createdAt: item.createdAt }));
@@ -657,6 +759,7 @@ export async function getProjectHistory({ ownerId, projectId }) {
 export async function createProjectArchive({ ownerId, projectId }) {
   const userKey = projectUserKey(ownerId);
   const locations = await ensureLibrary();
+  await migrateLegacyProjectContainer(locations, userKey);
   // Keep an export pinned to one committed repository version while an update
   // is staged and atomically installed for the same user.
   return withLock(`${userKey}:library`, async () => {
@@ -664,7 +767,9 @@ export async function createProjectArchive({ ownerId, projectId }) {
     if (!metadata) throw new Error('Repository tidak ditemukan atau bukan milik pengguna ini.');
     const projectPath = resolveInside(userDirectory(locations, userKey), metadata.slug);
     const archiveName = `${metadata.slug}-v${metadata.version}.zip`;
-    const archivePath = resolveInside(locations.temp, `${crypto.randomUUID()}-${archiveName}`);
+    const tempRoot = projectTempRoot(locations, userKey);
+    await ensureRealDirectory(tempRoot, 0o700);
+    const archivePath = resolveInside(tempRoot, `${crypto.randomUUID()}-${archiveName}`);
     try {
       const result = await archiveTrackedFiles(projectPath, metadata, archivePath);
       return { path: archivePath, fileName: archiveName, bytes: result.bytes, files: result.files, project: { id: metadata.projectId, name: metadata.name, slug: metadata.slug, version: metadata.version } };
@@ -678,7 +783,11 @@ export async function createProjectArchive({ ownerId, projectId }) {
 export async function removeProjectArchive(archivePath) {
   const locations = await ensureLibrary();
   const resolved = path.resolve(archivePath);
-  if (resolved === locations.temp || !resolved.startsWith(`${locations.temp}${path.sep}`) || !resolved.endsWith('.zip')) return false;
+  if (!resolved.endsWith('.zip')) return false;
+  if (locations.perUserRoo) {
+    const relative = path.relative(locations.root, resolved).split(path.sep);
+    if (relative.length !== 3 || !/^[a-f0-9]{64}$/.test(relative[0]) || relative[1] !== '.tmp') return false;
+  } else if (resolved === locations.temp || !resolved.startsWith(`${locations.temp}${path.sep}`)) return false;
   await fs.rm(resolved, { force: true });
   return true;
 }
@@ -686,12 +795,13 @@ export async function removeProjectArchive(archivePath) {
 export async function getProjectLibraryStatus({ ownerId }) {
   const userKey = projectUserKey(ownerId);
   const locations = await ensureLibrary();
+  await migrateLegacyProjectContainer(locations, userKey);
   const rows = await listUserMetadata(locations, userKey);
   // Match the quota's real accounting: current repositories, local Git objects,
   // and retained snapshots. Source-only totals underreported actual disk use.
   const storageBytes = await calculateUserStorageBytes(
     userDirectory(locations, userKey),
-    resolveInside(locations.history, userKey)
+    projectHistoryRoot(locations, userKey)
   );
   return {
     workspace: 'private-per-user',

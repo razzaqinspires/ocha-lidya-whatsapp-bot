@@ -1,7 +1,13 @@
 const WIDTH = 1080;
 const HEIGHT = 1350;
 const escapeXml = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' })[char]);
-const number = value => (Number(value) || 0).toLocaleString('id-ID');
+const number = value => {
+  const text = String(value ?? '0');
+  if (/^\d+$/.test(text)) {
+    try { return new Intl.NumberFormat('id-ID').format(BigInt(text)); } catch {}
+  }
+  return (Number(value) || 0).toLocaleString('id-ID');
+};
 
 export function buildProfileSvg(profile, identity = {}) {
   const name = escapeXml(profile.displayName || 'Pengguna');
@@ -17,7 +23,6 @@ export function buildProfileSvg(profile, identity = {}) {
   const remaining = Number(profile.xpRemaining) || 0;
   const streak = Number(profile.currentStreak) || 0;
   const longestStreak = Number(profile.longestStreak) || 0;
-  const dailyXpRemaining = Number(profile.dailyXpRemaining ?? 100) || 0;
   const barWidth = Math.round(900 * percent / 100);
   const achievements = (Array.isArray(profile.achievements) ? profile.achievements : []).slice(0, 4);
   const badgeText = achievements.length ? achievements.join('   ·   ') : 'NEXT MILESTONE AWAITS';
@@ -62,7 +67,7 @@ export function buildProfileSvg(profile, identity = {}) {
   <text x="602" y="1132" fill="#ffffff" font-family="Arial,sans-serif" font-size="43" font-weight="700">${number(longestStreak)} DAYS</text>
   <text x="80" y="1212" fill="#e8cc92" font-family="Arial,sans-serif" font-size="20" letter-spacing="2">ACHIEVEMENTS</text>
   <text x="80" y="1254" fill="#d6deea" font-family="Arial,sans-serif" font-size="17">${safeBadge.slice(0, 80)}</text>
-  <text x="80" y="1294" fill="#92a0b2" font-family="Arial,sans-serif" font-size="17">DAILY XP AVAILABLE  ${number(dailyXpRemaining)}   ·   ${org}</text>
+  <text x="80" y="1294" fill="#92a0b2" font-family="Arial,sans-serif" font-size="17">CONTINUOUS PROGRESSION   ·   ${org}</text>
   </svg>`;
 }
 

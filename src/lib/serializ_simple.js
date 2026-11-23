@@ -16,7 +16,7 @@ import helpers from './helpers.js';
 import freply from './freply.js';
 import { buildContactMessage } from './contact-card.js';
 import { registerReplySession } from '../core/reply-sessions.js';
-import { extractMessageText } from './message-text.js';
+import { extractMessageText, parseNativeFlowResponse } from './message-text.js';
 import { normalizeNativeFlowButton } from './native-flow-registry.js';
 let callMusicModule = null;
 try {
@@ -445,6 +445,55 @@ function serialize(sock, m) {
 
   m.pushName = m.pushName || 'Users';
 
+  // Keep all WhatsApp addressing variants available to plugins and diagnostics.
+  // These values are copied from Baileys metadata; a LID is never guessed into a PN.
+  m.remoteJid = m.key.remoteJid || '';
+  m.remoteJidAlt = m.key.remoteJidAlt || '';
+  m.remoteJidPn = m.key.remoteJidPn || '';
+  m.participant = m.key.participant || '';
+  m.participantAlt = m.key.participantAlt || '';
+  m.participantPn = m.key.participantPn || '';
+  m.senderPn = m.key.senderPn || '';
+  m.addressingMode = m.key.addressingMode || '';
+  const directChatPn = [m.remoteJidPn, m.remoteJidAlt].find(value => typeof value === 'string' && value.endsWith('@s.whatsapp.net')) || '';
+  const directSenderAlt = !m.isGroup ? m.remoteJidAlt : m.participantAlt;
+  const directSenderPn = !m.isGroup ? (m.senderPn || directChatPn) : (m.participantPn || m.senderPn);
+  const botRawJid = sock.user?.id || sock.authState?.creds?.me?.id || '';
+  const botLid = sock.user?.lid || sock.authState?.creds?.me?.lid || '';
+  m.identity = {
+    chat: {
+      jid: m.remoteJid,
+      jidAlt: m.remoteJidAlt,
+      jidPn: m.remoteJidPn || directChatPn,
+      normalizedJid: m.chat,
+      addressingMode: m.addressingMode,
+      isGroup: m.isGroup,
+      isBroadcast: m.remoteJid.endsWith('@broadcast')
+    },
+    sender: {
+      jid: m.participant || m.remoteJid,
+      jidAlt: directSenderAlt || '',
+      jidPn: directSenderPn || '',
+      normalizedJid: m.sender,
+      pushName: m.pushName,
+      isFromMe: m.fromMe,
+      isGroupParticipant: m.isGroup && Boolean(m.participant)
+    },
+    bot: {
+      jid: botRawJid,
+      normalizedJid: typeof sock.decodeJid === 'function' ? sock.decodeJid(botRawJid) : botRawJid,
+      lid: botLid
+    },
+    message: {
+      id: m.id,
+      timestamp: m.messageTimestamp || null,
+      type: '',
+      fromMe: Boolean(m.fromMe),
+      isGroup: Boolean(m.isGroup),
+      addressingMode: m.addressingMode || ''
+    }
+  };
+
   // Preserve server-generated stub metadata even when a system event does not
   // carry a normal proto.Message content object.
   m.stubType = Number.isInteger(m.messageStubType) ? m.messageStubType : null;
@@ -468,11 +517,25 @@ function serialize(sock, m) {
 
     m.msg = m.message[m.type] || m.message;
     m.body = extractMessageText(m.message, m.type);
-    // MessageType parsing continues below; stub metadata was normalized above.
-    if (m.type === 'interactiveResponseMessage') m.selectedButtonId = m.body;
-    if (m.type === 'templateButtonReplyMessage') m.selectedButtonId = m.body;
-    if (m.type === 'buttonsResponseMessage') m.selectedButtonId = m.body;
-    if (m.type === 'listResponseMessage') m.selectedButtonId = m.body;
+    m.identity.message.type = m.type;
+
+    // Native Flow replies contain their action result in paramsJson. Preserve the
+    // parsed object and expose normalized IDs so the ordinary command dispatcher
+    // can execute command-like quick replies and list-row selections.
+    if (m.type === 'interactiveResponseMessage') {
+      m.interactiveResponse = parseNativeFlowResponse(m.message);
+      m.nativeFlowResponse = m.interactiveResponse;
+      m.buttonName = m.interactiveResponse?.name || '';
+      m.buttonId = m.interactiveResponse?.selectedId || m.body;
+      m.selectedRowId = m.interactiveResponse?.selectedRowId || '';
+      m.selectedButtonId = m.buttonId;
+      if (m.buttonId) m.body = m.buttonId;
+    } else if (m.type === 'templateButtonReplyMessage' || m.type === 'buttonsResponseMessage' || m.type === 'listResponseMessage') {
+      m.buttonId = m.body;
+      m.selectedButtonId = m.body;
+      m.selectedRowId = m.type === 'listResponseMessage' ? (m.msg?.singleSelectReply?.selectedRowId || '') : '';
+      m.buttonName = m.type;
+    }
 
     const contextInfo = m.msg?.contextInfo;
     m.mentionedJid = contextInfo?.mentionedJid || [];

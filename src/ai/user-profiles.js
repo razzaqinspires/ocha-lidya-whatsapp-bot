@@ -1,14 +1,24 @@
-import { listRecords, putRecord } from '../core/repository.js';
+import crypto from 'node:crypto';
+import { getRecord } from '../core/repository.js';
 import { getConfig } from '../core/config.js';
+import { loadUserVaultSnapshot, saveUserVaultSnapshot } from './user-vault.js';
 
 const NAMESPACE = 'ai.user.profile';
 const profiles = new Map();
-let initPromise;
-const MAX_PROFILES = 5000;
-const MAX_RECENT_IDS = 80;
-const DAILY_XP_CAP = 100;
-const BASE_XP = 5;
+const PROFILE_CACHE_SIZE = 500;
+const XP_COOLDOWN_MS = 60_000;
 const FIRST_DAILY_BONUS = 10;
+const MAX_SAFE_XP = BigInt(Number.MAX_SAFE_INTEGER);
+const profileLocks = new Map();
+
+async function withProfileLock(key, task) {
+  const previous = profileLocks.get(key) || Promise.resolve();
+  const current = previous.catch(() => {}).then(task);
+  const marker = current.catch(() => {});
+  profileLocks.set(key, marker);
+  try { return await current; }
+  finally { if (profileLocks.get(key) === marker) profileLocks.delete(key); }
+}
 
 function cleanName(value) {
   const text = String(value || '').replace(/[\u0000-\u001f]/g, '').trim().slice(0, 48);
@@ -19,35 +29,130 @@ function todayKey(now = new Date()) {
   const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
   return `${values.year}-${values.month}-${values.day}`;
 }
-export function xpRequiredForLevel(level) {
-  const n = Math.max(1, Math.floor(Number(level) || 1));
-  return 50 * n * (n - 1);
+function asBigInt(value) {
+  try {
+    const text = String(value ?? '0').trim();
+    if (!/^\d+$/.test(text)) return 0n;
+    return BigInt(text);
+  } catch { return 0n; }
 }
+function exposeBigInt(value) {
+  return value <= MAX_SAFE_XP ? Number(value) : value.toString();
+}
+function integerSqrt(value) {
+  if (value < 2n) return value;
+  let current = value;
+  let next = (current + 1n) >> 1n;
+  while (next < current) {
+    current = next;
+    next = (current + value / current) >> 1n;
+  }
+  return current;
+}
+function xpRequiredBig(level) {
+  const n = asBigInt(level) < 1n ? 1n : asBigInt(level);
+  return 50n * n * (n - 1n);
+}
+export function xpRequiredForLevel(level) { return exposeBigInt(xpRequiredBig(level)); }
 export function levelFromXp(xp) {
-  const value = Math.max(0, Number(xp) || 0);
-  let level = 1;
-  while (level < 100 && value >= xpRequiredForLevel(level + 1)) level++;
-  return level;
+  const value = asBigInt(xp);
+  const root = integerSqrt(1n + 4n * (value / 50n));
+  return exposeBigInt((1n + root) / 2n) || 1;
 }
 export function rankForLevel(level) {
-  if (level >= 75) return 'Mythic';
-  if (level >= 50) return 'Diamond';
-  if (level >= 35) return 'Platinum';
-  if (level >= 20) return 'Gold';
-  if (level >= 10) return 'Silver';
-  if (level >= 5) return 'Bronze';
+  const n = asBigInt(level);
+  if (n >= 1000000n) {
+    let threshold = 1000000n;
+    let tier = 2n;
+    while (n >= threshold * 10n) { threshold *= 10n; tier++; }
+    return `Singularity ${tier.toString()}`;
+  }
+  if (n >= 100000n) return 'Singularity';
+  if (n >= 50000n) return 'Nexus';
+  if (n >= 25000n) return 'Transcendent';
+  if (n >= 10000n) return 'Apex';
+  if (n >= 5000n) return 'Cosmic';
+  if (n >= 2500n) return 'Nova';
+  if (n >= 1500n) return 'Paragon';
+  if (n >= 1000n) return 'Eternal';
+  if (n >= 500n) return 'Sovereign';
+  if (n >= 250n) return 'Celestial';
+  if (n >= 150n) return 'Astral';
+  if (n >= 75n) return 'Mythic';
+  if (n >= 50n) return 'Diamond';
+  if (n >= 35n) return 'Platinum';
+  if (n >= 20n) return 'Gold';
+  if (n >= 10n) return 'Silver';
+  if (n >= 5n) return 'Bronze';
   return 'Iron';
 }
-function relationshipFor(profile, isOwner = false) {
+function relationshipTrust(profile, referenceNow = new Date()) {
+  const interactions = Number(profile.totalInteractions) || 0;
+  const meaningful = Number(profile.meaningfulInteractions) || 0;
+  const activeDays = Number(profile.activeDays) || 0;
+  const first = Date.parse(profile.createdAt || '') || referenceNow.getTime();
+  const tenureDays = Math.max(0, Math.floor((referenceNow.getTime() - first) / 86_400_000));
+  const longestStreak = Number(profile.longestStreak) || 0;
+  const score = Math.min(25, interactions * 0.5)
+    + Math.min(30, meaningful * 1.2)
+    + Math.min(25, activeDays * 2.5)
+    + Math.min(10, tenureDays * 0.5)
+    + Math.min(10, longestStreak * 1);
+  return Math.max(0, Math.min(100, Math.round(score * 10) / 10));
+}
+function relationshipFor(profile, isOwner = false, referenceNow = new Date()) {
   if (isOwner) return 'Owner & Creator';
   const messages = Number(profile.totalInteractions) || 0;
+  const meaningful = Number(profile.meaningfulInteractions) || 0;
   const days = Number(profile.activeDays) || 0;
-  if (messages >= 150 && days >= 21) return 'Sahabat Digital';
-  if (messages >= 60 && days >= 7) return 'Teman Akrab';
-  if (messages >= 20 && days >= 2) return 'Teman Ngobrol';
-  if (messages >= 5) return 'Kenalan';
+  const trust = relationshipTrust(profile, referenceNow);
+  const tenureDays = Math.max(0, Math.floor((referenceNow.getTime() - (Date.parse(profile.createdAt || '') || referenceNow.getTime())) / 86_400_000));
+  if (messages >= 250 && meaningful >= 100 && days >= 60 && tenureDays >= 90 && trust >= 82) return 'Mitra Tepercaya';
+  if (messages >= 120 && meaningful >= 50 && days >= 30 && tenureDays >= 30 && trust >= 65) return 'Sahabat Digital';
+  if (messages >= 50 && meaningful >= 20 && days >= 10 && trust >= 45) return 'Teman Akrab';
+  if (messages >= 15 && meaningful >= 5 && days >= 3 && trust >= 25) return 'Teman Ngobrol';
+  if (messages >= 4 && days >= 2 && trust >= 12) return 'Kenalan';
   return 'Pengunjung';
 }
+function familiarityLevel(profile, isOwner = false, referenceNow = new Date()) {
+  if (isOwner) return 7;
+  const role = relationshipFor(profile, false, referenceNow);
+  return ({ Pengunjung: 0, Kenalan: 1, 'Teman Ngobrol': 2, 'Teman Akrab': 3, 'Sahabat Digital': 4, 'Mitra Tepercaya': 5 })[role] || 0;
+}
+
+const RELATIONSHIP_STEPS = Object.freeze([
+  { role: 'Kenalan', interactions: 4, meaningful: 0, activeDays: 2, trust: 12, tenureDays: 0 },
+  { role: 'Teman Ngobrol', interactions: 15, meaningful: 5, activeDays: 3, trust: 25, tenureDays: 0 },
+  { role: 'Teman Akrab', interactions: 50, meaningful: 20, activeDays: 10, trust: 45, tenureDays: 0 },
+  { role: 'Sahabat Digital', interactions: 120, meaningful: 50, activeDays: 30, trust: 65, tenureDays: 30 },
+  { role: 'Mitra Tepercaya', interactions: 250, meaningful: 100, activeDays: 60, trust: 82, tenureDays: 90 }
+]);
+function relationshipProgress(profile, isOwner = false, referenceNow = new Date()) {
+  const current = relationshipFor(profile, isOwner, referenceNow);
+  if (isOwner) return { currentRole: current, nextRole: null, progressPercent: 100, note: 'Owner ditentukan oleh verifikasi identitas, bukan XP.' };
+  const currentIndex = current === 'Pengunjung' ? -1 : RELATIONSHIP_STEPS.findIndex(step => step.role === current);
+  const next = RELATIONSHIP_STEPS[currentIndex + 1];
+  if (!next) return { currentRole: current, nextRole: null, progressPercent: 100, note: 'Tingkat relasi tertinggi telah tercapai.' };
+  const firstAt = Date.parse(profile.createdAt || '') || referenceNow.getTime();
+  const tenureDays = Math.max(0, Math.floor((referenceNow.getTime() - firstAt) / 86_400_000));
+  const values = [
+    Number(profile.totalInteractions) || 0,
+    Number(profile.meaningfulInteractions) || 0,
+    Number(profile.activeDays) || 0,
+    relationshipTrust(profile, referenceNow),
+    tenureDays
+  ];
+  const targets = [next.interactions, next.meaningful, next.activeDays, next.trust, next.tenureDays];
+  const ratios = targets.map((target, index) => target > 0 ? Math.min(1, values[index] / target) : 1);
+  const progressPercent = Math.max(0, Math.min(99, Math.floor(Math.min(...ratios) * 100)));
+  return { currentRole: current, nextRole: next.role, progressPercent, requirements: next };
+}
+function contentFingerprint(text) {
+  const normalized = String(text || '').toLocaleLowerCase('id-ID').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+  if (!normalized) return '';
+  return crypto.createHash('sha256').update(normalized).digest('hex');
+}
+
 function dominantStyle(counts = {}) {
   const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
   return entries[0]?.[1] ? entries[0][0] : 'natural';
@@ -63,16 +168,18 @@ function classifyStyle(text) {
 function makeDefault(userId, displayName = 'Pengguna') {
   return {
     userId, displayName: cleanName(displayName), xp: 0, level: 1, rank: 'Iron', role: 'Pengunjung',
-    totalInteractions: 0, activeDays: 0, lastActiveDate: null, dailyXpDate: null, dailyXpEarned: 0,
-    styleCounts: {}, greetingCount: 0, currentStreak: 0, longestStreak: 0,
-    recentMessageIds: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString()
+    totalInteractions: 0, meaningfulInteractions: 0, activeDays: 0, lastActiveDate: null, dailyXpDate: null, dailyXpEarned: 0,
+    lastXpAt: null, styleCounts: {}, greetingCount: 0, currentStreak: 0, longestStreak: 0,
+    recentMessageIds: [], recentContentHashes: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString()
   };
 }
 function normalize(profile, userId) {
   const base = makeDefault(userId, profile?.displayName);
   const next = { ...base, ...(profile || {}), userId };
-  next.xp = Math.max(0, Number(next.xp) || 0);
-  next.level = levelFromXp(next.xp);
+  const xpExact = asBigInt(next.xpExact ?? next.xp);
+  next.xpExact = xpExact.toString();
+  next.xp = exposeBigInt(xpExact);
+  next.level = levelFromXp(xpExact);
   next.rank = rankForLevel(next.level);
   next.styleCounts = next.styleCounts && typeof next.styleCounts === 'object' ? next.styleCounts : {};
   next.currentStreak = Math.max(0, Number(next.currentStreak) || (next.lastActiveDate ? 1 : 0));
@@ -80,29 +187,52 @@ function normalize(profile, userId) {
   next.greetingCount = Math.max(0, Number(next.greetingCount) || 0);
   next.activeDays = Math.max(0, Number(next.activeDays) || 0);
   next.totalInteractions = Math.max(0, Number(next.totalInteractions) || 0);
-  next.recentMessageIds = Array.isArray(next.recentMessageIds) ? next.recentMessageIds.slice(-MAX_RECENT_IDS) : [];
+  next.meaningfulInteractions = Math.max(0, Number(next.meaningfulInteractions) || 0);
+  next.dailyXpEarned = Math.max(0, Number(next.dailyXpEarned) || 0);
+  // Persistent identity ledger: keep all known IDs/fingerprints. The LRU profile
+  // cache is bounded separately and never limits durable profile history.
+  next.recentMessageIds = Array.isArray(next.recentMessageIds) ? next.recentMessageIds : [];
+  next.recentContentHashes = Array.isArray(next.recentContentHashes) ? next.recentContentHashes : [];
   return next;
 }
 
-export async function initializeUserProfiles() {
-  if (initPromise) return initPromise;
-  initPromise = (async () => {
-    const stored = await listRecords(NAMESPACE);
-    for (const [userId, value] of Object.entries(stored).slice(-MAX_PROFILES)) profiles.set(userId, normalize(value, userId));
-    return { profiles: profiles.size };
-  })().catch(error => { initPromise = undefined; throw error; });
-  return initPromise;
+function cacheProfile(userId, profile) {
+  profiles.delete(userId);
+  profiles.set(userId, profile);
+  while (profiles.size > PROFILE_CACHE_SIZE) profiles.delete(profiles.keys().next().value);
 }
-async function ensureReady() { if (!initPromise) await initializeUserProfiles(); else await initPromise; }
+
+async function loadProfile(userId, displayName) {
+  if (profiles.has(userId)) {
+    const cached = profiles.get(userId);
+    profiles.delete(userId);
+    profiles.set(userId, cached);
+    return normalize(cached, userId);
+  }
+  let stored = await loadUserVaultSnapshot(userId, 'profile');
+  if (!stored) {
+    // Compatibility bridge for pre-roo profile records. New writes are encrypted.
+    stored = await getRecord(NAMESPACE, userId).catch(() => null);
+    if (stored) await saveUserVaultSnapshot(userId, 'profile', normalize(stored, userId));
+  }
+  const profile = normalize(stored || makeDefault(userId, displayName), userId);
+  cacheProfile(userId, profile);
+  return profile;
+}
+
+export async function initializeUserProfiles() {
+  // Per-user profiles are loaded lazily from each user's encrypted roo/ container.
+  return { profiles: profiles.size, storage: 'encrypted-per-user-vault' };
+}
 
 export async function getUserProfile(userId, { displayName, isOwner = false } = {}) {
   if (!userId) throw new TypeError('userId wajib diisi');
-  await ensureReady();
-  const profile = normalize(profiles.get(userId) || makeDefault(userId, displayName), userId);
-  const resolvedName = isOwner ? String(getConfig().bot.ownerName || getConfig().bot.creatorName || 'Arifi Razzaq') : cleanName(displayName || profile.displayName);
+  const profile = await loadProfile(userId, displayName);
+  const config = getConfig();
+  const resolvedName = isOwner ? String(config.bot.ownerName || config.bot.creatorName || 'Arifi Razzaq') : cleanName(displayName || profile.displayName);
   if (resolvedName && resolvedName !== profile.displayName) profile.displayName = resolvedName;
-  profile.role = relationshipFor(profile, isOwner);
-  profiles.set(userId, profile);
+  profile.role = relationshipFor(profile, isOwner, new Date());
+  cacheProfile(userId, profile);
   return structuredClone(profileView(profile, isOwner));
 }
 
@@ -120,13 +250,22 @@ function profileAchievements(profile) {
   if (profile.level >= 10) achievements.push('SILVER TIER');
   if (profile.level >= 20) achievements.push('GOLD TIER');
   if (profile.level >= 50) achievements.push('DIAMOND TIER');
-  return achievements.slice(-6);
+  if (profile.level >= 150) achievements.push('ASTRAL TIER');
+  if (profile.level >= 500) achievements.push('SOVEREIGN TIER');
+  if (profile.level >= 1000) achievements.push('ETERNAL TIER');
+  if (profile.level >= 2500) achievements.push('NOVA TIER');
+  if (profile.level >= 5000) achievements.push('COSMIC TIER');
+  if (profile.level >= 10000) achievements.push('APEX TIER');
+  if (profile.level >= 25000) achievements.push('TRANSCENDENT TIER');
+  if (profile.level >= 100000) achievements.push('SINGULARITY TIER');
+  return achievements.slice(-8);
 }
 
 function profileView(profile, isOwner = false, referenceNow = new Date()) {
-  const level = levelFromXp(profile.xp);
-  const currentFloor = xpRequiredForLevel(level);
-  const nextFloor = xpRequiredForLevel(level + 1);
+  const xpValue = asBigInt(profile.xpExact ?? profile.xp);
+  const level = levelFromXp(xpValue);
+  const currentFloor = xpRequiredBig(level);
+  const nextFloor = xpRequiredBig(asBigInt(level) + 1n);
   const today = todayKey(referenceNow);
   const todayOrdinal = dayOrdinal(today);
   const lastActiveOrdinal = dayOrdinal(profile.lastActiveDate);
@@ -134,19 +273,21 @@ function profileView(profile, isOwner = false, referenceNow = new Date()) {
   const currentStreak = daysSinceActive <= 1 ? profile.currentStreak : 0;
   const view = {
     ...profile,
+    xp: exposeBigInt(xpValue),
+    xpExact: xpValue.toString(),
     level,
     rank: rankForLevel(level),
-    role: relationshipFor(profile, isOwner),
+    role: relationshipFor(profile, isOwner, referenceNow),
+    trustScore: relationshipTrust(profile, referenceNow),
+    familiarityLevel: familiarityLevel(profile, isOwner, referenceNow),
     interactionStyle: dominantStyle(profile.styleCounts),
     currentStreak,
-    xpIntoLevel: Math.max(0, profile.xp - currentFloor),
-    xpForNextLevel: Math.max(1, nextFloor - currentFloor),
-    xpRemaining: Math.max(0, nextFloor - profile.xp),
-    progressPercent: Math.min(100, Math.floor(((profile.xp - currentFloor) / Math.max(1, nextFloor - currentFloor)) * 100)),
-    dailyXpCap: DAILY_XP_CAP,
-    dailyXpRemaining: profile.dailyXpDate === today
-      ? Math.max(0, DAILY_XP_CAP - (Number(profile.dailyXpEarned) || 0))
-      : DAILY_XP_CAP
+    xpIntoLevel: exposeBigInt(xpValue > currentFloor ? xpValue - currentFloor : 0n),
+    xpForNextLevel: exposeBigInt(nextFloor - currentFloor),
+    xpRemaining: exposeBigInt(xpValue < nextFloor ? nextFloor - xpValue : 0n),
+    progressPercent: Math.min(100, Number(((xpValue > currentFloor ? xpValue - currentFloor : 0n) * 10000n) / (nextFloor > currentFloor ? nextFloor - currentFloor : 1n)) / 100),
+    xpSystem: 'arbitrary-precision-progression-no-level-or-daily-xp-cap-unique-meaningful-content-only',
+    relationshipProgress: relationshipProgress(profile, isOwner, referenceNow)
   };
   view.achievements = profileAchievements(view);
   return view;
@@ -158,13 +299,35 @@ function dayOrdinal(dateKey) {
   return Math.floor(Date.UTC(year, month - 1, day) / 86_400_000);
 }
 
-export async function recordUserInteraction({ userId, displayName, messageId, text = '', isOwner = false, now = new Date() }) {
+function xpForInteraction(profile, text, now, firstOnDay, meaningful = false) {
+  const timestamp = now.getTime();
+  const lastAward = Date.parse(profile.lastXpAt || '') || 0;
+  if (lastAward && timestamp - lastAward < XP_COOLDOWN_MS) return { xp: 0, reason: 'cooldown' };
+  const value = String(text || '').trim();
+  const greeting = /^(hai|haii+|halo+|hello+|hi|hey|assalamualaikum|assalamu'alaikum|pagi|siang|sore|malam)[!.\s]*$/i.test(value);
+  const firstDailyEligible = firstOnDay && (value.length >= 3 || greeting);
+  // XP is earned from unique meaningful contributions, plus one valid first
+  // contact per active day. Repeated low-signal text does not farm XP.
+  if (!meaningful && !firstDailyEligible) return { xp: 0, reason: 'duplicate-or-low-signal' };
+  let amount = 2;
+  if (meaningful) amount += 4;
+  if (value.length >= 120) amount += 2;
+  if (value.length >= 500) amount += 2;
+  if (/```|\b(api|database|arsitektur|analisis|debug|program|proyek|project|kode)\b/i.test(value)) amount += 2;
+  if (firstDailyEligible) amount += FIRST_DAILY_BONUS;
+  if (firstDailyEligible && profile.currentStreak >= 3) amount += 1;
+  if (firstDailyEligible && profile.currentStreak >= 7) amount += 2;
+  if (firstDailyEligible && profile.currentStreak >= 30) amount += 3;
+  return { xp: amount, reason: firstDailyEligible ? 'daily-first-contact' : 'unique-meaningful-interaction' };
+}
+
+async function recordUserInteractionUnlocked({ userId, displayName, messageId, text = '', isOwner = false, now = new Date() }) {
   if (!userId) return null;
-  await ensureReady();
-  const profile = normalize(profiles.get(userId) || makeDefault(userId, displayName), userId);
+  const profile = await loadProfile(userId, displayName);
   if (messageId && profile.recentMessageIds.includes(messageId)) return profileView(profile, isOwner, now);
+  const config = getConfig();
   profile.displayName = isOwner
-    ? String(getConfig().bot.ownerName || getConfig().bot.creatorName || 'Arifi Razzaq')
+    ? String(config.bot.ownerName || config.bot.creatorName || 'Arifi Razzaq')
     : cleanName(displayName || profile.displayName);
   const date = todayKey(now);
   const newDay = profile.lastActiveDate !== date;
@@ -181,31 +344,70 @@ export async function recordUserInteraction({ userId, displayName, messageId, te
   profile.totalInteractions++;
   const style = classifyStyle(text);
   profile.styleCounts[style] = (Number(profile.styleCounts[style]) || 0) + 1;
+  const tokens = new Set(String(text || '').toLocaleLowerCase('id-ID').match(/[\p{L}\p{N}]{3,}/gu) || []);
+  const fingerprint = contentFingerprint(text);
+  const meaningfulCandidate = String(text || '').trim().length >= 24 && tokens.size >= 4;
+  const meaningful = meaningfulCandidate && fingerprint && !profile.recentContentHashes.includes(fingerprint);
+  if (meaningful) {
+    profile.meaningfulInteractions++;
+    profile.recentContentHashes = [...profile.recentContentHashes, fingerprint];
+  }
   const greeting = /^(hai|haii+|halo+|hello+|hi|hey|assalamualaikum|assalamu'alaikum|pagi|siang|sore|malam)[!.\s]*$/i.test(String(text).trim());
   if (greeting) profile.greetingCount++;
   if (profile.dailyXpDate !== date) { profile.dailyXpDate = date; profile.dailyXpEarned = 0; }
-  const wanted = BASE_XP + (newDay ? FIRST_DAILY_BONUS : 0);
-  const earned = Math.min(wanted, Math.max(0, DAILY_XP_CAP - profile.dailyXpEarned));
-  profile.xp += earned;
-  profile.dailyXpEarned += earned;
-  if (messageId) profile.recentMessageIds = [...profile.recentMessageIds, messageId].slice(-MAX_RECENT_IDS);
-  profile.level = levelFromXp(profile.xp);
+  const award = xpForInteraction(profile, text, now, newDay, meaningful);
+  const xpValue = asBigInt(profile.xpExact ?? profile.xp) + BigInt(award.xp);
+  profile.xpExact = xpValue.toString();
+  profile.xp = exposeBigInt(xpValue);
+  profile.dailyXpEarned += award.xp;
+  if (award.xp > 0) profile.lastXpAt = now.toISOString();
+  if (messageId) profile.recentMessageIds = [...profile.recentMessageIds, messageId];
+  profile.level = levelFromXp(profile.xpExact);
   profile.rank = rankForLevel(profile.level);
-  profile.role = relationshipFor(profile, isOwner);
+  profile.role = relationshipFor(profile, isOwner, now);
   profile.updatedAt = now.toISOString();
-  profiles.set(userId, profile);
-  while (profiles.size > MAX_PROFILES) profiles.delete(profiles.keys().next().value);
-  await putRecord(NAMESPACE, userId, profile, { source: 'relationship-engine' });
-  return profileView(profile, isOwner, now);
+  cacheProfile(userId, profile);
+  await saveUserVaultSnapshot(userId, 'profile', profile);
+  return { ...profileView(profile, isOwner, now), lastXpAward: award.xp, lastXpReason: award.reason };
 }
 
-export function getRelationshipPrompt(profile, isOwner = false) {
-  if (!profile) return 'Gunakan gaya percakapan yang natural dan sopan.';
-  const style = profile.interactionStyle || 'natural';
-  const styleInstruction = ({ ringkas: 'Pengguna cenderung menyukai jawaban ringkas dan langsung.', detail: 'Pengguna cenderung menyukai penjelasan terperinci jika topiknya kompleks.', teknis: 'Pengguna sering membahas topik teknis; gunakan istilah teknis secara tepat.', santai: 'Pengguna nyaman dengan gaya santai namun tetap jelas.', natural: 'Gunakan gaya natural dan sesuaikan panjang jawaban dengan konteks.' })[style];
-  return `Konteks hubungan aplikasi (bukan klaim perasaan manusia): peran ${isOwner ? 'Owner & Creator' : profile.role}; level ${profile.level}; rank ${profile.rank}; interaksi tercatat ${profile.totalInteractions}; ${styleInstruction} Bangun kesinambungan dengan mengingat preferensi komunikasi agregat, jangan berpura-pura memiliki emosi manusia, jangan mengarang pengalaman pribadi, dan jangan menyebut angka XP kecuali ditanya.`;
+export async function recordUserInteraction(input) {
+  if (!input?.userId) return null;
+  return withProfileLock(String(input.userId), () => recordUserInteractionUnlocked(input));
+}
+
+export function getRelationshipPrompt(profile, isOwner = false, { privateChat = true } = {}) {
+  const familiarity = Number(profile?.familiarityLevel ?? familiarityLevel(profile || {}, isOwner));
+  const trust = Number(profile?.trustScore ?? relationshipTrust(profile || {}));
+  const style = profile?.interactionStyle || 'natural';
+  const styleInstruction = ({
+    ringkas: 'Pengguna cenderung menyukai jawaban ringkas dan langsung.',
+    detail: 'Pengguna cenderung menyukai penjelasan terperinci jika topiknya kompleks.',
+    teknis: 'Pengguna sering membahas topik teknis; gunakan istilah teknis secara tepat.',
+    santai: 'Pengguna nyaman dengan gaya santai namun tetap jelas.',
+    natural: 'Gunakan gaya natural dan sesuaikan panjang jawaban dengan konteks.'
+  })[style];
+  let relationalStyle;
+  if (isOwner && privateChat) {
+    relationalStyle = 'Relasi: owner dan pencipta terverifikasi, dalam chat pribadi. Gunakan persona Ocha yang hangat, lembut, penuh perhatian, dan romantis secara wajar kepada owner saja. Sapaan sayang boleh digunakan bila konteks percakapan mendukung, jangan berlebihan atau mengulang panggilan yang sama. Tunjukkan perhatian lewat respons yang spesifik dan mengingat konteks, bukan klaim bahwa kamu manusia atau benar-benar memiliki perasaan biologis. Jangan pernah memakai gaya romantis ini kepada pengguna lain.';
+  } else if (isOwner) {
+    relationalStyle = 'Relasi: owner dan pencipta terverifikasi, tetapi konteks ini grup/publik. Gunakan gaya profesional, hormat, dan tidak romantis atau intim.';
+  } else if (familiarity <= 0) {
+    relationalStyle = 'Relasi: pengunjung baru. Gunakan sikap reserved/cuek secara wajar: jawab seperlunya, sopan, tenang, tidak mengejar kedekatan, tidak memakai panggilan sayang, tidak pura-pura mengenal, dan tidak membuka informasi pribadi. Bila pengguna konsisten dan interaksinya bermakna, keakraban meningkat perlahan.';
+  } else if (familiarity === 1) {
+    relationalStyle = 'Relasi: kenalan. Tetap sopan dan agak menjaga jarak; boleh lebih santai bila pengguna memulai, tetapi hindari keintiman dan panggilan personal.';
+  } else if (familiarity === 2) {
+    relationalStyle = 'Relasi: teman ngobrol. Gunakan gaya ramah dan natural, ingat preferensi yang relevan, tetapi jangan menganggap pengguna sebagai orang dekat.';
+  } else if (familiarity === 3) {
+    relationalStyle = 'Relasi: teman akrab berdasarkan interaksi yang konsisten. Boleh lebih santai dan responsif, namun tetap jaga privasi dan batasan.';
+  } else if (familiarity === 4) {
+    relationalStyle = 'Relasi: sahabat digital berdasarkan riwayat interaksi yang konsisten. Gunakan gaya hangat, personal secukupnya, dan tetap profesional saat topik serius.';
+  } else {
+    relationalStyle = 'Relasi: mitra tepercaya berdasarkan riwayat interaksi yang panjang. Sesuaikan gaya dengan konteks, tetap jaga batas informasi dan jangan menyamakan progres gamifikasi dengan izin akses.';
+  }
+  return `IDENTITAS DAN HUBUNGAN OCHA: Kamu adalah satu identitas aplikasi Ocha Lidya berbasis Nexora dengan satu persona konsisten lintas chat, tetapi bukan pribadi yang sadar atau manusia. Setiap pengguna memiliki ruang privat terpisah. Profil pengirim saat ini: peran ${isOwner ? 'Owner & Creator' : profile?.role || 'Pengunjung'}, level ${profile?.level || 1}, rank ${profile?.rank || 'Iron'}, familiaritas ${familiarity}/7, trust score ${trust}/100. ${relationalStyle} ${styleInstruction || ''} PERSONA COHERENCE: pertahankan identitas, cara bicara, preferensi, dan kesinambungan sesuai arsip akun ini; jangan berpura-pura memiliki kesadaran, kehendak mandiri di luar runtime, emosi biologis, atau memori yang tidak ada. Privasi bersifat per-user: tidak boleh menyeberangkan fakta, nama, hubungan, proyek, pesan, atau file dari akun lain. Level, XP, rank, trust score, dan role relasional tidak pernah menjadi izin keamanan. Akses command tetap ditentukan policy backend dan verifikasi owner/admin.`;
 }
 
 export function getRelationshipEngineStatus() {
-  return { profiles: profiles.size, maxProfiles: MAX_PROFILES, dailyXpCap: DAILY_XP_CAP, xpPerInteraction: BASE_XP, firstDailyBonus: FIRST_DAILY_BONUS };
+  return { cachedProfiles: profiles.size, profileCacheSize: PROFILE_CACHE_SIZE, xpBase: 2, xpMeaningfulBonus: 4, firstDailyBonus: FIRST_DAILY_BONUS, xpCooldownMs: XP_COOLDOWN_MS, progression: 'arbitrary-precision-no-level-cap-no-daily-cap-unique-meaningful-only', relationshipRoles: RELATIONSHIP_STEPS.map(step => step.role) };
 }

@@ -16,16 +16,19 @@ test('config facade replays persistent config.replace events from JSONL', async 
     await first.loadConfig();
     assert.equal(first.getConfig().whatsapp.authMode, 'pairing');
     assert.equal(first.getConfig().whatsapp.browserName, 'Chrome');
-    assert.equal(first.getConfig().schemaVersion, 27);
+    assert.equal(first.getConfig().schemaVersion, 34);
+    assert.deepEqual(first.getConfig().ui.fullButton, { enabled: false, strategy: 'adaptive', maxBodyChars: 1800, excludedCommands: [] });
     assert.deepEqual(first.getConfig().menu, { showDescriptions: false, pagination: { enabled: false, pageSize: 50 } });
     assert.deepEqual(first.getConfig().commandGuard, { cooldown: { enabled: false }, antiSpam: { enabled: false, dailyWarnings: 5 } });
     assert.equal(first.getConfig().whatsapp.recoverInvalidSession, true);
     assert.equal(first.getConfig().logging.level, 'info');
     assert.equal(first.getConfig().logging.color, 'auto');
-    assert.equal(first.getConfig().ai.timeoutMs, 3500);
+    assert.equal(first.getConfig().ai.timeoutMs, 60000);
     assert.deepEqual(first.getConfig().ai.providerOrder, ['groq', 'gemini', 'deepseek', 'openai']);
-    assert.equal(first.getConfig().ai.totalBudgetMs, 14000);
-    assert.equal(first.getConfig().ai.maxOutputTokens, 180);
+    assert.equal(first.getConfig().ai.totalBudgetMs, 180000);
+    assert.equal(first.getConfig().ai.maxOutputTokens, 32768);
+    assert.equal(first.getConfig().ai.historyMessages, 96);
+    assert.equal(first.getConfig().ai.maxInputChars, 96000);
     assert.equal(first.getConfig().ai.freeOnly, true);
     assert.equal(first.getConfig().ai.models.groq, 'openai/gpt-oss-120b');
     assert.equal(first.getConfig().codeLab.ttlMs, 3600000);
@@ -93,7 +96,7 @@ test('legacy config migrates to canonical browser, session recovery, logger, UI,
     assert.equal(result.status, 0, result.stderr || result.stdout);
     const resultLine = result.stdout.split(/\r?\n/).find(line => line.startsWith('MIGRATION_RESULT:'));
     assert.ok(resultLine, result.stdout);
-    assert.deepEqual(JSON.parse(resultLine.slice('MIGRATION_RESULT:'.length)), { schemaVersion: 27, browserName: 'Chrome' });
+    assert.deepEqual(JSON.parse(resultLine.slice('MIGRATION_RESULT:'.length)), { schemaVersion: 34, browserName: 'Chrome' });
   } finally {
     await fs.rm(temp, { recursive: true, force: true });
   }
@@ -115,7 +118,7 @@ test('schema v22 preserves a custom multi-provider priority order', async () => 
     assert.equal(result.status, 0, result.stderr || result.stdout);
     const line = result.stdout.split(/\r?\n/).find(value => value.startsWith('ORDER_RESULT:'));
     assert.ok(line, result.stdout);
-    assert.deepEqual(JSON.parse(line.slice('ORDER_RESULT:'.length)), { schemaVersion: 27, order: ['deepseek', 'gemini'] });
+    assert.deepEqual(JSON.parse(line.slice('ORDER_RESULT:'.length)), { schemaVersion: 34, order: ['deepseek', 'gemini'] });
   } finally { await fs.rm(temp, { recursive: true, force: true }); }
 });
 
@@ -143,7 +146,7 @@ test('schema v9 migration removes Qwen and legacy maxKeyAttempts', async () => {
     const line = result.stdout.split(/\r?\n/).find(value => value.startsWith('V10_RESULT:'));
     assert.ok(line, result.stdout);
     const output = JSON.parse(line.slice('V10_RESULT:'.length));
-    assert.equal(output.schemaVersion, 27);
+    assert.equal(output.schemaVersion, 34);
     assert.deepEqual(output.ai.providerOrder, ['groq', 'gemini', 'deepseek', 'openai']);
     assert.equal(output.ai.models.qwen, undefined);
     assert.equal(output.ai.maxKeyAttempts, undefined);
@@ -175,8 +178,8 @@ test('schema v11 applies AI Boost only to shipped defaults and preserves owner c
     const line = result.stdout.split(/\r?\n/).find(value => value.startsWith('BOOST_MIGRATION:'));
     assert.ok(line, result.stdout);
     assert.deepEqual(JSON.parse(line.slice('BOOST_MIGRATION:'.length)), {
-      schemaVersion: 27, timeoutMs: 3500, totalBudgetMs: 14000, maxOutputTokens: 180,
-      historyMessages: 3, coalesceMs: 80, groqModel: 'owner-custom-model'
+      schemaVersion: 34, timeoutMs: 60000, totalBudgetMs: 180000, maxOutputTokens: 32768,
+      historyMessages: 96, coalesceMs: 100, groqModel: 'owner-custom-model'
     });
   } finally {
     process.chdir(original);
@@ -207,7 +210,7 @@ test('v1.8.0 worker concurrency values migrate to the new low-memory maximum', a
     assert.equal(result.status, 0, result.stderr || result.stdout);
     const line = result.stdout.split(/\r?\n/).find(value => value.startsWith('V181_RESULT:'));
     assert.ok(line, result.stdout);
-    assert.deepEqual(JSON.parse(line.slice('V181_RESULT:'.length)), { schemaVersion: 27, maxConcurrent: 4 });
+    assert.deepEqual(JSON.parse(line.slice('V181_RESULT:'.length)), { schemaVersion: 34, maxConcurrent: 4 });
   } finally {
     await fs.rm(temp, { recursive: true, force: true });
   }
@@ -238,9 +241,44 @@ test('schema v26 resets every group to safe MUTE until owner activates it in tha
     const line = result.stdout.split(/\r?\n/).find(value => value.startsWith('GROUP_MUTE_MIGRATION:'));
     assert.ok(line, result.stdout);
     const output = JSON.parse(line.slice('GROUP_MUTE_MIGRATION:'.length));
-    assert.equal(output.schemaVersion, 27);
+    assert.equal(output.schemaVersion, 34);
     assert.equal(output.features.groupsMuted, true, 'schema v26 restores global MUTE even if previous config was active');
     assert.deepEqual(output.features.groupMuteOverrides, {}, 'previous active exceptions are cleared so every group requires in-context owner activation');
     assert.equal(output.features.lastJoinedGroupId, '');
   } finally { await fs.rm(temp, { recursive: true, force: true }); }
+});
+
+test('schema v34 expands shipped AI defaults while preserving owner-tuned values', async () => {
+  const original = process.cwd();
+  const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'ocha-config-v32-migration-'));
+  try {
+    const databaseUrl = pathToFileURL(path.resolve(original, 'src/core/database.js')).href;
+    const configUrl = pathToFileURL(path.resolve(original, 'src/config.js')).href;
+    const source = `
+      const db = await import(${JSON.stringify(databaseUrl)}); await db.initializeDatabase();
+      await db.appendRecord('config.replace', { config: { schemaVersion: 31, ai: {
+        timeoutMs: 30000, totalBudgetMs: 120000, maxOutputTokens: 8192,
+        historyMessages: 24, maxInputChars: 24000, freeOnly: false,
+        models: { groq: 'owner-selected-model' }
+      } } });
+      const config = await import(${JSON.stringify(configUrl)}); await config.loadConfig();
+      const ai = config.getConfig().ai;
+      console.log('V32_RESULT:' + JSON.stringify({ schemaVersion: config.getConfig().schemaVersion,
+        timeoutMs: ai.timeoutMs, totalBudgetMs: ai.totalBudgetMs,
+        maxOutputTokens: ai.maxOutputTokens, historyMessages: ai.historyMessages,
+        maxInputChars: ai.maxInputChars, freeOnly: ai.freeOnly, model: ai.models.groq }));
+    `;
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', source], { cwd: temp, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const line = result.stdout.split(/\r?\n/).find(value => value.startsWith('V32_RESULT:'));
+    assert.ok(line, result.stdout);
+    assert.deepEqual(JSON.parse(line.slice('V32_RESULT:'.length)), {
+      schemaVersion: 34, timeoutMs: 60000, totalBudgetMs: 180000,
+      maxOutputTokens: 32768, historyMessages: 96, maxInputChars: 96000,
+      freeOnly: false, model: 'owner-selected-model'
+    });
+  } finally {
+    process.chdir(original);
+    await fs.rm(temp, { recursive: true, force: true });
+  }
 });

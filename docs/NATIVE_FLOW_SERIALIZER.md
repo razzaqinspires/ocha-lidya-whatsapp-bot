@@ -1,4 +1,4 @@
-# Native Flow Serializer — v1.10.18
+# Native Flow Serializer — v1.10.20
 
 ## Compatibility tiers
 
@@ -16,6 +16,7 @@ This registry describes payload validation/serialization support. It does not ce
 - Unknown types throw a clear validation error. They are never silently rewritten to `quick_reply`.
 - Required fields are checked before relay. `single_select` validates non-empty sections and rows; each row needs `id` and `title`. `cta_url` accepts only HTTP/HTTPS URLs.
 - `sock.sendInteractive()` and `sock.sendNativeFlow()` build the binary `biz`/`interactive` node and support `nativeFlowName`, `nativeFlowVersion`, `messageParamsJson`, `messageVersion`, `additionalNodes`, and a plain-text fallback.
+- Carousel cards are prepared asynchronously: `header.imageUrl` / `card.imageUrl` are passed through Baileys `prepareWAMessageMedia()` using the socket upload function, then stored as each card's `header.imageMessage`. Each card's native-flow buttons are normalized independently.
 - The owner's low-level raw `sock.relayMessage(chat, content, { additionalNodes })` call is not routed through `sendInteractive` and is not rewritten. The eval fixture can therefore keep its exact source and payload structure.
 
 ## Rental UX choice

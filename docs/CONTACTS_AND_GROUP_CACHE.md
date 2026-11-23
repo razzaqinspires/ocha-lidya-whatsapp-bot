@@ -79,7 +79,7 @@ After the socket reaches `open`, the runtime calls `groupFetchAllParticipating()
 
 ## Interactive command responses
 
-The dispatcher no longer wraps plugin `m.reply()` calls. All command replies use the serializer text transport, which is readable and copyable on standard WhatsApp clients. `.menu`, `.owner`, and private-chat `.groupinfo` use text output and show command syntax explicitly. The legacy `ui.buttonsEnabled` state and `.buttons on/off/status` command remain persisted for compatibility, but neither setting can force native-flow transport globally. Native-flow helper APIs remain opt-in and must be validated against the target clients before use.
+The dispatcher keeps text as the default transport. When the owner enables `.buttons full all`, it temporarily adapts eligible plain-text `m.reply()` calls for one plugin execution, then restores the original serializer reply method. Explicit menu pagination, checkout, YouTube carousel, contact/profile cards, message-test lab and `.groupinfo` reply-session screens remain excluded. Native Flow is still opt-in and must be checked on the target WhatsApp clients; relay success alone is not proof of client rendering. See `COMMAND_BUTTON_ENGINE.md`.
 
 
 ## Reply-driven group navigation

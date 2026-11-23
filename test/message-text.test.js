@@ -48,3 +48,28 @@ test('extracts readable parts of rich responses', () => {
     { codeMetadata: { codeBlocks: [{ codeContent: 'const n = 1;' }] } }
   ] } }, 'richResponseMessage'), 'Summary\n[Tabel: Metrics]\nconst n = 1;');
 });
+
+test('extracts nested native-flow identifiers and keeps all response parameters', async () => {
+  const { parseNativeFlowResponse } = await import('../src/lib/message-text.js');
+  const source = {
+    nativeFlowResponseMessage: {
+      name: 'single_select',
+      version: 3,
+      paramsJson: JSON.stringify({ response: { row_id: 'command-row', extra_field: 'preserved' }, screen: 'BOOKING' })
+    }
+  };
+  const response = parseNativeFlowResponse(source);
+  assert.equal(response.name, 'single_select');
+  assert.equal(response.version, 3);
+  assert.equal(response.selectedId, 'command-row');
+  assert.equal(response.selectedRowId, 'command-row');
+  assert.equal(response.params.screen, 'BOOKING');
+  assert.equal(response.params.response.extra_field, 'preserved');
+});
+
+test('extracts interactive business message body and media caption', () => {
+  assert.equal(extractMessageText({ interactiveMessage: {
+    header: { title: 'Native Flow', subtitle: 'Subtitle', imageMessage: { caption: 'Image caption' } },
+    body: { text: 'Interactive body' }
+  } }, 'interactiveMessage'), 'Native Flow\nSubtitle\nInteractive body\nImage caption');
+});

@@ -1,17 +1,16 @@
 import { parseCommand } from './prefix.js';
 import { getPlugin } from './plugin-loader.js';
-import { authorize } from './permissions.js';
 import { runMasterCommand, isMasterSyntax } from '../master/dispatcher.js';
 import { getConfig } from './config.js';
-import { logger } from './logger.js';
 import { getPrefixes } from './prefix.js';
 import { shouldSuppressGroupInteraction, isOwnerMuteControlMessage } from './group-policy.js';
 import { answerMessage, isAITrigger } from '../ai/engine.js';
 import { dispatchReplySession } from './reply-sessions.js';
 import { isVerifiedOwnerMessage } from './identity.js';
-import { evaluateCooldown, shouldNotifyCooldown, inspectAntiSpam, isUserTemporarilyBanned, formatDuration } from './command-governor.js';
+import { isUserTemporarilyBanned } from './command-governor.js';
 import { BILLING_EXEMPT_COMMANDS } from '../rental/catalog.js';
-import { consumeTenantQuota, getTenantStatus } from '../rental/service.js';
+import { getTenantStatus, consumeTenantQuota } from '../rental/service.js';
+import { executeRegisteredPlugin } from './plugin-execution.js';
 
 const rentalNoticeAt = new Map();
 function notifyRentalBlockOnce(key, now = Date.now()) {
@@ -81,59 +80,11 @@ export async function dispatch(sock, message) {
   const plugin = parsed ? getPlugin(parsed.command) : null;
 
   if (plugin) {
-    const auth = authorize(message, plugin);
-    if (!auth.ok) {
-      // Mute control is intentionally silent for non-owners, including in
-      // active groups, so ordinary members cannot probe owner-only controls.
-      if (['mute', 'groupmute'].includes(plugin.name) && auth.reason === 'owner') return;
-      if (auth.reason === 'group') return message.reply('Perintah ini hanya dapat digunakan di dalam grup.');
-      if (auth.reason === 'private') return message.reply('Perintah ini hanya dapat digunakan di chat pribadi.');
-      if (auth.reason === 'owner') return message.reply('Perintah ini khusus owner.');
-      if (auth.reason === 'self') return message.reply('Bot sedang dalam mode self.');
-      return;
-    }
-    if (message.isGroup && !auth.owner && !BILLING_EXEMPT_COMMANDS.has(String(plugin.name || '').toLowerCase())) {
-      const quota = await consumeTenantQuota({ groupJid: message.chat, command: plugin.name, plugin });
-      if (quota.applies && !quota.allowed) {
-        const noticeKey = `${message.chat}:${quota.reason}:${quota.resetAt || quota.tenant?.expiresAt || ''}`;
-        if (notifyRentalBlockOnce(noticeKey)) {
-          if (quota.reason === 'quota') await message.reply(`Kuota harian grup telah habis (${quota.used}/${quota.limit} unit). Reset dalam ${shortCountdown(quota.remainingMs)}. Semua command tersedia kembali setelah kuota 24 jam diperbarui. Periksa .sewa status atau perpanjang melalui .sewa.`);
-          else if (quota.reason === 'grace') await message.reply(`Masa aktif sewa grup telah berakhir. Masa tenggang masih tersisa ${shortCountdown(quota.graceRemainingMs)}. Selama masa tenggang, command berbayar ditangguhkan; perpanjang melalui .sewa.`);
-          else await message.reply('Langganan grup sedang tidak aktif. Gunakan .sewa untuk membuat atau memperpanjang invoice.');
-        }
-        return;
-      }
-    }
-    const guardConfig = config.commandGuard || {};
-    const isGuardControl = ['guard', 'commandguard', 'antispam'].includes(String(parsed.command || '').toLowerCase());
-    if (!auth.owner && guardConfig.antiSpam?.enabled) {
-      const spam = await inspectAntiSpam({ sender: message.sender, command: parsed.command });
-      if (!spam.allowed) {
-        if (spam.banned) {
-          if (spam.durationMs) await message.reply(`Akses command ditangguhkan sementara selama ${formatDuration(spam.durationMs)} karena pelanggaran anti-spam berulang. Bot dapat digunakan kembali setelah masa penangguhan berakhir.`);
-          return;
-        }
-        if (spam.initialWarning) return message.reply('Peringatan: pola command terlalu cepat/berulang. Kurangi frekuensi penggunaan. Pelanggaran berikutnya akan tercatat dalam limit anti-spam harian.');
-        if (spam.warnings) return message.reply(`Peringatan anti-spam ${spam.warnings}/5. Jika mencapai 5 peringatan dalam sehari, akses command akan ditangguhkan sementara.`);
-        return;
-      }
-    }
-    if (guardConfig.cooldown?.enabled && !isGuardControl) {
-      const cooldown = evaluateCooldown({ sender: message.sender, chat: message.chat, command: plugin.name, plugin });
-      if (!cooldown.allowed) {
-        if (shouldNotifyCooldown({ sender: message.sender, chat: message.chat, command: plugin.name, cooldownMs: cooldown.remainingMs })) {
-          return message.reply(`Command ini masih dalam cooldown. Coba lagi sekitar ${formatDuration(cooldown.remainingMs)}.`);
-        }
-        return;
-      }
-    }
-    try {
-      await plugin.execute({ sock, m:message, args:parsed.args, text:parsed.text, command:parsed.command, config, isOwner:auth.owner });
-    } catch (error) {
-      logger.error({err:error,plugin:plugin.name,chat:message.chat}, 'Plugin execution error');
-      await message.reply(`Terjadi kesalahan saat menjalankan ${plugin.name}.\n${error.message || error}`);
-    }
-    return;
+    return executeRegisteredPlugin({
+      sock, message, plugin,
+      parsed: { ...parsed, command: plugin.name, args: parsed.args, text: parsed.text },
+      config, source: 'dispatcher'
+    });
   }
 
   // A prefixed message is always command intent. Unknown commands must never fall through to AI.

@@ -109,3 +109,30 @@ test('provider network outage stops sibling-key fanout and advances to next prov
     assert.deepEqual(output.seen, ['groq', 'gemini']);
   } finally { await fs.rm(temp, { recursive: true, force: true }); }
 });
+
+
+test('provider router respects a shared total generation deadline', async () => {
+  const original = process.cwd();
+  const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'ocha-ai-budget-test-'));
+  const providerUrl = pathToFileURL(path.resolve(original, 'src/ai/providers.js')).href;
+  const dbUrl = pathToFileURL(path.resolve(original, 'src/core/database.js')).href;
+  const source = `
+    process.env.GEMINI_API_KEY = 'gemini-budget-key-123456';
+    const db = await import(${JSON.stringify(dbUrl)}); await db.initializeDatabase();
+    const providers = await import(${JSON.stringify(providerUrl)}); await providers.initializeProviderKeys();
+    let requests = 0; globalThis.fetch = async () => { requests++; return { ok: true, status: 200, headers: { get: () => null }, text: async () => JSON.stringify({ candidates: [{ content: { parts: [{ text: 'unexpected' }] } }] }) }; };
+    let errorCode = '';
+    try { await providers.generateWithFallback(['gemini'], [{ role: 'user', content: 'test' }], { timeoutMs: 1000, deadlineAt: Date.now() - 1000 }); }
+    catch (error) { errorCode = error.code; }
+    console.log('BUDGET_RESULT:' + JSON.stringify({ requests, errorCode }));
+  `;
+  try {
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', source], { cwd: temp, encoding: 'utf8', timeout: 20000 });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const line = result.stdout.split(/\r?\n/).find(value => value.startsWith('BUDGET_RESULT:'));
+    assert.ok(line, result.stdout);
+    const output = JSON.parse(line.slice('BUDGET_RESULT:'.length));
+    assert.equal(output.requests, 0);
+    assert.equal(output.errorCode, 'ALL_PROVIDERS_EXHAUSTED');
+  } finally { await fs.rm(temp, { recursive: true, force: true }); }
+});

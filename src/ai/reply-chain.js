@@ -1,15 +1,13 @@
-const DEFAULT_MAX_DEPTH = 8;
-const DEFAULT_MAX_CHARS = 12_000;
+const DEFAULT_MAX_CHARS = 24_000;
 
 /**
- * Bounded, persisted-by-caller index for AI reply threads. It stores only AI
- * message anchors and their corresponding user/assistant turns; ordinary bot
- * command screens are intentionally kept out of this index.
+ * Reply anchors retain the complete parent lineage. The model receives only a
+ * recent tail that fits its prompt budget; reaching that prompt budget never
+ * severs the stored thread or changes its parent pointer.
  */
 export class AIReplyChainStore {
-  constructor({ maxDepth = DEFAULT_MAX_DEPTH, maxChars = DEFAULT_MAX_CHARS } = {}) {
-    this.maxDepth = Math.max(1, Math.min(32, Number(maxDepth) || DEFAULT_MAX_DEPTH));
-    this.maxChars = Math.max(1000, Math.min(50_000, Number(maxChars) || DEFAULT_MAX_CHARS));
+  constructor({ maxChars = DEFAULT_MAX_CHARS } = {}) {
+    this.maxChars = Math.max(1_000, Math.min(200_000, Number(maxChars) || DEFAULT_MAX_CHARS));
     this.anchorsByMessage = new Map();
     this.anchorsByJob = new Map();
     this.turnsByJob = new Map();
@@ -41,45 +39,55 @@ export class AIReplyChainStore {
 
   resolve(chat, messageId) {
     const anchor = this.anchorsByMessage.get(`${String(chat || '')}::${String(messageId || '')}`);
-    if (!anchor) return { anchor: null, turns: [], depth: 0, threadId: null };
+    if (!anchor) return { anchor: null, turns: [], depth: 0, threadId: null, truncated: false };
 
     const chain = [];
     const seen = new Set();
     let cursor = anchor;
-    while (cursor && chain.length < this.maxDepth && !seen.has(cursor.jobId)) {
+    // The chain is finite because anchors are persisted message events. Cycle
+    // detection is the safety guard; there is intentionally no reply-depth cap.
+    while (cursor && !seen.has(cursor.jobId)) {
       seen.add(cursor.jobId);
       chain.push(cursor);
       cursor = cursor.parentJobId ? this.anchorsByJob.get(cursor.parentJobId) : null;
     }
     chain.reverse();
 
-    const turns = [];
-    let usedChars = 0;
+    const allTurns = [];
     for (const entry of chain) {
-      const jobTurns = this.turnsByJob.get(entry.jobId) || [];
-      for (const turn of jobTurns) {
+      for (const turn of this.turnsByJob.get(entry.jobId) || []) {
         const content = String(turn.content || '');
-        if (!content) continue;
-        const remaining = this.maxChars - usedChars;
-        if (remaining <= 0) break;
-        const marker = '[truncated]';
-        const clipped = content.length > remaining
-          ? (remaining <= marker.length ? marker.slice(0, remaining) : `${content.slice(0, remaining - marker.length)}${marker}`)
-          : content;
-        turns.push({ role: turn.role, content: clipped, jobId: entry.jobId });
-        usedChars += clipped.length;
+        if (content) allTurns.push({ role: turn.role, content, jobId: entry.jobId });
       }
-      if (usedChars >= this.maxChars) break;
+    }
+
+    // Keep the newest portion in chronological order. An oversized earliest
+    // retained turn is clipped from its tail, not silently discarded.
+    const selected = [];
+    let usedChars = 0;
+    for (let index = allTurns.length - 1; index >= 0; index--) {
+      const turn = allTurns[index];
+      const remaining = this.maxChars - usedChars;
+      if (remaining <= 0) break;
+      if (turn.content.length <= remaining) {
+        selected.unshift(turn);
+        usedChars += turn.content.length;
+        continue;
+      }
+      selected.unshift({ ...turn, content: turn.content.slice(-remaining), clipped: true });
+      usedChars += remaining;
+      break;
     }
 
     return {
       anchor,
-      turns,
+      turns: selected,
+      jobIds: chain.map(entry => entry.jobId),
       depth: anchor.depth,
       threadId: anchor.threadId,
-      truncated: chain.length >= this.maxDepth || usedChars >= this.maxChars
+      truncated: selected.length < allTurns.length || selected.some(turn => turn.clipped)
     };
   }
 }
 
-export const AI_REPLY_CHAIN_LIMITS = Object.freeze({ maxDepth: DEFAULT_MAX_DEPTH, maxChars: DEFAULT_MAX_CHARS });
+export const AI_REPLY_CHAIN_LIMITS = Object.freeze({ maxChars: DEFAULT_MAX_CHARS, depthLimited: false });

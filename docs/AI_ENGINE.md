@@ -1,8 +1,18 @@
-# Ocha Lidya AI Engine — v1.10.11
+# Ocha Lidya AI Engine — v1.10.25
 
 ## Public identity
 
 The public AI identity exposed in chat is **Nexora-2.0-Flash**. Provider and upstream model identifiers remain internal routing details. The public identity is an application abstraction; it does not mean every upstream provider is literally running a model named Nexora.
+
+## Grounded assistant, persistent identity, private vault, and WhatsApp delivery (v1.10.25)
+
+The current runtime architecture and safety boundary are documented in [`GROUNDED_ASSISTANT_V1.10.22.md`](./GROUNDED_ASSISTANT_V1.10.22.md) for the v1.10.22 baseline and [`OCHA_IDENTITY_AND_PRIVATE_VAULT.md`](./OCHA_IDENTITY_AND_PRIVATE_VAULT.md) for the v1.10.25 identity/archive design. In summary, each AI request receives a live plugin/capability inventory; natural-language command execution is explicit and restricted to plugins with `aiCallable: true`; and execution reuses the same `executeRegisteredPlugin` checks as direct commands. Do not expand this allowlist without reviewing the plugin's side effects, required role, group/private scope, quota behavior, and expected response.
+
+AI text passes through a WhatsApp-specific renderer. It converts Markdown bold into the single-star form supported by WhatsApp, preserves code blocks, translates simple headings/links/tables, and splits oversized answers. Provider finish reasons are preserved so the engine can continue on the originating provider until the shared job deadline or a two-step no-progress guard when an output cap or incomplete code/JSON structure is detected. Continuation has no fixed attempt count, but never resets the deadline. A continuation can still fail; unresolved output is marked as potentially incomplete.
+
+Each private DM turn is archived automatically in the sender’s encrypted `roo` journal, while explicit long-term facts use a separate encrypted snapshot with no application fact-count cap. Credential and designated sensitive categories are rejected from explicit memory. The complete conversation archive is independent of the bounded recent turns and relevance-ranked excerpts sent to the model. Users can inspect, search, export, and delete their own memory/archive through `.memori`; group conversations are not loaded into private memory.
+
+The engine does not simulate unsupported games. This release has no Tic-Tac-Toe plugin/game state store; the old prompt-only board behavior is guarded. Game state must be persisted and validated by a real game plugin before a game can begin. AI image/video/carousel generation is not enabled as a generic feature: a real backend media capability and trusted asset are required before these message types can be selected.
 
 ## Provider routing and failure classification
 
@@ -86,7 +96,7 @@ Key counters and error classifications are reconstructed from the primary append
 - `.aiset free-only on/off` — enforce only documented free-tier models or allow paid providers.
 - `.aiset order groq,gemini,deepseek,openai` — set provider priority.
 - `.aiset model <provider> <model-id>` — set a configured model ID; automatic catalogue selection still chooses a verified free candidate when free-only is ON.
-- `.aiset speed boost/fast/balanced` — tune request latency and output/context bounds.
+- `.aiset speed boost/fast/balanced/deep` — tune request latency and output/context bounds.
 - `.aiset identity on/off` — control public creator identity disclosure.
 - `.apikey add/list/get/delete` — manage provider credentials without revealing full secrets.
 
@@ -105,7 +115,7 @@ The message dispatcher uses two distinct quoted-reply lanes:
 1. **Command screen lane:** before ordinary command parsing and AI detection, the dispatcher checks whether the incoming message quotes an active command screen. The session is identified by the quoted message ID plus chat ID, bound to the sender who opened it, and consumed once a valid choice is selected. Invalid choices stay in the command lane and return the screen's instruction instead of reaching AI. The default session TTL is 10 minutes; sessions are memory-only and are lost on process restart.
 2. **AI answer lane:** in groups, a quoted reply activates AI only when the quoted message ID is registered as a message previously sent by the AI engine. A reply to a bot command, menu, or generic system notice is not treated as an AI reply. Direct private-chat messages remain conversational by default; active command sessions still take priority.
 
-AI answer anchors are persisted as `ai.reply.anchor` records and connect each response to its parent AI job. Startup warms this anchor index before the WhatsApp socket begins accepting messages, avoiding a race where an early quoted group reply could be misclassified. The engine walks the parent chain from root to the quoted answer, then appends the current user reply. The configured bounds are **8 AI answer levels** and **12,000 characters** of accumulated prior context. The quoted message text is also included as a separate reference, capped at 2,500 characters. When the maximum depth is reached, a new answer starts a new bounded branch while still receiving the immediate quoted text. This keeps the prompt bounded and prevents unrelated chat messages or command output from being merged into the chain.
+AI answer anchors are persisted as `ai.reply.anchor` records and connect each response to its parent AI job. Startup warms this anchor index before the WhatsApp socket begins accepting messages, avoiding a race where an early quoted group reply could be misclassified. The engine walks the parent chain from root to the quoted answer, then appends the current user reply. The stored parent lineage has no application-level reply-depth ceiling; cycle detection prevents a corrupt parent loop. Prompt assembly selects the relevant recent portion of the lineage within the adaptive request budget, while the full anchor chain remains linked in the persistent journal. The quoted message is kept as a separate reference. Reaching the prompt excerpt budget does not break the thread or start a new branch.
 
 Recovered AI jobs also register a quote anchor after the recovery response is sent. If a send operation does not return a WhatsApp message ID, the answer can still be delivered but cannot become a future quoted-chain anchor. Older bot messages sent before this feature was deployed do not automatically have an AI anchor; new AI answers create them from v1.7.0 onward.
 
@@ -116,12 +126,32 @@ The AI prompt receives only an allowlisted public identity object; it never rece
 
 Simple greeting-only messages and creator/model identity questions are answered by a local policy layer before provider routing. Greeting variants rotate so a repeated `halo` does not return one fixed sentence. These deterministic responses remain available during provider maintenance.
 
-Each AI participant has a separate persistent profile in the append-only JSONL repository. Eligible AI interactions award 5 XP, with a 10 XP first-active-day bonus and a 100 XP daily cap. Duplicate WhatsApp message IDs cannot award XP twice. Level thresholds use `50 * level * (level - 1)` cumulative XP. Ranks progress at levels 1/5/10/20/35/50/75: Iron, Bronze, Silver, Gold, Platinum, Diamond, and Mythic.
+Each AI participant has a separate encrypted profile inside their `roo` vault. XP awards are based on unique meaningful contributions, a valid first contact on each active day, and streak milestones; repeated low-signal text does not farm XP. A per-user award cooldown and message-ID/content fingerprint deduplication reduce farming. XP is stored as an arbitrary-precision integer string with no level or daily XP ceiling. Level thresholds use `50 * level * (level - 1)` cumulative XP. Ranks currently extend from Iron through Bronze, Silver, Gold, Platinum, Diamond, Mythic, Astral, Celestial, Sovereign, Eternal, Paragon, Nova, Cosmic, Apex, Transcendent, Nexus, and Singularity. More tiers can be added without changing the XP representation.
 
-Relationship role is an application familiarity tier, not a claim that the AI has human emotions: Pengunjung, Kenalan, Teman Ngobrol, Teman Akrab, and Sahabat Digital. The owner has the fixed role Owner & Creator. The engine stores aggregate interaction counts, active days, and broad communication-style counters; it does not store raw user messages in the profile record. `.profile` displays XP, level, rank, role, progress, and interaction history. It renders a PNG card when optional `sharp` is available and falls back to a text card otherwise.
+Relationship role is an application familiarity tier, not a claim that the AI has human emotions: Pengunjung, Kenalan, Teman Ngobrol, Teman Akrab, Sahabat Digital, and Mitra Tepercaya. The owner has the fixed role Owner & Creator, resolved only by backend identity verification. Progress depends on consistency, meaningful interactions, active days, account tenure, and trust score. The engine stores aggregate profile data separately from encrypted conversation events; `.profile` displays XP, level, rank, role, progress, streak, and achievements. A profile card renders as PNG when optional `sharp` is available and otherwise falls back to text.
 
 ## Owner identity and configuration disclosure
 
 The AI engine does not infer owner status from prompt text, push names, profile memory, or earlier turns. The message pipeline resolves the sender from Baileys PN fields or a verified Baileys LID mapping. For continuity, only mappings that resolve to the configured owner PN are persisted in `data/owner-lid-map.jsonl` with mode `0600`. The dispatcher recalculates authorization before command execution.
 
 Configuration inspection is a deterministic backend route, not an LLM tool. A verified owner may request a complete non-secret configuration snapshot only in a private chat. Sensitive keys are recursively redacted, credential-like values and passwords embedded in database URLs are filtered, and selected environment-secret names expose only a configured/not-configured flag. The snapshot is not added to AI history. Requests for `.env`, API-key values, tokens, passwords, session credentials, or private keys are refused even for the owner; those values must be inspected locally on the VPS and are never passed to the model. Non-owner requests receive a deterministic denial.
+
+
+## Persistent identity and private roo archive (v1.10.25)
+
+See [`OCHA_IDENTITY_AND_PRIVATE_VAULT.md`](./OCHA_IDENTITY_AND_PRIVATE_VAULT.md) for the identity contract, character rules, encryption design, per-user `roo` layout, one-time migration of eligible legacy private DMs, memory controls, rental commands, and resource boundaries. New private-DM turns are archived as encrypted user-vault events. Group records are never copied into private user vaults. The original legacy global journal is retained; migration is non-destructive and does not rewrite historical append-only records. The local archive has no application-level event-count cap; active model context is assembled by relevance, recency, and available provider budget rather than replaying every stored event in every request.
+
+Default inference envelope in schema v34: `timeoutMs=60000`, `totalBudgetMs=180000`, `maxOutputTokens=32768`, `historyMessages=96`, `maxInputChars=96000`, and `coalesceMs=100`. Completion recovery can make deadline-driven continuation attempts, all sharing one absolute deadline. These are runtime defaults and requested limits; provider-specific context, output, throughput, and timeout ceilings still apply.
+
+## Private memory and archive commands
+
+All `.memori` operations are limited to the sender's own private chat: `.memori status`, `.memori fakta [page]`, `.memori cari <query>`, `.memori terbaru`, `.memori ekspor`, and `.memori hapus-fakta <phrase>`. The command never accepts a target user ID, so users cannot query another person's archive. Group invocations are rejected.
+
+## Rental customer-facing commands
+
+`.sewa bandingkan`, `.sewa estimasi <anggota>`, `.sewa fitur`, `.sewa faq`, `.sewa rating`, `.sewa testimoni`, `.sewa ulasan <1-5> [komentar]`, `.sewa masukan <pesan>`, `.sewa saran <pesan>`, `.sewa keluhan <pesan>`, `.sewa konsultasi <pesan>`, `.sewa upgrade <paket>`, and `.sewa perpanjang` provide plan guidance, owner-routed support, and transaction-backed reputation. Owner handles tickets with `.rentals support`, `.rentals reply`, and `.rentals close`. Reviews require an approved invoice and are deduplicated per invoice; they must never be fabricated or incentivized as a condition of support.
+
+
+## Long-running reply continuity and expanded reasoning envelope (v1.10.25)
+
+Reply chains no longer fork solely because a fixed answer-depth counter is reached. Every verified AI reply anchor keeps its parent pointer, cycle detection protects against corrupted loops, and only a recent tail is selected for the prompt. The encrypted private archive remains the long-term source of truth. Default history/input/output/deadline values are expanded to 96 turns, 96,000 input characters, 32,768 requested output tokens, and 180 seconds total task budget. Continuation attempts use the remaining job deadline, never a fresh independent budget.

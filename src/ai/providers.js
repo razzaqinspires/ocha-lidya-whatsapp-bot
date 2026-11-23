@@ -363,12 +363,12 @@ async function requestWithKey(name, key, model, messages, options) {
     const data = await postJSON(url, { 'content-type': 'application/json', 'x-goog-api-key': key }, { systemInstruction: system ? { parts: [{ text: system }] } : undefined, contents, generationConfig: { temperature: options.temperature ?? 0.6, maxOutputTokens: options.maxOutputTokens ?? 500 } }, options.timeoutMs, name);
     const text = (data.candidates?.[0]?.content?.parts || []).map(part => part.text || '').join('').trim();
     if (!text) throw Object.assign(new Error(data.promptFeedback?.blockReason || 'Gemini returned empty response'), { provider: name, retryable: true });
-    return { text, usage: data.usageMetadata || null };
+    return { text, usage: data.usageMetadata || null, finishReason: data.candidates?.[0]?.finishReason || '' };
   }
   const data = await postJSON(spec.baseURL, { authorization: `Bearer ${key}`, 'content-type': 'application/json' }, { model, messages, temperature: options.temperature ?? 0.6, max_tokens: options.maxOutputTokens ?? 500, stream: false }, options.timeoutMs, name);
   const text = data.choices?.[0]?.message?.content;
   if (typeof text !== 'string' || !text.trim()) throw Object.assign(new Error(`${name} returned empty response`), { provider: name, retryable: true });
-  return { text: text.trim(), usage: data.usage || null };
+  return { text: text.trim(), usage: data.usage || null, finishReason: data.choices?.[0]?.finish_reason || '' };
 }
 export async function generateWithProvider(name, messages, options = {}) {
   if (!PROVIDERS[name]) throw new Error(`Provider tidak dikenal: ${name}`);
@@ -482,9 +482,18 @@ export async function generateWithFallback(providerOrder, messages, options = {}
       continue;
     }
 
+    const deadlineAt = Number(options.deadlineAt) || (Number(options.totalBudgetMs) > 0 ? startedAt + Number(options.totalBudgetMs) : 0);
+    const remainingBudget = deadlineAt ? deadlineAt - Date.now() : Infinity;
+    if (remainingBudget < 1000) {
+      errors.push({ provider, code: 'AI_BUDGET_EXHAUSTED', status: null, retryable: true, message: 'Total AI generation budget exhausted', skipped: true });
+      break;
+    }
     try {
       const requestOptions = { ...options, maxKeyAttempts: undefined };
       delete requestOptions.onProviderCheckpoint;
+      delete requestOptions.deadlineAt;
+      delete requestOptions.totalBudgetMs;
+      requestOptions.timeoutMs = Math.max(1000, Math.min(Number(options.timeoutMs) || remainingBudget, remainingBudget));
       const result = await generateWithProvider(provider, messages, requestOptions);
       const fallback = {
         order, attemptedProviders: attempted,

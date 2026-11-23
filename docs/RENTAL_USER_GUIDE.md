@@ -145,9 +145,37 @@ Jalankan semua perintah berikut di chat pribadi bot setelah memilih grup dari da
 | `.sewa paid <invoice>` | Melaporkan bahwa pembayaran sudah dilakukan |
 | `.sewa bukti <invoice>` + gambar | Mengirim bukti pembayaran secara pribadi |
 | `.sewa status` | Memeriksa status sewa, jumlah anggota, batas anggota, masa aktif dan kuota |
+| `.sewa rating` / `.sewa testimoni` | Membaca ulasan pelanggan terverifikasi |
+| `.sewa ulasan <1-5> [komentar]` | Mengirim satu ulasan untuk invoice yang disetujui |
+| `.sewa masukan <pesan>` / `.sewa saran <pesan>` | Mengirim masukan ke tim layanan |
+| `.sewa keluhan <pesan>` | Melaporkan kendala layanan |
+| `.sewa konsultasi <pesan>` | Meminta konsultasi paket/teknis |
 | `.sewa cancel <invoice>` | Membatalkan invoice yang belum disetujui |
 
 Perintah pembayaran hanya dapat diproses terhadap invoice grup yang sedang dipilih. Jika invoice berasal dari grup lain, buka grup itu dan ketik `.sewa` untuk mengganti konteks.
+
+
+
+## 5A. Ulasan dan dukungan pelanggan
+
+Setelah layanan digunakan, pelanggan dengan invoice yang telah disetujui dapat memberikan ulasan yang jujur:
+
+```text
+.sewa rating
+.sewa testimoni
+.sewa ulasan <1-5> [komentar]
+```
+
+Setiap invoice hanya dapat dihitung satu kali. Tidak ada syarat harus memberi nilai tinggi agar dukungan dilayani. Masukan, keluhan, saran, atau permintaan konsultasi dapat dikirim melalui chat pribadi setelah memilih grup tujuan:
+
+```text
+.sewa masukan <pesan>
+.sewa saran <pesan>
+.sewa keluhan <pesan>
+.sewa konsultasi <pesan>
+```
+
+Sistem membuat ID tiket dan meneruskan tiket ke antrean owner. Jangan sertakan password, OTP, API key, token, atau kredensial pembayaran. Catatan dukungan adalah data layanan yang dikirim secara sengaja kepada Razzaq Ventures; catatan ini bukan memori pribadi AI dan tidak digunakan untuk menjawab pengguna lain.
 
 ## 6. Perangkat khusus admin grup
 

@@ -6,12 +6,15 @@
 import { initializeDatabase, appendRecord, getRecords, getLatestConfigRecord, configureDatabase } from './core/database.js';
 
 const DEFAULTS = Object.freeze({
-  schemaVersion: 27,
+  schemaVersion: 34,
   bot: { name: 'Ocha Lidya', aliases: ['Ocha', 'Lidya'], owner: '6283193905842', ownerName: 'Arifi Razzaq', creatorName: 'Arifi Razzaq', organization: 'Razzaq Ventures', publicCreatorDisclosure: true, expectedNumber: '6282177461231' },
   whatsapp: { authMode: 'pairing', pairingNumber: '6282177461231', browserName: 'Chrome', sessionDir: 'sessions/ocha-lidya', recoverInvalidSession: true, connectTimeoutMs: 60000, queryTimeoutMs: 60000, keepAliveIntervalMs: 25000 },
   logging: { level: 'info', color: 'auto', timeZone: 'Asia/Jakarta' },
   mode: 'public',
-  ui: { buttonsEnabled: true },
+  ui: {
+    buttonsEnabled: true,
+    fullButton: { enabled: false, strategy: 'adaptive', maxBodyChars: 1800, excludedCommands: [] }
+  },
   menu: { showDescriptions: false, pagination: { enabled: false, pageSize: 50 } },
   commandGuard: { cooldown: { enabled: false }, antiSpam: { enabled: false, dailyWarnings: 5 } },
   groupMetadata: { initialSync: true, fetchCooldownMs: 600000 },
@@ -34,7 +37,7 @@ const DEFAULTS = Object.freeze({
     verifyOnBoot: true
   },
   features: { autoRead: false, autoTyping: false, selfModeReply: false, groupsMuted: true, groupMuteOverrides: {}, lastJoinedGroupId: '' },
-  ai: { enabled: true, providerOrder: ['groq', 'gemini', 'deepseek', 'openai'], models: { gemini: 'gemini-3.8-flash', groq: 'openai/gpt-oss-120b', deepseek: 'deepseek-flash', openai: 'gpt-6.2-sol' }, freeOnly: true, timeoutMs: 3500, totalBudgetMs: 14000, maxOutputTokens: 180, temperature: 0.5, historyMessages: 3, maxInputChars: 3500, coalesceMs: 80 },
+  ai: { enabled: true, providerOrder: ['groq', 'gemini', 'deepseek', 'openai'], models: { gemini: 'gemini-3.8-flash', groq: 'openai/gpt-oss-120b', deepseek: 'deepseek-flash', openai: 'gpt-6.2-sol' }, freeOnly: true, timeoutMs: 60000, totalBudgetMs: 180000, maxOutputTokens: 32768, temperature: 0.55, historyMessages: 96, maxInputChars: 96000, coalesceMs: 100 },
   codeLab: { enabled: true, aiExecutionEnabled: true, publicTunnelEnabled: true, websiteBuilderEnabled: true, websiteBuilderConcurrency: 2, websiteBuilderQueueLimit: 8, tunnelIdleMs: 300000, projectLibraryRoot: '', cloudflaredBin: 'cloudflared', containerRuntime: 'auto', port: 8787, ttlMs: 3600000, maxRuntimeMs: 120000, maxSourceBytes: 65536, maxOutputBytes: 49152, maxConcurrent: 2, maxSessionsTotal: 20, maxSessionsPerUser: 2, maxExecutionsPerMinute: 3, pythonImage: 'python:3.12-alpine', nodeImage: 'node:22-alpine' }
 });
 
@@ -102,11 +105,11 @@ export async function loadConfig() {
       reason: 'v1.4.4 add invalid-session recovery and terminal logger settings'
     });
   }
-  activeConfig.ui = { ...DEFAULTS.ui, ...(activeConfig.ui || {}) };
+  activeConfig.ui = merge(DEFAULTS.ui, activeConfig.ui || {});
   // v1.5.0: persist interactive-response mode.
   if (activeConfig.schemaVersion < 7) {
     activeConfig.schemaVersion = 7;
-    activeConfig.ui = { ...DEFAULTS.ui, ...(activeConfig.ui || {}) };
+    activeConfig.ui = merge(DEFAULTS.ui, activeConfig.ui || {});
     await appendRecord('config.replace', {
       config: activeConfig,
       changedBy: 'system:migration',
@@ -316,6 +319,111 @@ export async function loadConfig() {
     activeConfig.commandGuard = structuredClone(DEFAULTS.commandGuard);
     await appendRecord('config.replace', { config: activeConfig, changedBy: 'system:migration', reason: 'v1.10.17 global menu settings and adaptive command governor defaults' });
   }
+  // v1.10.21 schema v28: opt-in adaptive full-button routing. Existing
+  // installations remain text-first until the verified owner enables it.
+  activeConfig.ui = merge(DEFAULTS.ui, activeConfig.ui || {});
+  if (activeConfig.schemaVersion < 28) {
+    activeConfig.schemaVersion = 28;
+    activeConfig.ui.fullButton = merge(DEFAULTS.ui.fullButton, activeConfig.ui.fullButton || {});
+    await appendRecord('config.replace', {
+      config: activeConfig,
+      changedBy: 'system:migration',
+      reason: 'v1.10.21 adaptive full-button command UI, explicit plugin exemptions and text-safe fallback'
+    });
+  }
+  // v1.10.22 schema v29: grounded assistant, persistent opt-in memory,
+  // WhatsApp-native output formatting, and bounded completion recovery.
+  if (activeConfig.schemaVersion < 29) {
+    activeConfig.schemaVersion = 29;
+    const ai = activeConfig.ai || (activeConfig.ai = {});
+    if ([180, 220].includes(ai.maxOutputTokens)) ai.maxOutputTokens = DEFAULTS.ai.maxOutputTokens;
+    if ([3, 4].includes(ai.historyMessages)) ai.historyMessages = DEFAULTS.ai.historyMessages;
+    if (ai.maxInputChars === 3500) ai.maxInputChars = DEFAULTS.ai.maxInputChars;
+    if (ai.coalesceMs === 80) ai.coalesceMs = DEFAULTS.ai.coalesceMs;
+    await appendRecord('config.replace', {
+      config: activeConfig,
+      changedBy: 'system:migration',
+      reason: 'v1.10.22 grounded AI context, WhatsApp format normalization, and bounded completion recovery'
+    });
+  }
+  // v1.10.23 schema v30: persistent private roo vault, long-running archive
+  // retrieval, identity kernel, BigInt XP, and expanded AI completion budget.
+  if (activeConfig.schemaVersion < 30) {
+    activeConfig.schemaVersion = 30;
+    const ai = activeConfig.ai || (activeConfig.ai = {});
+    if (ai.timeoutMs === 3500) ai.timeoutMs = DEFAULTS.ai.timeoutMs;
+    if (ai.totalBudgetMs === 14000) ai.totalBudgetMs = DEFAULTS.ai.totalBudgetMs;
+    if (ai.maxOutputTokens === 900) ai.maxOutputTokens = DEFAULTS.ai.maxOutputTokens;
+    if (ai.historyMessages === 8) ai.historyMessages = DEFAULTS.ai.historyMessages;
+    if (ai.maxInputChars === 5000) ai.maxInputChars = DEFAULTS.ai.maxInputChars;
+    await appendRecord('config.replace', {
+      config: activeConfig,
+      changedBy: 'system:migration',
+      reason: 'v1.10.23 per-user encrypted roo archives, persona identity kernel, arbitrary-precision XP, and expanded AI generation budget'
+    });
+  }
+  // v1.10.23.1 schema v31: extend the default reasoning/output window.
+  // Migrate only exact prior shipped values; user-tuned settings are preserved.
+  if (activeConfig.schemaVersion < 31) {
+    activeConfig.schemaVersion = 31;
+    const ai = activeConfig.ai || (activeConfig.ai = {});
+    if (ai.timeoutMs === 12000) ai.timeoutMs = DEFAULTS.ai.timeoutMs;
+    if (ai.totalBudgetMs === 45000) ai.totalBudgetMs = DEFAULTS.ai.totalBudgetMs;
+    if (ai.maxOutputTokens === 4096) ai.maxOutputTokens = DEFAULTS.ai.maxOutputTokens;
+    if (ai.historyMessages === 20) ai.historyMessages = DEFAULTS.ai.historyMessages;
+    if (ai.maxInputChars === 16000) ai.maxInputChars = DEFAULTS.ai.maxInputChars;
+    await appendRecord('config.replace', {
+      config: activeConfig,
+      changedBy: 'system:migration',
+      reason: 'v1.10.23 expanded adaptive AI context and provider-bounded completion budget'
+    });
+  }
+  // v1.10.24 schema v32: enlarge the adaptive reasoning window while
+  // preserving user-tuned settings and keeping provider/server ceilings explicit.
+  if (activeConfig.schemaVersion < 32) {
+    activeConfig.schemaVersion = 32;
+    const ai = activeConfig.ai || (activeConfig.ai = {});
+    if (ai.timeoutMs === 30000) ai.timeoutMs = DEFAULTS.ai.timeoutMs;
+    if (ai.totalBudgetMs === 120000) ai.totalBudgetMs = DEFAULTS.ai.totalBudgetMs;
+    if (ai.maxOutputTokens === 8192) ai.maxOutputTokens = DEFAULTS.ai.maxOutputTokens;
+    if (ai.historyMessages === 24) ai.historyMessages = DEFAULTS.ai.historyMessages;
+    if (ai.maxInputChars === 24000) ai.maxInputChars = DEFAULTS.ai.maxInputChars;
+    await appendRecord('config.replace', {
+      config: activeConfig,
+      changedBy: 'system:migration',
+      reason: 'v1.10.24 extended model context/output envelope and long-running reply continuity'
+    });
+  }
+  // v1.10.25 schema v33: larger adaptive model envelope, relevance-ranked
+  // memory context, and deadline-driven continuation without an attempt cap.
+  // Only migrate exact v1.10.24 shipped defaults; owner-tuned values survive.
+  if (activeConfig.schemaVersion < 33) {
+    activeConfig.schemaVersion = 33;
+    const ai = activeConfig.ai || (activeConfig.ai = {});
+    if (ai.timeoutMs === 45000) ai.timeoutMs = DEFAULTS.ai.timeoutMs;
+    if (ai.maxOutputTokens === 16384) ai.maxOutputTokens = DEFAULTS.ai.maxOutputTokens;
+    if (ai.historyMessages === 48) ai.historyMessages = DEFAULTS.ai.historyMessages;
+    if (ai.maxInputChars === 48000) ai.maxInputChars = DEFAULTS.ai.maxInputChars;
+    await appendRecord('config.replace', {
+      config: activeConfig,
+      changedBy: 'system:migration',
+      reason: 'v1.10.25 adaptive context expansion and deadline-driven completion'
+    });
+  }
+  // v1.10.25 schema v34: expand the default conversational working set.
+  // The encrypted archive remains unbounded at the application event-count
+  // level; active context still follows provider and server resource ceilings.
+  if (activeConfig.schemaVersion < 34) {
+    activeConfig.schemaVersion = 34;
+    const ai = activeConfig.ai || (activeConfig.ai = {});
+    if (ai.historyMessages === 64) ai.historyMessages = DEFAULTS.ai.historyMessages;
+    if (ai.maxInputChars === 64000) ai.maxInputChars = DEFAULTS.ai.maxInputChars;
+    await appendRecord('config.replace', {
+      config: activeConfig,
+      changedBy: 'system:migration',
+      reason: 'v1.10.25 expanded adaptive conversation and memory retrieval context'
+    });
+  }
   activeConfig.menu = merge(DEFAULTS.menu, activeConfig.menu || {});
   activeConfig.commandGuard = merge(DEFAULTS.commandGuard, activeConfig.commandGuard || {});
   activeConfig.security = { ...DEFAULTS.security, ...(activeConfig.security || {}) };
@@ -323,7 +431,7 @@ export async function loadConfig() {
   activeConfig.features = { ...DEFAULTS.features, ...(activeConfig.features || {}) };
   activeConfig.groupMetadata = { ...DEFAULTS.groupMetadata, ...(activeConfig.groupMetadata || {}) };
   activeConfig.codeLab = { ...DEFAULTS.codeLab, ...(activeConfig.codeLab || {}) };
-  activeConfig.ui = { ...DEFAULTS.ui, ...(activeConfig.ui || {}) };
+  activeConfig.ui = merge(DEFAULTS.ui, activeConfig.ui || {});
   configureDatabase(activeConfig.database);
   initialized = true;
   return getConfig();
@@ -341,7 +449,7 @@ export async function updateConfig(mutator, metadata = {}) {
   validateConfig(next);
   await appendRecord('config.replace', { config: next, changedBy: metadata.actor || 'system', reason: metadata.reason || 'configuration update' });
   activeConfig = next;
-  activeConfig.ui = { ...DEFAULTS.ui, ...(activeConfig.ui || {}) };
+  activeConfig.ui = merge(DEFAULTS.ui, activeConfig.ui || {});
   configureDatabase(activeConfig.database);
   return getConfig();
 }
@@ -352,7 +460,7 @@ export async function replaceConfig(next, metadata = {}) {
   validateConfig(normalized);
   await appendRecord('config.replace', { config: normalized, changedBy: metadata.actor || 'owner', reason: metadata.reason || 'configuration replacement' });
   activeConfig = normalized;
-  activeConfig.ui = { ...DEFAULTS.ui, ...(activeConfig.ui || {}) };
+  activeConfig.ui = merge(DEFAULTS.ui, activeConfig.ui || {});
   configureDatabase(activeConfig.database);
   return getConfig();
 }
@@ -360,6 +468,10 @@ export async function replaceConfig(next, metadata = {}) {
 function validateConfig(c) {
   if (!['public', 'self'].includes(c.mode)) throw new Error('mode harus public atau self');
   if (typeof c.ui?.buttonsEnabled !== 'boolean') throw new Error('ui.buttonsEnabled harus boolean');
+  if (typeof c.ui?.fullButton?.enabled !== 'boolean') throw new Error('ui.fullButton.enabled harus boolean');
+  if (c.ui?.fullButton?.strategy !== 'adaptive') throw new Error('ui.fullButton.strategy harus adaptive');
+  if (!Number.isInteger(c.ui?.fullButton?.maxBodyChars) || c.ui.fullButton.maxBodyChars < 300 || c.ui.fullButton.maxBodyChars > 3500) throw new Error('ui.fullButton.maxBodyChars harus 300-3500');
+  if (!Array.isArray(c.ui?.fullButton?.excludedCommands) || c.ui.fullButton.excludedCommands.some(value => typeof value !== 'string' || !/^[a-z0-9][a-z0-9_-]{0,39}$/i.test(value))) throw new Error('ui.fullButton.excludedCommands harus array nama command yang valid');
   if (typeof c.menu?.showDescriptions !== 'boolean') throw new Error('menu.showDescriptions harus boolean');
   if (typeof c.menu?.pagination?.enabled !== 'boolean') throw new Error('menu.pagination.enabled harus boolean');
   if (!Number.isInteger(c.menu?.pagination?.pageSize) || c.menu.pagination.pageSize < 10 || c.menu.pagination.pageSize > 200) throw new Error('menu.pagination.pageSize harus 10-200');
@@ -391,9 +503,11 @@ function validateConfig(c) {
   if (c.ai && (!Array.isArray(c.ai.providerOrder) || c.ai.providerOrder.some(name => !['gemini','groq','deepseek','openai'].includes(name)))) throw new Error('ai.providerOrder berisi provider tidak dikenal');
   if (c.ai && typeof c.ai.freeOnly !== 'boolean') throw new Error('ai.freeOnly harus boolean');
   if (c.ai && (!Number.isInteger(c.ai.timeoutMs) || c.ai.timeoutMs < 1000 || c.ai.timeoutMs > 180000)) throw new Error('ai.timeoutMs harus 1000-180000');
-  if (c.ai && (!Number.isInteger(c.ai.totalBudgetMs) || c.ai.totalBudgetMs < 3000 || c.ai.totalBudgetMs > 120000)) throw new Error('ai.totalBudgetMs harus 3000-120000');
+  if (c.ai && (!Number.isInteger(c.ai.totalBudgetMs) || c.ai.totalBudgetMs < 3000 || c.ai.totalBudgetMs > 180000)) throw new Error('ai.totalBudgetMs harus 3000-180000');
   if (c.ai && (!Number.isInteger(c.ai.coalesceMs) || c.ai.coalesceMs < 0 || c.ai.coalesceMs > 2000)) throw new Error('ai.coalesceMs harus 0-2000');
   if (c.ai && (!Number.isInteger(c.ai.maxOutputTokens) || c.ai.maxOutputTokens < 64 || c.ai.maxOutputTokens > 32768)) throw new Error('ai.maxOutputTokens harus 64-32768');
+  if (c.ai && (!Number.isInteger(c.ai.maxInputChars) || c.ai.maxInputChars < 1000 || c.ai.maxInputChars > 128000)) throw new Error('ai.maxInputChars harus 1000-128000');
+  if (c.ai && (!Number.isInteger(c.ai.historyMessages) || c.ai.historyMessages < 2 || c.ai.historyMessages > 256)) throw new Error('ai.historyMessages harus 2-256');
   for (const key of ['enabled', 'aiExecutionEnabled', 'publicTunnelEnabled', 'websiteBuilderEnabled']) if (typeof c.codeLab?.[key] !== 'boolean') throw new Error(`codeLab.${key} harus boolean`);
   if (!Number.isInteger(c.codeLab?.websiteBuilderConcurrency) || c.codeLab.websiteBuilderConcurrency < 1 || c.codeLab.websiteBuilderConcurrency > 4) throw new Error('codeLab.websiteBuilderConcurrency harus 1-4');
   if (!Number.isInteger(c.codeLab?.websiteBuilderQueueLimit) || c.codeLab.websiteBuilderQueueLimit < 0 || c.codeLab.websiteBuilderQueueLimit > 40) throw new Error('codeLab.websiteBuilderQueueLimit harus 0-40');

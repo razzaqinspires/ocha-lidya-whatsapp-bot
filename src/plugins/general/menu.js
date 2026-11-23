@@ -34,6 +34,7 @@ async function sendMenuPage(sock, message, page) {
 
 export default {
   name: 'menu', aliases: ['help', 'commands'], category: 'general', usage: '[page]',
+  fullButton: false,
   description: 'Daftar command aktif dari plugin registry',
   async execute({ sock, m, args }) { return sendMenuPage(sock, m, args[0] || 1); }
 };

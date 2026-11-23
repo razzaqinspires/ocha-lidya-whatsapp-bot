@@ -68,11 +68,17 @@ The main application logger formats timestamps, severity, component scope, and s
 `whatsapp.recoverInvalidSession` defaults to `true`. When pairing mode has a registered/authenticated local session and WhatsApp rejects that login with disconnect code `401`, the app waits for pending credential writes, moves the existing auth directory to a timestamped sibling ending in `.invalid-<timestamp>-<pid>`, and makes one fresh connection attempt using a new auth directory. The old data is preserved for diagnostics or manual restoration. Recovery is limited to once per process to avoid infinite re-pair loops. Set the flag to `false` to retain the old stop-on-401 behavior.
 
 
-## UI response settings, group metadata policy, and AI speed profile (schema v12)
+## UI response settings, group metadata policy, and AI defaults (current schema v29)
 
 ```js
 ui: {
-  buttonsEnabled: true
+  buttonsEnabled: true, // legacy preference
+  fullButton: {
+    enabled: false,
+    strategy: 'adaptive',
+    maxBodyChars: 1800,
+    excludedCommands: []
+  }
 },
 groupMetadata: {
   initialSync: true,
@@ -81,15 +87,14 @@ groupMetadata: {
 ai: {
   timeoutMs: 3500,
   totalBudgetMs: 14000,
-  maxOutputTokens: 180,
-  historyMessages: 3,
-  maxInputChars: 3500,
-  coalesceMs: 80,
-  maxKeyAttempts: 1
+  maxOutputTokens: 900,
+  historyMessages: 8,
+  maxInputChars: 5000,
+  coalesceMs: 100
 }
 ```
 
-`ui.buttonsEnabled` is retained as a legacy preference and remains readable/writable through `.buttons on/off/status`. For compatibility and copyability, it does not replace ordinary command replies with native-flow messages. All command responses remain text-first until native-flow payloads are validated against the exact WhatsApp clients in use. `groupMetadata.initialSync` allows the one-time `groupFetchAllParticipating()` cache bootstrap. `groupMetadata.fetchCooldownMs` prevents repeated single-group fetches for an uncached group. These settings do not contain secrets and are persisted in the JSONL config journal. Schema v12 applies the low-latency AI Boost profile to known shipped defaults while preserving owner-customized settings. AI provider routing now exhausts eligible keys for key-specific quota/auth failures before moving through the configured provider chain; speed profiles tune request timeouts and output/context budgets without capping the key array. See `AI_ENGINE.md`.
+`ui.buttonsEnabled` remains as a legacy preference. Schema v28 adds `ui.fullButton`, which is opt-in and remains disabled after migration. The verified owner enables the adaptive engine with `.buttons full all`, audits decisions with `.buttons full audit`, and can exclude any plugin by canonical command or alias using `.buttons full exclude add/remove <command|alias>`. The engine selects Quick Reply for 1–3 safe follow-ups, Single Select for 4–8, and text for long, code, progress, or diagnostic output. Commands with explicit UI and reply-session navigation are excluded. `maxBodyChars` is bounded to 300–3,500 characters. Settings are persisted in the JSONL config journal. `groupMetadata.initialSync` allows the one-time `groupFetchAllParticipating()` cache bootstrap. `groupMetadata.fetchCooldownMs` prevents repeated single-group fetches for an uncached group. Schema v29 raises the shipped response/context defaults for more complete grounded answers while preserving owner-customized settings. Memory remains opt-in and per-user; command execution still uses the normal plugin authorization gate. AI provider routing now exhausts eligible keys for key-specific quota/auth failures before moving through the configured provider chain; speed profiles tune request timeouts and output/context budgets without capping the key array. See `COMMAND_BUTTON_ENGINE.md` and `AI_ENGINE.md`.
 
 See [`CONTACTS_AND_GROUP_CACHE.md`](CONTACTS_AND_GROUP_CACHE.md) for the dedicated `contact.jsonl` and group metadata JSONL data design.
 

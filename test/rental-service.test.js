@@ -70,6 +70,38 @@ test('rental order, manual payment verification, activation, quota rollover and 
     assert.equal(approved.order.amount, 5000, 'invoice keeps its snapshotted amount after package changes');
     const approvedAgain = await svc.approvePayment(created.order.id, 'owner', now + 5000);
     assert.equal(approvedAgain.reused, true);
+    const review = await svc.submitRentalReview({ groupJid, reviewerJid: buyer, rating: 5, comment: 'Bot stabil dan proses sewa mudah', now: now + 5200 });
+    assert.equal(review.duplicate, false);
+    assert.equal(review.review.verifiedPurchase, true);
+    const duplicateReview = await svc.submitRentalReview({ groupJid, reviewerJid: buyer, rating: 1, comment: 'Percobaan rating kedua', now: now + 5300 });
+    assert.equal(duplicateReview.duplicate, true, 'one reviewer can submit only one review per approved order');
+    const support = await svc.createRentalSupportTicket({
+      groupJid, requesterJid: buyer, requesterName: 'Pelanggan Uji',
+      category: 'keluhan', message: 'Kuota grup belum terbarui setelah pembayaran.', now: now + 5400
+    });
+    assert.equal(support.duplicate, false);
+    assert.match(support.ticket.id, /^SUP-/);
+    assert.equal(support.ticket.status, 'open');
+    const duplicateSupport = await svc.createRentalSupportTicket({
+      groupJid, requesterJid: buyer, requesterName: 'Pelanggan Uji',
+      category: 'keluhan', message: 'Kuota grup belum terbarui setelah pembayaran.', now: now + 5500
+    });
+    assert.equal(duplicateSupport.duplicate, true, 'duplicate feedback inside the dedupe window reuses the same ticket');
+    await assert.rejects(() => svc.createRentalSupportTicket({
+      groupJid, requesterJid: buyer, category: 'masukan', message: 'API key: rahasia jangan simpan', now: now + 5600
+    }), /Jangan kirim password/);
+    const supportQueue = await svc.listRentalSupportTickets({ status: 'open' });
+    assert.equal(supportQueue.total, 1);
+    const answered = await svc.updateRentalSupportTicket(support.ticket.id, { status: 'answered', response: 'Kuota telah disinkronkan.' }, 'owner', now + 5700);
+    assert.equal(answered.status, 'answered');
+    assert.equal(answered.response, 'Kuota telah disinkronkan.');
+    const answeredQueue = await svc.listRentalSupportTickets({ status: 'answered' });
+    assert.equal(answeredQueue.total, 1);
+    const reviewSummary = await svc.getRentalReviewSummary();
+    assert.equal(reviewSummary.total, 1);
+    assert.equal(reviewSummary.average, 5);
+    assert.equal(reviewSummary.distribution[5], 1);
+    await assert.rejects(() => svc.submitRentalReview({ groupJid, reviewerJid: buyer, rating: 6, comment: '' }), /Rating harus/);
     await metadata.upsertGroupMetadata({ id: groupJid, subject: 'Rental Test', size: 51, participants: Array.from({ length: 51 }, (_, i) => ({ id: '6281234567' + String(100 + i) + '@s.whatsapp.net' })) });
     const overLimit = await svc.getTenantStatus(groupJid, now + 5500);
     assert.equal(overLimit.status, 'over-limit');

@@ -46,3 +46,7 @@ Thumbs.db
 
 # Temporary local Code Lab smoke-test workspaces
 instances/
+
+# Encrypted per-user memory vault and its master key
+data/roo/
+**/data/roo/

@@ -1,5 +1,5 @@
 export default {
-  name: 'about', aliases: ['botinfo'], category: 'general', description: 'Bot identity and build information',
+  name: 'about', aliases: ['botinfo'], category: 'general', aiCallable: true, description: 'Bot identity and build information',
   async execute({ m, config }) {
     const creator = config.bot.publicCreatorDisclosure !== false
       ? `Creator & Owner: ${config.bot.creatorName || config.bot.ownerName}\nOrganization: ${config.bot.organization || 'Razzaq Ventures'}`

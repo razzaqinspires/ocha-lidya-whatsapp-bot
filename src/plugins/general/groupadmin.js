@@ -43,6 +43,11 @@ export default {
   name: 'groupadmin', aliases: ['gadmin', 'grupadmin'], category: 'general',
   usage: '[info|aturan [teks]|aturan hapus|welcome on|off [pesan]|poll <pertanyaan> | <opsi 1> | <opsi 2> | ...|announce <pesan>]',
   description: 'Panel admin grup untuk aturan, sambutan anggota, polling dan pengumuman',
+  ui: { fullButton: { actions: [
+    { label: 'Info Grup', command: 'groupadmin info', description: 'Status sewa, anggota, kuota dan fitur' },
+    { label: 'Baca Aturan', command: 'groupadmin aturan', description: 'Lihat aturan grup yang tersimpan' },
+    { label: 'Menu Admin', command: 'groupadmin help', description: 'Lihat seluruh perangkat admin grup' }
+  ] } },
   async execute({ sock, m, args }) {
     const action = String(args[0] || 'help').toLowerCase();
 

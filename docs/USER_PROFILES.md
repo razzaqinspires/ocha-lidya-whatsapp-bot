@@ -7,9 +7,9 @@
 
 ## XP and levels
 
-Each eligible AI interaction grants 5 XP. The first interaction on a new Asia/Jakarta calendar day grants an additional 10 XP. Daily XP is capped at 100. Message IDs are deduplicated to prevent repeated processing from awarding XP twice.
+A valid first contact on a new Asia/Jakarta calendar day grants base XP plus a daily bonus. Unique, meaningful contributions grant additional XP; repeated low-signal content does not farm XP. A 60-second award cooldown and durable message/content fingerprints prevent rapid farming and duplicate awards. There is no daily XP ceiling or level ceiling. Per-user profile writes are serialized. XP is stored as an arbitrary-precision integer string, beyond JavaScript safe-integer limits.
 
-Cumulative XP required to enter level `L` is `50 * L * (L - 1)`. Rank milestones are Iron (1), Bronze (5), Silver (10), Gold (20), Platinum (35), Diamond (50), and Mythic (75).
+Cumulative XP required to enter level `L` is `50 * L * (L - 1)`. Rank milestones are Iron (1), Bronze (5), Silver (10), Gold (20), Platinum (35), Diamond (50), Mythic (75), Astral (150), Celestial (250), Sovereign (500), Eternal (1000), Paragon (1500), Nova (2500), Cosmic (5000), Apex (10000), Transcendent (25000), Nexus (50000), and Singularity (100000).
 
 ## Activity streaks and achievements
 
@@ -19,11 +19,11 @@ Achievements are derived from aggregate totals, including first contact, convers
 
 ## Relationship role
 
-Relationship role is a non-emotional familiarity tier derived from aggregate interactions and active days: Pengunjung, Kenalan, Teman Ngobrol, Teman Akrab, Sahabat Digital. A verified owner has the fixed role Owner & Creator. The model is instructed not to claim human feelings.
+Relationship role is an operational familiarity tier derived from total interactions, meaningful interactions, active days, tenure, and trust score: Pengunjung, Kenalan, Teman Ngobrol, Teman Akrab, Sahabat Digital, Mitra Tepercaya. A verified owner has the fixed role Owner & Creator. New contacts receive reserved but respectful replies. Only the verified owner in a private chat receives the warmer/affectionate persona; group interactions remain professional. XP/rank/trust are not access permissions, and the model is instructed not to claim human feelings.
 
 ## Stored data
 
-Each user has a separate `ai.user.profile` record in the append-only JSONL repository. It stores display name, XP, level, rank, aggregate interactions, active days, current/best streaks, daily XP counters, bounded recent message IDs, greeting count, and broad communication-style counters. It does not store raw messages in the profile record.
+Each user has a separate encrypted profile snapshot inside `data/roo/<sha256-user-id>/profile/`. It stores display name, XP, level, rank, aggregate interactions, active days, current/best streaks, daily XP counters, message IDs and content fingerprints used for durable award deduplication, greeting count, and broad communication-style counters. It does not store raw messages in the profile record. Full private conversation turns are archived separately in the same user’s encrypted monthly journal; model context retrieval is bounded and relevance-ranked.
 
 ## Public creator identity
 
