@@ -1,5 +1,38 @@
 # Changelog
 
+## [1.10.28] - 2026-11-24
+
+### Added
+- Added contextual feature-build intent resolution. A short confirmation such as `buat aja` is linked only to a recent user request plus Ocha's preceding offer to prepare that feature.
+- Added private, encrypted owner feature backlog events (`feature.requested` / `feature.status`) with deduplication, acceptance criteria, status history, and account-scoped retrieval.
+- Added owner-only `.features list|all|show|progress|complete|cancel|reopen` to review development requests from the authenticated owner's own User Vault.
+- Added focused tests for intent confirmation, encrypted storage, cross-account isolation, append-only status changes, and explicit opt-in interactive UI.
+
+### Changed
+- Unsupported game requests now receive a conversational development offer instead of a hard stop. A confirmed owner request is recorded as a proposal; feature source is never self-written or self-installed by the model.
+- Unknown natural-language command requests now ask for the desired outcome and offer capability matching or a development request instead of a blunt registry error. Restricted command execution remains backend-gated.
+- AI-generated quick replies, lists, copy CTA, and URL CTA are ignored unless the current user explicitly requests the corresponding interactive presentation. Ordinary answers remain plain text.
+- Capability grounding now instructs the model to find a legitimate alternative or prepare a feature proposal rather than terminating at an unavailable-feature statement.
+
+### Validation
+- Feature intent, encrypted vault lifecycle, owner backlog isolation, AI response UI, and command-intent tests: 13 passed, 0 failed.
+- Syntax validation and full test suite are run separately in the release environment; provider and WhatsApp live behavior still require target-server validation.
+
+## [1.10.26] - 2026-11-23
+
+### Changed
+- Re-audited official provider model IDs, pricing, free-tier eligibility, and rate-limit documentation. Model-list visibility is no longer treated as proof of free access or inference health.
+- Groq free-plan routing now selects only the verified `openai/gpt-oss-120b` primary for this deployment; Gemini `gemini-3.8-flash` remains a documented free-tier secondary. DeepSeek and OpenAI remain excluded from free-only routing because their published inference APIs are usage-priced.
+- Added policy version and research timestamp to the persisted model catalog. Unknown or merely visible models cannot be auto-promoted into free-only routing.
+- Added Groq-specific request compaction (18,000 input characters) and 2,048 output-token cap to mitigate the observed 8K TPM pressure; default requested output budget reduced from 32,768 to 4,096 tokens.
+- HTTP 429 TPM/RPM events now receive short rate-limit cooldowns instead of being mislabeled as daily quota exhaustion. HTTP 503 remains a transient provider capacity/network failure, not an invalid model/key signal.
+- AI provider exhaustion remains silent to the requesting user. The owner receives one compact private maintenance report; provider diagnostics are not echoed into other users' chats.
+
+### Validation
+- Provider/model catalog, free-only routing, TPM fitting, provider error classification, and fallback tests: 20 passed, 0 failed.
+- Syntax check: 184 JavaScript files.
+- Official references and observed-log diagnosis: `docs/AI_MODEL_CATALOG.md`.
+
 ## [1.10.25] - 2026-11-23
 
 ### Added
@@ -281,6 +314,21 @@
 
 # Changelog
 
+## [1.10.26] - 2026-11-23
+
+### Changed
+- Re-audited official provider model IDs, pricing, free-tier eligibility, and rate-limit documentation. Model-list visibility is no longer treated as proof of free access or inference health.
+- Groq free-plan routing now selects only the verified `openai/gpt-oss-120b` primary for this deployment; Gemini `gemini-3.8-flash` remains a documented free-tier secondary. DeepSeek and OpenAI remain excluded from free-only routing because their published inference APIs are usage-priced.
+- Added policy version and research timestamp to the persisted model catalog. Unknown or merely visible models cannot be auto-promoted into free-only routing.
+- Added Groq-specific request compaction (18,000 input characters) and 2,048 output-token cap to mitigate the observed 8K TPM pressure; default requested output budget reduced from 32,768 to 4,096 tokens.
+- HTTP 429 TPM/RPM events now receive short rate-limit cooldowns instead of being mislabeled as daily quota exhaustion. HTTP 503 remains a transient provider capacity/network failure, not an invalid model/key signal.
+- AI provider exhaustion remains silent to the requesting user. The owner receives one compact private maintenance report; provider diagnostics are not echoed into other users' chats.
+
+### Validation
+- Provider/model catalog, free-only routing, TPM fitting, provider error classification, and fallback tests: 20 passed, 0 failed.
+- Syntax check: 184 JavaScript files.
+- Official references and observed-log diagnosis: `docs/AI_MODEL_CATALOG.md`.
+
 
 ## [1.8.0] - 2026-11-20
 
@@ -332,6 +380,21 @@
 - AI review is advisory, not a safety proof. Scoped destructive actions require explicit confirmation; root/disk/host-wide critical patterns are blocked.
 
 # Changelog
+
+## [1.10.26] - 2026-11-23
+
+### Changed
+- Re-audited official provider model IDs, pricing, free-tier eligibility, and rate-limit documentation. Model-list visibility is no longer treated as proof of free access or inference health.
+- Groq free-plan routing now selects only the verified `openai/gpt-oss-120b` primary for this deployment; Gemini `gemini-3.8-flash` remains a documented free-tier secondary. DeepSeek and OpenAI remain excluded from free-only routing because their published inference APIs are usage-priced.
+- Added policy version and research timestamp to the persisted model catalog. Unknown or merely visible models cannot be auto-promoted into free-only routing.
+- Added Groq-specific request compaction (18,000 input characters) and 2,048 output-token cap to mitigate the observed 8K TPM pressure; default requested output budget reduced from 32,768 to 4,096 tokens.
+- HTTP 429 TPM/RPM events now receive short rate-limit cooldowns instead of being mislabeled as daily quota exhaustion. HTTP 503 remains a transient provider capacity/network failure, not an invalid model/key signal.
+- AI provider exhaustion remains silent to the requesting user. The owner receives one compact private maintenance report; provider diagnostics are not echoed into other users' chats.
+
+### Validation
+- Provider/model catalog, free-only routing, TPM fitting, provider error classification, and fallback tests: 20 passed, 0 failed.
+- Syntax check: 184 JavaScript files.
+- Official references and observed-log diagnosis: `docs/AI_MODEL_CATALOG.md`.
 
 
 ## [1.7.1] - 2026-11-19
@@ -764,3 +827,12 @@ All notable changes to Ocha Lidya are recorded here. The newest release is liste
 ### Safety
 - QRIS is static and payment reports never activate service automatically. Owner must verify settlement before approval. Screenshots are not treated as proof of settlement.
 - Automatic payment webhooks, dynamic QRIS, refund/reversal, and payment-provider reconciliation are not included without authorized gateway credentials.
+
+## v1.10.28 — Part 3: Stateful Game Engine
+
+- Added a real Tic-Tac-Toe plugin with `.ttt`, `.tictactoe`, and `.xo` commands.
+- Added deterministic Minimax opponent, legal move validation, win/draw detection, surrender, status, and restart controls.
+- Persisted every accepted game transition in the player's encrypted User Vault journal.
+- Added private-chat natural-language routing for game invitations and numeric moves; group game sessions remain disabled to avoid shared-state ambiguity.
+- Added fail-closed behavior when User Vault integrity/authentication checks fail.
+- Added regression tests including exhaustive legal human move sequences against Minimax.

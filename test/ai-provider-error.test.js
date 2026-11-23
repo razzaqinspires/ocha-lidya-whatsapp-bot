@@ -53,3 +53,23 @@ test('provider keys rotate fairly between successful requests', async () => {
     assert.deepEqual(JSON.parse(line), ['Bearer rotate-key-one', 'Bearer rotate-key-two', 'Bearer rotate-key-three', 'Bearer rotate-key-one']);
   } finally { await fs.rm(temp, { recursive: true, force: true }); }
 });
+
+
+test('HTTP 429 TPM is classified as a short rate limit, not daily quota exhaustion', async () => {
+  const { classifyProviderFailure } = await import('../src/ai/providers.js');
+  const result = classifyProviderFailure({
+    status: 429,
+    retryAfter: '2',
+    message: 'Rate limit reached for model in organization on tokens per minute (TPM): Limit 8000, Used 2741, Requested 5445. Please try again in 1.395s.'
+  });
+  assert.equal(result.status, 'rate_limited');
+  assert.equal(result.reason, 'per-minute token/request rate limit');
+  assert.ok(result.retryAt <= Date.now() + 3000);
+});
+
+test('HTTP 503 capacity outage is provider_error and never model/key invalid', async () => {
+  const { classifyProviderFailure } = await import('../src/ai/providers.js');
+  const result = classifyProviderFailure({ status: 503, message: 'This model is currently experiencing high demand.' });
+  assert.equal(result.status, 'provider_error');
+  assert.equal(result.reason, 'provider/network temporarily unavailable');
+});

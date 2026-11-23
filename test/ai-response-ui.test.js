@@ -11,7 +11,7 @@ test('validated quick reply plan is extracted without leaking its internal marke
       { title: 'Contoh', prompt: 'Berikan satu contoh singkat.' },
       { title: 'Ringkas', prompt: 'Ringkas kembali jawaban tadi.' }
     ]
-  }), 'Jelaskan ini');
+  }), 'Jelaskan ini dengan tombol pilihan');
   assert.equal(result.text, 'Teks utama.');
   assert.equal(result.plan.type, 'quick_reply');
   assert.equal(result.plan.items.length, 2);
@@ -28,10 +28,17 @@ test('command-like follow-up prompts are rejected from AI-generated buttons', ()
 test('URL CTA requires the exact destination to be supplied by the user', () => {
   const payload = { type: 'url', label: 'Buka tautan', url: 'https://example.com' };
   assert.equal(extractAIResponsePlan(wrap(payload), 'Cari tahu tentang ini').plan, null);
-  assert.equal(extractAIResponsePlan(wrap(payload), 'Buka https://example.com').plan.type, 'url');
+  assert.equal(extractAIResponsePlan(wrap(payload), 'Buka https://example.com dengan tombol tautan').plan.type, 'url');
 });
 
 test('copy CTA only permits a code that is visible in the reply body', () => {
   assert.equal(extractAIResponsePlan(wrap({ type: 'copy', copyCode: 'SECRET-123' }), 'Teks biasa').plan, null);
-  assert.equal(extractAIResponsePlan(`Gunakan kode OCHA-123.\n${wrap({ type: 'copy', copyCode: 'OCHA-123' })}`, 'Salin kode').plan.type, 'copy');
+  assert.equal(extractAIResponsePlan(`Gunakan kode OCHA-123.\n${wrap({ type: 'copy', copyCode: 'OCHA-123' })}`, 'Buat tombol salin untuk kode ini').plan.type, 'copy');
+});
+
+test('AI response remains plain text unless the user explicitly asks for interactive UI', () => {
+  const payload = { type: 'quick_reply', items: [{ title: 'A', prompt: 'Pilih A' }] };
+  const result = extractAIResponsePlan(wrap(payload), 'Jelaskan pilihan yang tersedia.');
+  assert.equal(result.plan, null);
+  assert.equal(result.text, 'Teks utama.');
 });

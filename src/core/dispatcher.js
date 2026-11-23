@@ -11,6 +11,7 @@ import { isUserTemporarilyBanned } from './command-governor.js';
 import { BILLING_EXEMPT_COMMANDS } from '../rental/catalog.js';
 import { getTenantStatus, consumeTenantQuota } from '../rental/service.js';
 import { executeRegisteredPlugin } from './plugin-execution.js';
+import { getTicTacToeSession } from '../games/tictactoe.js';
 
 const rentalNoticeAt = new Map();
 function notifyRentalBlockOnce(key, now = Date.now()) {
@@ -85,6 +86,31 @@ export async function dispatch(sock, message) {
       parsed: { ...parsed, command: plugin.name, args: parsed.args, text: parsed.text },
       config, source: 'dispatcher'
     });
+  }
+
+  // Stateful game routing runs before the LLM. Natural-language game starts and
+  // numeric moves are resolved only against the caller's private persisted session.
+  if (!message.isGroup && !hasPrefix) {
+    const gameText = body.toLowerCase();
+    const startsTicTacToe = /(?:main|bermain|ayo|yuk|aj[a]?k).{0,35}(?:tic[\s-]?tac[\s-]?toe|tictactoe|permainan\s+xo)|(?:tic[\s-]?tac[\s-]?toe|tictactoe).{0,35}(?:main|bermain|yuk|mulai)/i.test(gameText);
+    const playerId = String(message.sender || message.key?.participant || '').replace(/:\d+(?=@)/, '');
+    let activeGame = null;
+    if (playerId) {
+      try { activeGame = await getTicTacToeSession(playerId); } catch (error) {
+        // A vault integrity/decryption error must fail closed; do not fall back to LLM simulation.
+        if (error.code?.startsWith('OCHA_VAULT_')) return;
+        throw error;
+      }
+    }
+    const isMove = activeGame?.status === 'playing' && /^[1-9]$/.test(gameText);
+    const isGameControl = activeGame?.status === 'playing' && /^(?:status|papan|menyerah|stop|berhenti|ulang|reset)$/i.test(gameText);
+    if (startsTicTacToe || isMove || isGameControl) {
+      const gamePlugin = getPlugin('tictactoe');
+      if (gamePlugin) {
+        const args = startsTicTacToe ? ['mulai'] : [gameText];
+        return executeRegisteredPlugin({ sock, message, plugin: gamePlugin, parsed: { command: gamePlugin.name, args, text: args.join(' '), prefix: '' }, config, source: 'natural-game-intent' });
+      }
+    }
   }
 
   // A prefixed message is always command intent. Unknown commands must never fall through to AI.

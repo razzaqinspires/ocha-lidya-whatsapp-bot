@@ -155,3 +155,13 @@ All `.memori` operations are limited to the sender's own private chat: `.memori 
 ## Long-running reply continuity and expanded reasoning envelope (v1.10.25)
 
 Reply chains no longer fork solely because a fixed answer-depth counter is reached. Every verified AI reply anchor keeps its parent pointer, cycle detection protects against corrupted loops, and only a recent tail is selected for the prompt. The encrypted private archive remains the long-term source of truth. Default history/input/output/deadline values are expanded to 96 turns, 96,000 input characters, 32,768 requested output tokens, and 180 seconds total task budget. Continuation attempts use the remaining job deadline, never a fresh independent budget.
+
+## Adaptive conversation intent and feature backlog (v1.10.27)
+
+Ocha distinguishes an unavailable capability from an unachievable user goal. If a game is not installed, the first request receives a short, contextual offer to prepare the feature. A follow-up such as `buat aja` is accepted only when recent history contains the original game request and the assistant's previous offer. The game key is recovered from that prior user turn, not guessed from the confirmation text.
+
+A verified owner can confirm a feature proposal only in a private DM. The backend writes a `feature.requested` event to the owner's encrypted User Vault. Status changes are appended as `feature.status` events. The owner-only `.features` plugin can list, inspect, and update those requests. This workflow creates a development backlog entry; it does not generate or install plugin source. Arbitrary plugin generation remains in the separate staged `.createcmd` owner workflow.
+
+The current proposal catalog includes Tic-Tac-Toe, Sudoku, Chess, and UNO. Each game proposal includes concrete acceptance criteria for server-side state, rule validation, user isolation, restart recovery, and legal game transitions. The requested game plugin is considered active only after source installation, registry reload, and runtime tests.
+
+AI-generated interactive response plans are now opt-in. The current user message must explicitly request buttons/list, a copy button, or a URL button. A question about buttons, or a report that buttons are broken, does not grant consent to send an interactive response. The response parser independently validates the plan and falls back to plain text when the request or payload fails validation.

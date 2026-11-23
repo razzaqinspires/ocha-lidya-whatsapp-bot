@@ -38,7 +38,7 @@ export function buildRuntimeCapabilityPrompt({ isOwner = false } = {}) {
     ...commandLines,
     'Kapabilitas AI yang benar-benar terdaftar:',
     ...(capabilities.length ? capabilities : ['- Tidak ada kapabilitas AI yang terdaftar.']),
-    'Aturan grounding: hanya klaim command/fitur yang tercantum di registry ini atau dikonfirmasi backend. Jika tidak tercantum, jawab bahwa fitur belum tersedia. Jangan membuat-buat game, command, tombol, file, gambar, video, atau hasil tindakan. Tanda AI-callable menunjukkan command boleh diminta melalui bahasa alami; semua izin dan guard tetap diperiksa server.'
+    'Aturan grounding dan penyelesaian tugas: registry ini adalah sumber kebenaran kemampuan yang terpasang. Jika kemampuan yang diminta belum aktif, jangan berhenti pada penolakan generik. Kenali tujuan pengguna, tawarkan jalur terdekat yang benar-benar tersedia, atau buat proposal pengembangan bila pengguna secara eksplisit meminta fitur dibuat. Persetujuan pengembangan hanya boleh dicatat melalui workflow feature-request backend; model tidak boleh menulis file, memasang plugin, mengubah konfigurasi, atau mengklaim fitur aktif. Jangan membuat-buat game, command, state permainan, file, gambar, video, tombol, atau hasil tindakan. Tanda AI-callable menunjukkan command boleh diminta melalui bahasa alami; semua izin dan guard tetap diperiksa server.'
   ].join('\n');
 }
 

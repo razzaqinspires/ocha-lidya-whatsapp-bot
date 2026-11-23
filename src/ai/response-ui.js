@@ -20,6 +20,14 @@ function safeHttpsUrl(value) {
   } catch { return null; }
 }
 
+function explicitlyRequestedUI(userText, type) {
+  const value = String(userText || '').toLowerCase();
+  const asksForUI = /\b(?:pakai|gunakan|tampilkan|kirim(?:kan)?|buat(?:kan)?|berikan)\b.{0,36}\b(?:tombol|button|quick[ -]?reply|list|daftar pilihan|menu pilihan)\b|\b(?:tombol|button|quick[ -]?reply|list|daftar pilihan|menu pilihan)\b.{0,28}\b(?:pakai|gunakan|tampilkan|kirim|buat|berikan)\b|\bdengan\s+(?:tombol|button|quick[ -]?reply|list|daftar pilihan|menu pilihan)\b/i.test(value);
+  if (type === 'copy') return /\b(?:tombol\s+(?:salin|copy)|copy\s+button|pakai\s+(?:tombol\s+)?copy)\b/i.test(value);
+  if (type === 'url') return /\b(?:tombol\s+(?:url|tautan|link)|cta\s+url|tautan\s+dengan\s+tombol)\b/i.test(value);
+  return asksForUI;
+}
+
 export function extractAIResponsePlan(input, userText = '') {
   const raw = String(input || '');
   const start = raw.lastIndexOf(OPEN);
@@ -34,6 +42,9 @@ export function extractAIResponsePlan(input, userText = '') {
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { text: baseText, plan: null };
   const type = String(parsed.type || '').toLowerCase();
   if (!['quick_reply', 'list', 'copy', 'url'].includes(type)) return { text: baseText, plan: null };
+  // Interactive output is opt-in. Model-generated UI markers are ignored unless
+  // the current user message explicitly asks for that interaction style.
+  if (!explicitlyRequestedUI(userText, type)) return { text: baseText, plan: null };
 
   const commandLike = /(?:jalankan|eksekusi|run|execute)\s+(?:perintah|command)?\s*[.!/#]?[a-z][a-z0-9_-]*/i;
   let items = Array.isArray(parsed.items) ? parsed.items : [];

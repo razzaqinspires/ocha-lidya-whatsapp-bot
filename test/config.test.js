@@ -26,7 +26,7 @@ test('config facade replays persistent config.replace events from JSONL', async 
     assert.equal(first.getConfig().ai.timeoutMs, 60000);
     assert.deepEqual(first.getConfig().ai.providerOrder, ['groq', 'gemini', 'deepseek', 'openai']);
     assert.equal(first.getConfig().ai.totalBudgetMs, 180000);
-    assert.equal(first.getConfig().ai.maxOutputTokens, 32768);
+    assert.equal(first.getConfig().ai.maxOutputTokens, 4096);
     assert.equal(first.getConfig().ai.historyMessages, 96);
     assert.equal(first.getConfig().ai.maxInputChars, 96000);
     assert.equal(first.getConfig().ai.freeOnly, true);
@@ -178,7 +178,7 @@ test('schema v11 applies AI Boost only to shipped defaults and preserves owner c
     const line = result.stdout.split(/\r?\n/).find(value => value.startsWith('BOOST_MIGRATION:'));
     assert.ok(line, result.stdout);
     assert.deepEqual(JSON.parse(line.slice('BOOST_MIGRATION:'.length)), {
-      schemaVersion: 34, timeoutMs: 60000, totalBudgetMs: 180000, maxOutputTokens: 32768,
+      schemaVersion: 34, timeoutMs: 60000, totalBudgetMs: 180000, maxOutputTokens: 4096,
       historyMessages: 96, coalesceMs: 100, groqModel: 'owner-custom-model'
     });
   } finally {
@@ -274,7 +274,7 @@ test('schema v34 expands shipped AI defaults while preserving owner-tuned values
     assert.ok(line, result.stdout);
     assert.deepEqual(JSON.parse(line.slice('V32_RESULT:'.length)), {
       schemaVersion: 34, timeoutMs: 60000, totalBudgetMs: 180000,
-      maxOutputTokens: 32768, historyMessages: 96, maxInputChars: 96000,
+      maxOutputTokens: 4096, historyMessages: 96, maxInputChars: 96000,
       freeOnly: false, model: 'owner-selected-model'
     });
   } finally {

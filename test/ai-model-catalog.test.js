@@ -20,6 +20,8 @@ test('free model selection intersects live API catalogue with official free-tier
   assert.equal(entry.recommendedFreeModel, 'gemini-3.8-flash');
   assert.equal(entry.recommendedPaidModel, 'gemini-3.1-pro-preview');
   assert.deepEqual(entry.unclassifiedChatModels, ['gemini-next-preview']);
+  assert.deepEqual(MODEL_ACCESS_POLICY.groq.freeModels, ['openai/gpt-oss-120b']);
+  assert.deepEqual(MODEL_ACCESS_POLICY.gemini.freeModels, ['gemini-3.8-flash']);
   assert.deepEqual(MODEL_ACCESS_POLICY.deepseek.freeModels, []);
   assert.deepEqual(MODEL_ACCESS_POLICY.openai.freeModels, []);
 });

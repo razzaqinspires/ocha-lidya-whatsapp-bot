@@ -121,7 +121,7 @@ function retryAtFromProvider(error, fallback) {
   const timestamp = Number.isFinite(seconds) && seconds > 0 ? Date.now() + seconds * 1000 : Date.parse(raw);
   return Number.isFinite(timestamp) && timestamp > Date.now() ? timestamp : fallback;
 }
-function classifyFailure(error) {
+export function classifyProviderFailure(error) {
   const status = Number(error?.status || 0);
   const message = String(error?.message || '').toLowerCase();
   if (status === 401) {
@@ -137,10 +137,14 @@ function classifyFailure(error) {
       : { status: 'forbidden', permanent: true, retryAt: Date.now() + 60 * 60_000, reason: 'forbidden / permission or project restriction' };
   }
   if (status === 429) {
-    const daily = /quota|daily|per.day|resource_exhausted|billing|limit.*exceed/.test(message);
-    return daily
-      ? { status: 'daily_limit', permanent: false, retryAt: retryAtFromProvider(error, nextUtcDay()), reason: 'daily quota exhausted' }
-      : { status: 'rate_limited', permanent: false, retryAt: Date.now() + 30_000, reason: 'temporary rate limit' };
+    // Groq and other OpenAI-compatible gateways distinguish per-minute token
+    // pressure from daily quota exhaustion in the response body. Do not turn a
+    // TPM/RPM incident into a 24-hour daily-limit cooldown.
+    const perMinute = /tokens? per minute|\btpm\b|requests? per minute|\brpm\b|rate limit reached|try again in [0-9.]+s/.test(message);
+    const daily = !perMinute && /daily|per.day|requests? per day|tokens? per day|resource_exhausted|billing|quota.*exceed|exceed.*quota/.test(message);
+    if (daily) return { status: 'daily_limit', permanent: false, retryAt: retryAtFromProvider(error, nextUtcDay()), reason: 'daily/account quota exhausted' };
+    const retryAt = retryAtFromProvider(error, Date.now() + (perMinute ? 15_000 : 30_000));
+    return { status: 'rate_limited', permanent: false, retryAt, reason: perMinute ? 'per-minute token/request rate limit' : 'temporary rate limit' };
   }
   if (status === 402) return { status: 'insufficient_balance', permanent: true, retryAt: Date.now() + 6 * 60 * 60_000, reason: 'provider account balance / billing credit insufficient' };
   if (status === 400 || status === 404 || status === 422) return { status: 'request_or_model_error', permanent: false, retryAt: Date.now() + 5 * 60_000, reason: 'request or model unsupported; key validity not proven' };
@@ -404,7 +408,7 @@ export async function generateWithProvider(name, messages, options = {}) {
       if (eligibleAll.length) keyRotationCursor.set(name, (cursor + attemptsMade) % eligibleAll.length);
       return { ...result, provider: name, model: options.publicModel || 'Nexora-2.0-Flash', keyFingerprint: stat.fingerprint, latencyMs: elapsed };
     } catch (error) {
-      lastError = error; const classified = classifyFailure(error);
+      lastError = error; const classified = classifyProviderFailure(error);
       stat.failures++; stat.status = classified.status; stat.reason = classified.reason; stat.retryAt = classified.retryAt; stat.lastErrorAt = new Date().toISOString(); stat.lastHttpStatus = error.status || null;
       const pm = providerMetrics.get(name) || { successes: 0, failures: 0, averageLatencyMs: null };
       pm.failures++; pm.lastLatencyMs = Date.now() - started; pm.lastStatus = classified.status; providerMetrics.set(name, pm);
@@ -438,6 +442,38 @@ export async function generateWithProvider(name, messages, options = {}) {
  * unsupported model/request errors and billing failures hand off immediately.
  * Key cooldowns are respected and no provider receives an unbounded retry pass.
  */
+
+/** Keep free-plan Groq requests below the documented 8K TPM ceiling. The
+ * model catalog may advertise a 131K context window, but that is not the
+ * account's per-minute allowance. Preserve system + newest user turn first. */
+export function fitMessagesToProviderBudget(provider, messages, { maxChars } = {}) {
+  if (provider !== 'groq') return messages;
+  const budget = Math.max(4000, Number(maxChars) || 18000);
+  const rows = Array.isArray(messages) ? messages : [];
+  const system = rows.find(row => row?.role === 'system');
+  const rest = rows.filter(row => row !== system);
+  const latestUserIndex = rest.map(row => row?.role).lastIndexOf('user');
+  const latestUser = latestUserIndex >= 0 ? rest[latestUserIndex] : rest.at(-1);
+  const selected = [];
+  let used = 0;
+  const add = row => {
+    if (!row || selected.includes(row)) return;
+    const content = String(row.content ?? '');
+    const remaining = budget - used;
+    if (remaining <= 0) return;
+    const fitted = content.length > remaining
+      ? { ...row, content: content.slice(-remaining) }
+      : row;
+    selected.push(fitted);
+    used += String(fitted.content ?? '').length;
+  };
+  add(system);
+  add(latestUser);
+  for (let index = rest.length - 1; index >= 0; index--) add(rest[index]);
+  const order = new Map(rows.map((row, index) => [row, index]));
+  return selected.sort((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0));
+}
+
 export async function generateWithFallback(providerOrder, messages, options = {}) {
   await initializeProviderKeys();
   const order = [...new Set((Array.isArray(providerOrder) ? providerOrder : [])
@@ -489,12 +525,19 @@ export async function generateWithFallback(providerOrder, messages, options = {}
       break;
     }
     try {
-      const requestOptions = { ...options, maxKeyAttempts: undefined };
+      const requestMessages = fitMessagesToProviderBudget(provider, messages, { maxChars: options.providerInputCharLimits?.[provider] });
+      const requestOptions = {
+        ...options,
+        maxKeyAttempts: undefined,
+        maxOutputTokens: provider === 'groq'
+          ? Math.min(Number(options.maxOutputTokens) || 2048, Number(options.groqMaxOutputTokens) || 2048)
+          : options.maxOutputTokens
+      };
       delete requestOptions.onProviderCheckpoint;
       delete requestOptions.deadlineAt;
       delete requestOptions.totalBudgetMs;
       requestOptions.timeoutMs = Math.max(1000, Math.min(Number(options.timeoutMs) || remainingBudget, remainingBudget));
-      const result = await generateWithProvider(provider, messages, requestOptions);
+      const result = await generateWithProvider(provider, requestMessages, requestOptions);
       const fallback = {
         order, attemptedProviders: attempted,
         fallbackUsed: index > 0,

@@ -2,6 +2,12 @@
 
 Ocha Lidya is a modular WhatsApp automation framework built with native Node.js ESM and `@whiskeysockets/baileys`. The project separates WhatsApp transport, message serialization, command dispatch, plugin execution, persistent configuration, and durable JSONL storage.
 
+## Adaptive conversation intelligence, stateful games, and feature-request workflow (v1.10.28)
+
+Ocha now resolves short confirmations such as `buat aja` against the immediately preceding private conversation context. If the owner asks to play a game that is not installed, Ocha responds conversationally with a practical development offer; after owner confirmation in a private DM, the request is recorded as an encrypted `feature.requested` event in that owner's User Vault. It does not write source code, install plugins, or claim a capability is active. The owner-only `.features list|all|show <id>|progress <id>|complete <id>|cancel <id>|reopen <id>` command reviews and tracks the private development backlog.
+
+AI interactive UI is now opt-in at the message level: natural-language AI responses remain plain text unless the current user message explicitly requests buttons, a list, copy action, or URL CTA. The response parser independently verifies that request and continues to reject command-like follow-up actions, unsafe URLs, and copy codes not shown in the response. See `docs/ADAPTIVE_CONVERSATION_INTELLIGENCE.md`.
+
 ## Persistent Ocha identity, isolated roo memory, and expanded AI reasoning envelope (v1.10.25)
 
 The AI prompt now receives the live plugin/capability registry, so it can explain only features that actually exist. Explicit natural-language requests such as `tolong jalankan perintah ping` are resolved against the active plugin registry and are executable only for plugins explicitly marked `aiCallable: true`. The current allowlist is `.ping`, `.about`, and `.profile`; all calls pass the same authentication, role, quota, anti-spam, cooldown, and chat-scope checks as direct commands. Owner/system/developer commands remain direct-command-only.
@@ -732,3 +738,7 @@ The internal native-flow registry supports lossless parameter forwarding for the
 YouTube commands use `yt-dlp` plus FFmpeg/ffprobe installed on the host; these are system tools, not npm dependencies. `.yts`, `.ytmp3`, `.ytmp4`, and audio-only `.ytm` are documented in [`docs/YOUTUBE_COMMANDS.md`](docs/YOUTUBE_COMMANDS.md). The current bot environment variables support executable path and download-size/duration limits; live retrieval still depends on YouTube availability and format changes.
 
 See `docs/RENTAL_100_FEATURE_CATALOG.md` for the distinction between implemented capabilities and the roadmap. The catalog does not market dynamic QR, automatic refunds, payment webhooks or a customer web dashboard as delivered.
+
+## Tic-Tac-Toe game
+
+Private chat: `.ttt mulai [x|o]`, then send a position `1`–`9`, or use `.ttt status`, `.ttt menyerah`, and `.ttt ulang`. Natural invitations such as `main tictactoe yuk` are routed to the same persisted game session. Game state is stored in the player's encrypted User Vault; group play is not enabled.

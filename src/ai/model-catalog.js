@@ -5,6 +5,8 @@ import { listProviderModels, providerNames, reloadProviderKeyVault } from './pro
 import { logger } from '../core/logger.js';
 
 export const MODEL_CATALOG_INTERVAL_MS = 24 * 60 * 60 * 1000;
+export const MODEL_POLICY_RESEARCHED_AT = '2026-11-23';
+export const MODEL_POLICY_VERSION = 2;
 const SCHEDULER_RETRY_MS = 60 * 60 * 1000;
 const SCHEDULER_CONTENTION_RETRY_MS = 2 * 60 * 1000;
 const MAX_STALE_SELECTION_MS = 7 * 24 * 60 * 60 * 1000;
@@ -18,16 +20,22 @@ const WORKER_STATUS_FILE = path.resolve('data/ai-model-catalog-worker.json');
 // These allowlists are based on provider pricing/rate-limit documentation.
 export const MODEL_ACCESS_POLICY = Object.freeze({
   groq: Object.freeze({
-    tier: 'free-plan-available',
-    freeModels: ['openai/gpt-oss-120b', 'openai/gpt-oss-20b', 'qwen/qwen3.8-27b'],
-    preferredFree: ['openai/gpt-oss-120b', 'openai/gpt-oss-20b', 'qwen/qwen3.8-27b'],
+    // Keep the production fallback conservative: GPT-OSS 120B is the verified
+    // primary model for this deployment. Other visible models are not silently
+    // promoted merely because the Models endpoint lists them.
+    tier: 'free-plan-access-subject-to-account-quotas; usage-priced-on-developer-tier',
+    freeModels: ['openai/gpt-oss-120b'],
+    preferredFree: ['openai/gpt-oss-120b'],
     preferredPaid: ['openai/gpt-oss-120b', 'openai/gpt-oss-20b'],
-    docs: ['https://console.groq.com/docs/models', 'https://console.groq.com/docs/rate-limits', 'https://console.groq.com/docs/billing-faqs']
+    docs: ['https://console.groq.com/docs/models', 'https://console.groq.com/docs/rate-limits', 'https://console.groq.com/docs/billing-faqs', 'https://console.groq.com/docs/deprecations']
   }),
   gemini: Object.freeze({
-    tier: 'free-tier-available-limited-models',
-    freeModels: ['gemini-3.8-flash', 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'],
-    preferredFree: ['gemini-3.8-flash', 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'],
+    // Google documents Gemini 3.8 Flash as having a free API tier. A 503 from
+    // the inference endpoint is a capacity/service incident, not proof that
+    // the model ID is incompatible. Keep it as secondary free-tier fallback.
+    tier: 'official-free-tier-available-with-model-and-project-quotas',
+    freeModels: ['gemini-3.8-flash'],
+    preferredFree: ['gemini-3.8-flash'],
     preferredPaid: ['gemini-3.1-pro-preview', 'gemini-3.8-flash'],
     docs: ['https://ai.google.dev/gemini-api/docs/models', 'https://ai.google.dev/gemini-api/docs/pricing']
   }),
@@ -224,7 +232,9 @@ export async function refreshModelCatalog({ force = false, timeoutMs = 10000 } =
         checkedAt,
         nextCheckAt: new Date(Date.parse(checkedAt) + MODEL_CATALOG_INTERVAL_MS).toISOString(),
         intervalHours: 24,
-        source: 'provider-authenticated-model-list-and-official-free-tier-policy',
+        source: 'provider-authenticated-model-list-intersected-with-versioned-official-access-policy',
+        policyVersion: MODEL_POLICY_VERSION,
+        policyResearchedAt: MODEL_POLICY_RESEARCHED_AT,
         sources: Object.fromEntries(providerNames.map(name => [name, MODEL_ACCESS_POLICY[name].docs])),
         providers
       };

@@ -48,3 +48,19 @@ test('free-tier-only fallback skips paid DeepSeek/OpenAI and reaches Gemini afte
     await fs.rm(temp, { recursive: true, force: true });
   }
 });
+
+
+test('Groq free-tier request fitting preserves system and latest user turn under TPM budget', async () => {
+  const { fitMessagesToProviderBudget } = await import(pathToFileURL(path.resolve(original, 'src/ai/providers.js')).href);
+  const messages = [
+    { role: 'system', content: 'SYSTEM'.repeat(1000) },
+    { role: 'user', content: 'old'.repeat(4000) },
+    { role: 'assistant', content: 'old answer'.repeat(3000) },
+    { role: 'user', content: 'LATEST USER REQUEST' }
+  ];
+  const fitted = fitMessagesToProviderBudget('groq', messages, { maxChars: 9000 });
+  assert.ok(fitted.some(row => row.role === 'system'));
+  assert.ok(fitted.some(row => row.content.includes('LATEST USER REQUEST')));
+  assert.ok(fitted.reduce((sum, row) => sum + row.content.length, 0) <= 9000);
+  assert.equal(fitMessagesToProviderBudget('gemini', messages), messages);
+});
