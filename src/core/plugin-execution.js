@@ -6,6 +6,7 @@ import { evaluateCooldown, shouldNotifyCooldown, inspectAntiSpam, isUserTemporar
 import { BILLING_EXEMPT_COMMANDS } from '../rental/catalog.js';
 import { consumeTenantQuota } from '../rental/service.js';
 import { withCommandButtons } from './ui.js';
+import { isTenantCommandAllowed } from '../rental/command-access.js';
 
 const rentalNoticeAt = new Map();
 function notifyRentalBlockOnce(key, now = Date.now()) {
@@ -51,6 +52,16 @@ export async function executeRegisteredPlugin({ sock, message, plugin, parsed, c
 
   const auth = authorize(message, plugin);
   if (!auth.ok) return deny(message, auth.reason, plugin);
+
+  if (message.isGroup && !ownerVerified) {
+    const access = await isTenantCommandAllowed(message.chat, plugin.name);
+    if (!access.allowed) {
+      await message.reply(access.policy.mode === 'allowlist'
+        ? `Command .${plugin.name} belum diaktifkan oleh admin grup.`
+        : `Command .${plugin.name} dinonaktifkan oleh admin grup.`);
+      return { handled: true, allowed: false, reason: 'tenant_command_policy' };
+    }
+  }
 
   if (message.isGroup && !auth.owner && !BILLING_EXEMPT_COMMANDS.has(String(plugin.name || '').toLowerCase())) {
     const quota = await consumeTenantQuota({ groupJid: message.chat, command: plugin.name, plugin });

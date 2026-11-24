@@ -458,6 +458,26 @@ export async function updateRentalSupportTicket(ticketId, { status, response = '
   });
 }
 
+export async function updateTenantMemberLimit(groupJid, memberLimit, actor = 'dashboard') {
+  if (!validGroup(groupJid)) throw new Error('ID grup tidak valid.');
+  const value = Number(memberLimit);
+  if (!Number.isSafeInteger(value) || value < 2 || value > 100_000) throw new Error('Batas anggota harus bilangan bulat 2 sampai 100.000.');
+  return withLock(`tenant:${groupJid}`, async () => {
+    const tenant = await getTenant(groupJid);
+    if (!tenant) throw new Error('Tenant sewa tidak ditemukan.');
+    const status = await getTenantStatus(groupJid);
+    if (status.status !== 'active') throw new Error('Pengubahan limit hanya tersedia saat sewa aktif.');
+    const plans = await getPlans();
+    const purchasedCeiling = Number(plans[tenant.planId]?.maxMembers || tenant.maxMembers || 0);
+    if (value > purchasedCeiling) throw new Error(`Limit melebihi kapasitas paket ${tenant.planName || tenant.planId} (${purchasedCeiling.toLocaleString('id-ID')} anggota). Upgrade paket diperlukan untuk menaikkan batas di atas kapasitas tersebut.`);
+    if (value < Number(status.memberCount || 0)) throw new Error(`Limit tidak boleh lebih rendah dari jumlah anggota saat ini (${status.memberCount}).`);
+    const next = { ...tenant, maxMembers: value, updatedAt: nowIso(Date.now()), version: (Number(tenant.version) || 0) + 1 };
+    await putRecord('rental.tenant', groupJid, next, { actor, reason: `tenant member limit changed to ${value}` });
+    await putRecord('rental.audit', makeId('AUD'), { action: 'tenant.member-limit-updated', groupJid, actor, previousLimit: status.memberLimit, memberLimit: value, at: next.updatedAt }, { source: 'rental-dashboard-api' });
+    return { ...next, memberCount: status.memberCount, maxMembers: value };
+  });
+}
+
 export async function getQuotaStatus(groupJid, now = Date.now()) {
   const tenant = await getTenant(groupJid);
   if (!tenant) return null;

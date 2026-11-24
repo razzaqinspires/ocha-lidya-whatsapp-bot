@@ -31,6 +31,7 @@ import { startCodeLab, stopCodeLab, prepareCodeLabHandoff, cancelCodeLabHandoff,
 import { acquireRuntimeLock } from './runtime/single-instance.js';
 import { stopNexoraBootstrapScheduler, runNexoraBootstrap } from './runtime/bootstrap-agent.js';
 import { startRentalScheduler, stopRentalScheduler } from './rental/runtime.js';
+import { startRentalApiServer, stopRentalApiServer } from './rental/http-api.js';
 import { handleGroupWelcome } from './core/group-tools.js';
 import { getTenantStatus } from './rental/service.js';
 import { startConsciousnessRuntime, stopConsciousnessRuntime } from './runtime/consciousness-runtime.js';
@@ -124,6 +125,12 @@ const processedIncoming = new Map();
 // Rental expiry, 24-hour quota windows, invoice timeout and reminders are autonomous.
 // A single in-process scheduler is restored at every npm start; no cron/systemd required.
 startRentalScheduler(() => activeSocket, { intervalMs: 60_000, runImmediately: true });
+try {
+  const rentalApi = await startRentalApiServer({ logger });
+  if (rentalApi.active) logger.info({ ...rentalApi }, 'Rental dashboard API initialized');
+} catch (error) {
+  logger.warn({ err: error }, 'Rental dashboard API could not initialize; WhatsApp rental commands remain available');
+}
 
 function isDuplicateIncoming(key) {
   const id = key?.id;
@@ -529,6 +536,7 @@ async function shutdownRuntime(signal, exitCode = 0) {
   try { socketToClose?.end?.(new Error(`Process shutdown: ${signal}`)); } catch {}
   stopModelCatalogScheduler();
   stopRentalScheduler();
+  try { await stopRentalApiServer(); } catch (error) { logger.warn({ err: error }, 'Rental API shutdown cleanup failed'); }
   stopNexoraBootstrapScheduler();
   try { await stopConsciousnessRuntime(); }
   catch (error) { logger.warn({ message: error.message }, 'NADI shutdown cleanup failed'); }

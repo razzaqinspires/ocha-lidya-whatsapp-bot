@@ -21,6 +21,19 @@ async function sendMenuPage(sock, message, page) {
   let sent;
   try { sent = await sock.sendMessage(message.chat, payload, { quoted: message }); }
   catch { sent = await sock.sendMessage(message.chat, { text: body }, { quoted: message }); }
+  if (selected === 1 && typeof sock.sendInteractive === 'function') {
+    try {
+      await sock.sendInteractive(message.chat, {
+        title: 'OCHA LIDYA · QUICK ACCESS',
+        body: 'Lihat profil akun Anda atau mulai membangun website profesional. Pengguna terverifikasi memperoleh satu slot website setelah pembayaran Rp10.000 diverifikasi owner.',
+        footer: 'Razzaq Ventures · Nexora',
+        buttons: [
+          { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: 'Lihat Profile', id: '.profile' }) },
+          { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: 'Buat Website', id: '.website' }) }
+        ]
+      }, message);
+    } catch {}
+  }
   if (pageCount > 1 && sent?.key?.id) {
     registerReplySession({
       chat: message.chat, messageId: sent.key.id, sender: message.sender, kind: 'menu-pagination',

@@ -1,5 +1,6 @@
 import { maintainRentals } from './service.js';
 import { logger } from '../core/logger.js';
+import { processRentalMembershipActions } from './dashboard-actions.js';
 let timer = null;
 let running = false;
 let task = Promise.resolve();
@@ -11,10 +12,11 @@ export function startRentalScheduler(getSocket, { intervalMs = 60_000, runImmedi
   const run = () => {
     if (running) return task;
     running = true;
-    task = maintainRentals(getSocket).then(result => {
+    task = maintainRentals(getSocket).then(async result => {
+      const membership = await processRentalMembershipActions(getSocket, { limit: 8 });
       latest.lastRunAt = result.checkedAt;
       latest.lastError = null;
-      logger.info(result, 'Autonomous rental lifecycle maintenance completed');
+      logger.info({ ...result, membershipActions: membership }, 'Autonomous rental lifecycle maintenance completed');
     }).catch(error => {
       latest.lastError = error.message;
       logger.error({ err: error }, 'Autonomous rental lifecycle maintenance failed; next cycle will retry');

@@ -78,6 +78,10 @@ export function listPlugins() {
   return [...registry.values()].map(entry => entry.plugin);
 }
 
+export function listPluginEntries() {
+  return [...registry.values()].map(({ plugin, file }) => ({ plugin, file }));
+}
+
 export function getPlugin(name) {
   const normalized = String(name || '').toLowerCase();
   return [...registry.values()].find(({ plugin }) =>

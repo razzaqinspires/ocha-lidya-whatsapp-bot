@@ -1,3 +1,47 @@
+## v1.10.35 — Website Builder, tenant dashboard mutations & Android source
+
+### Added
+- Add seven responsive professional website templates: business, portfolio, agency, storefront, creator, restaurant and event.
+- Add persistent website drafts, private editing sessions, public publication through the existing shared Code Lab TryCloudflare gateway, custom sections, and website-specific audit records.
+- Add text, image and MP4 website posts; images accept JPG/PNG/WEBP up to 10 MB, videos accept MP4 up to 20 MB, and site media is capped at 50 MB. Add 1:1 PNG share-card generation through optional `sharp`.
+- Claim the non-renter's one-time website entitlement at first publication rather than draft creation. Keep one website slot per active rental group and restrict renter website management to the billing contact.
+- Extend rental keys with `rental:write`, idempotent member-limit updates, queued `remove`/`promote`/`demote` actions, command allowlist/denylist endpoints, status history and audit entries.
+- Add an autonomous membership worker that rechecks rental status, current group metadata, bot admin rights and target membership before applying an action.
+- Reuse the existing Code Lab gateway for `/w/`, `/editor/`, `/editor-api/` and `/api/v1/` routes; do not start a second public tunnel in the normal setup.
+- Add a native Java Android dashboard source project under `apps/android-dashboard/` for rental overview, member-limit changes, queued member actions, command policy, history and setup guidance.
+
+### Security and limitations
+- Public website URLs contain random tokens; only token hashes are persisted. Editor sessions expire after 24 hours, use a Bearer token and same-origin checks, and are separate from public website access.
+- Rental API mutations require active tenant entitlement, matching billing-contact ownership, `rental:write`, a unique `Idempotency-Key`, and audit journaling. Member actions are queued, not executed directly from the HTTP request.
+- The internal member limit cannot exceed the purchased plan ceiling or fall below current membership; it does not change WhatsApp's platform-wide maximum.
+- Android source is included, but a compiled APK is not claimed: Android SDK/Gradle compilation was not available in the build environment. The PNG share-card command requires `sharp` to be installed on the host.
+
+### Validation
+- Focused tests cover website templates, public token and media routes, editor authorization, tenant command policy, dashboard API tenant ownership and idempotency, and existing website preview gateway.
+- Live WhatsApp group actions, TryCloudflare behavior, live payment settlement, optional `sharp` execution and Android device installation remain target-host validations.
+
+## v1.10.34 — Rental dashboard API, one-time website verification & command collision audit
+
+### Added
+- Add tenant-bound dashboard API keys with separate `rental:read` and `profile:read` scopes. Raw secrets use the `ocha_live_` prefix and are displayed once; SHA-256 hashes are stored in the JSONL repository.
+- Add read-only HTTP endpoints `/v1/rental/overview` and `/v1/profile`, `x-api-key` authentication, no-store response headers, and a 60-request/minute per-key limiter.
+- Add optional TryCloudflare quick-tunnel launch for the dashboard API (`OCHA_RENTAL_API_TUNNEL=1`, requires `cloudflared`).
+- Add `.sewaapi` key creation/list/revoke commands and a two-choice interactive scope selector.
+- Add `.website verify|paid|bukti|status` and owner `.webverify` review workflow. A verified account receives a blue-check entitlement and exactly one website slot; the Part 2 builder must consume the slot when publishing.
+- Add `.commandaudit` to detect duplicate canonical commands and aliases, persist findings, and recommend a non-destructive rename/alias strategy.
+- Add menu quick-access buttons for `.profile` and `.website`.
+
+### Security and scope
+- API key secrets are never persisted in plaintext. Rental keys are bound to one selected group; profile keys are bound to their issuing WhatsApp account.
+- API Part 1 is read-only. Membership changes, raising member limits, quota mutations, public page editor, seven templates, shareable media posts, and APK packaging are deferred to Part 2 until write authorization, audit, and idempotency are implemented.
+- Website verification costs Rp10.000 once. Payment evidence is stored privately and forwarded for manual review; screenshot receipt does not automatically grant a badge or website slot.
+- Duplicate command detection does not delete or rewrite source automatically. It stages recommendations because semantic equivalence and compatibility require complete-file review, WorkloadTracker assessment, tests, and atomic source revision.
+
+### Validation
+- JavaScript syntax check: 213 files passed.
+- Full test run: 257 passed, 6 failed, 2 skipped. The six failures were environment-related subprocess imports because `chokidar` was unavailable; dependency installation timed out in this environment. Full suite must be rerun after `npm install` on the target host.
+- Live WhatsApp delivery, TryCloudflare tunnel, owner approval workflow, and public API calls remain target-host validation tasks.
+
 ## v1.10.33 — YouTube application config, rental customer portal & Baileys reference review
 
 - Move YouTube executable paths and non-secret resource limits from `.env` into `DEFAULTS.youtube` in `src/config.js`; schema v36 migrates existing JSONL configurations without dropping owner-defined settings.

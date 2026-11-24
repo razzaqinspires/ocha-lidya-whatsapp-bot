@@ -1,5 +1,9 @@
 # Ocha Lidya WhatsApp Bot
 
+## Rental Dashboard & Website Builder Part 2 (v1.10.35)
+
+The rental dashboard now supports scoped read/write API keys, idempotent member-limit updates, queued group-member actions, and tenant command allowlist/denylist controls with audit history. The website builder includes seven responsive templates, persistent publishing through the existing shared TryCloudflare gateway, a 24-hour private editor session, custom sections, image/MP4 posts, and 1:1 PNG share cards. A native Java Android dashboard source project is included at `apps/android-dashboard/`. The repository contains Android source, not a compiled APK; build it with Android SDK 35 and Gradle on a configured Android host. See `docs/RENTAL_DASHBOARD_PART1.md` and `docs/RENTAL_DASHBOARD_PART2.md` for the API contract, tenant boundaries, setup, backup and validation notes.
+
 ## NADI external operational-state component (v1.10.31)
 
 Ocha Lidya and AC-Kernel NADI are now separate repositories. The bot keeps only the Node.js HTTP integration and a secure GitHub component loader; NADI's Python source is downloaded to an external cache (`~/.ocha/components/nadi/`) and is not bundled under the Ocha source tree. The connection uses Node's built-in `fetch` and a loopback HTTP sidecar. NADI owns its managed heartbeat; the bot reads operational telemetry and adds it to the existing Nexora prompt without creating a second LLM provider chain or duplicating API-key handling.
@@ -748,3 +752,13 @@ Private chat: `.ttt mulai [x|o]`, then send a position `1`–`9`, or use `.ttt s
 ## v1.10.29 — Master Console controls
 
 Owner-only `.master warning` controls compact/detailed/off warning delivery, `.master review` toggles AI semantic assessment independently, and workload warnings use native-flow CTA Copy plus confirm/cancel actions. A private `sock.relayMessage(m.chat, ...)` or `sock.sendMessage(m.chat, ...)` operation is no longer blanket-flagged; arbitrary targets and group contexts remain reviewed.
+
+## Rental dashboard API and one-time website verification (v1.10.34)
+
+Renters can create separate private API keys with `.sewaapi`: `rental:read` exposes the selected rental group's status, member count/limit, quota and expiry; `profile:read` exposes only the issuing account's profile. Secrets are shown once and only SHA-256 hashes are stored. Use `.sewaapi list` and `.sewaapi revoke <id>` to manage keys. API endpoints are `GET /v1/rental/overview` and `GET /v1/profile`, authenticated with `x-api-key`.
+
+The local dashboard API binds to `127.0.0.1:8787`. Set `OCHA_RENTAL_API_TUNNEL=1` to start an optional temporary TryCloudflare quick tunnel (requires `cloudflared`). The URL is ephemeral; use a stable domain and production gateway for permanent customer dashboards. Part 1 endpoints are read-only.
+
+`.website verify` starts a one-time Rp10.000 verification request. `.website paid <invoice>` reports payment; `.website bukti <invoice>` sends private image evidence. Owner reviews with `.webverify list|approve|reject`. Approval grants a blue-check badge and one website slot. Seven templates, editor, sharing workflow, APK/WebView wrapper, and write-capable tenant dashboard actions are planned for Part 2.
+
+`.commandaudit` checks duplicate plugin command names and aliases. It records a report and suggested resolution without deleting or silently rewriting source files. See `docs/RENTAL_DASHBOARD_PART1.md`.

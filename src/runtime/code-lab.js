@@ -7,6 +7,8 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { getConfig } from '../core/config.js';
 import { logger } from '../core/logger.js';
+import { handleWebsiteEditorRequest, handleWebsitePublicRequest } from '../rental/website-sites.js';
+import { handleRentalApiRequest } from '../rental/http-api.js';
 
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 const WATCHDOG_FILE = path.join(MODULE_DIR, 'code-lab-watchdog.js');
@@ -264,6 +266,9 @@ function publicSession(session) {
 
 async function routeRequest(request, response) {
   const url = new URL(request.url || '/', 'http://127.0.0.1');
+  if (await handleRentalApiRequest(request, response, url)) return;
+  if (await handleWebsiteEditorRequest(request, response, url)) return;
+  if (await handleWebsitePublicRequest(request, response, url)) return;
   if (url.pathname.startsWith('/kernel/')) {
     if (typeof kernelDashboardRouteHandler === 'function') {
       const handled = await kernelDashboardRouteHandler({ request, response, url });
