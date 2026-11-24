@@ -71,7 +71,7 @@ The following routes are served through the existing Code Lab gateway:
 
 Use `.sewaapi gateway` in private chat to request the current base URL. The URL is ephemeral and can change after a bot restart or tunnel recovery. The application sets the shared gateway to keep running while public access is requested. It does not turn the public Quick Tunnel hostname into a guaranteed stable production domain.
 
-The local API also continues to listen on loopback (default `127.0.0.1:8787`). Keep `OCHA_RENTAL_API_TUNNEL=0` when using the shared gateway. The dedicated API tunnel is an optional legacy/isolated mode, not required by Part 2.
+The local API also continues to listen on loopback (default `127.0.0.1:8788`). Keep `OCHA_RENTAL_API_TUNNEL=0` when using the shared gateway. The dedicated API tunnel is an optional legacy/isolated mode, not required by Part 2.
 
 ## 5. Rental API contract
 

@@ -3,15 +3,26 @@ const CATEGORY_LABELS = { general: 'GENERAL', developer: 'DEVELOPER', owner: 'OW
 function normalizeCategory(plugin) { return String(plugin?.menuCategory || plugin?.category || 'other').trim().toLowerCase() || 'other'; }
 function formatUsage(plugin) { const usage = String(plugin?.usage || '').trim(); return usage ? ` ${usage}` : ''; }
 function commandInventory(plugins = []) {
+  const source = (plugins || []).filter(plugin => plugin?.name && plugin.menu !== false);
+  const canonicalNames = new Set(source.map(plugin => String(plugin.name).trim().toLowerCase()).filter(Boolean));
   const unique = new Map();
-  for (const plugin of plugins) {
-    if (!plugin?.name || plugin.menu === false) continue;
+  for (const plugin of source) {
     const name = String(plugin.name).trim().toLowerCase();
     if (!/^[a-z0-9][a-z0-9_-]*$/.test(name) || unique.has(name)) continue;
-    unique.set(name, { name, usage: formatUsage(plugin), description: String(plugin.description || '').trim(), category: normalizeCategory(plugin) });
+    unique.set(name, { name, usage: formatUsage(plugin), description: String(plugin.description || '').trim(), category: normalizeCategory(plugin), canonical: name, alias: false });
+  }
+  for (const plugin of source) {
+    const canonical = String(plugin.name).trim().toLowerCase();
+    for (const rawAlias of Array.isArray(plugin.aliases) ? plugin.aliases : []) {
+      const alias = String(rawAlias || '').trim().toLowerCase();
+      if (!/^[a-z0-9][a-z0-9_-]*$/.test(alias) || canonicalNames.has(alias) || unique.has(alias)) continue;
+      const description = String(plugin.description || '').trim();
+      unique.set(alias, { name: alias, usage: '', description: `Alias dari .${canonical}. ${description}`.trim(), category: normalizeCategory(plugin), canonical, alias: true });
+    }
   }
   return [...unique.values()];
 }
+
 export function buildMenuText({ plugins = [], config = {}, prefixes = [], masterEnabled = true, page = 1, pageSize, showDescriptions } = {}) {
   const rawCommands = commandInventory(plugins);
   const categories = [...new Set(rawCommands.map(command => command.category))];

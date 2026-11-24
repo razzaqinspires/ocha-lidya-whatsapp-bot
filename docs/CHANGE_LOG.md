@@ -1,3 +1,33 @@
+## v1.10.47 — Menu, Message Test Lab & Master controls
+
+### Added / Changed
+- Rebuild all selectable command menus through the repository's `sock.buttonBuilder()` contract (`addSelection`, `makeSection`, `makeRow`, `send`) rather than constructing raw interactive list payloads.
+- Expose YouTube Search as a direct main-menu action; show YTS canonical command and every registered alias through the general command pages. Expose Message Test Lab and `.master status` directly in the owner main menu.
+- Keep `.test` as a two-page, 16-number catalogue using the same serializer ButtonBuilder. The catalogue mirrors the supplied numbered test families; test payload success/errors are recorded in logs without verbose chat result summaries.
+- Preserve `serializ_simple.js` response normalization: native-flow selected IDs become `m.body` and are routed through the existing command dispatcher.
+- Define `.master warning off` as skip-confirmation for non-hard-blocked suspicious work, with an audit event; static hard-blocks remain active.
+- Add owner-controlled `.master group on|off|status`; the default remains OFF and the toggle is configured from the owner's private chat.
+- Keep rental dashboard API on 127.0.0.1:8788 while Code Lab retains 127.0.0.1:8787, preventing the `EADDRINUSE` observed at startup.
+- Correct Master Console documentation to reflect actual warning and group-control semantics.
+
+### Validation
+- `npm run check`: 268 JavaScript files passed syntax validation.
+- Focused menu, serializer, 16-suite test-lab, YouTube inventory, and master-control tests passed 13/13, including direct main-menu entries for `.yts` and owner-only `.test`.
+- Final `npm run check`: 268 JavaScript files passed syntax validation.
+- Final `npm test`: 356 total, 354 passed, 0 failed, 2 skipped.
+- Added `docs/MENU_TEST_LAB_MASTER_FIXES.md` and `.env.example` with the non-conflicting Rental API port default.
+
+
+## 1.10.47 — Command Menu, Message Test Lab & Master Controls
+
+- Rebuilt command and Message Test Lab list delivery through the project's `sock.buttonBuilder()` serializer contract.
+- Added visible rows for canonical commands and registered aliases, including YouTube aliases.
+- Expanded `.test` into the 16 numbered payload suites supplied for Legacy, Native Flow, media, utilities, commerce, carousel, storefront, and AIRich tests.
+- Added `.master group on/off/status`; group access remains disabled by default and requires a verified owner.
+- Changed `.master warning off` to skip confirmation prompts for non-hard-blocked workloads while keeping critical hard-block patterns active and audited.
+- Switched workload confirmation buttons to the serializer's `ButtonBuilder`.
+- Moved the rental dashboard API default to port 8788 to avoid colliding with the Code Lab gateway on 8787.
+
 ## v1.10.46 — ACIE intake: Rizkyrohan text-canvas contribution
 
 ### Added / Changed

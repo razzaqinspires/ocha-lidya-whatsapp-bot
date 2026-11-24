@@ -180,7 +180,7 @@ export async function handleRentalApiRequest(req, res, url = new URL(req.url || 
 
 export async function startRentalApiServer({ logger: log = logger } = {}) {
   if (server) return getRentalApiStatus();
-  const port = Math.max(1024, Math.min(65535, Number(process.env.OCHA_RENTAL_API_PORT) || 8787));
+  const port = Math.max(1024, Math.min(65535, Number(process.env.OCHA_RENTAL_API_PORT) || 8788));
   const host = process.env.OCHA_RENTAL_API_HOST || '127.0.0.1';
   server = http.createServer((req, res) => { void handle(req, res).catch(error => { log.warn({ err: error }, 'Rental API request failed'); if (!res.headersSent) send(res, 500, { error: 'internal_error' }); else res.destroy(); }); });
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, host, resolve); });

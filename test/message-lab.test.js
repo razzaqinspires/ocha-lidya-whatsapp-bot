@@ -6,19 +6,21 @@ import path from 'node:path';
 const root = process.cwd();
 const pluginPath = path.join(root, 'src/plugins/owner/message-lab.js');
 const source = fs.readFileSync(pluginPath, 'utf8');
+const catalogSource = fs.readFileSync(path.join(root, 'src/plugins/owner/message-test-catalog.js'), 'utf8');
+const combinedSource = `${source}\n${catalogSource}`;
 const fixtureDir = path.join(root, 'assets/message-test');
 
 test('message test lab is private owner-only and presents a no-argument test catalogue', () => {
   assert.match(source, /name:\s*'test'/);
   assert.match(source, /ownerOnly:\s*true/);
   assert.match(source, /privateOnly:\s*true/);
-  assert.match(source, /\.test select full-buttons/);
-  assert.match(source, /\.test select nativeflow/);
-  assert.match(source, /\.test select poll/);
-  assert.match(source, /\.test select carousel/);
-  assert.match(source, /\.test select media/);
-  assert.match(source, /\.test select all/);
-  assert.doesNotMatch(source, /Hasil Native Flow Test|terkirim ke relay/);
+  assert.match(combinedSource, /\.test select \$\{item\.number\}/);
+  assert.match(combinedSource, /\.test page 2/);
+  assert.match(combinedSource, /number: 16/);
+  assert.match(source, /runNumberedTest/);
+  assert.match(combinedSource, /\.test select all/);
+  assert.match(combinedSource, /NUMBERED_TESTS/);
+  assert.doesNotMatch(combinedSource, /Hasil Native Flow Test|terkirim ke relay/);
 });
 
 test('message test lab fixtures exist locally and cover the predefined media pack', () => {

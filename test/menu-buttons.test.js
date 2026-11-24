@@ -7,6 +7,7 @@ const plugins = [
   { name: 'profile', category: 'general', description: 'Profil akun' },
   { name: 'kernel', category: 'general', description: 'Dashboard kernel' },
   { name: 'website', category: 'general', description: 'Website builder' },
+  { name: 'yts', aliases: ['ytsearch', 'ytmp3', 'ytmp4', 'ytm', 'ytmusic', 'ytplay'], category: 'general', usage: '.yts <query> | .ytmp3 <url> | .ytmp4 <url> [resolusi] | .ytm <judul lagu>', description: 'Pencarian dan unduhan YouTube' },
   { name: 'run', category: 'developer', description: 'Run code' },
   { name: 'jid', category: 'developer', ownerOnly: true, description: 'Inspect JID' },
   { name: 'rentals', category: 'owner', ownerOnly: true, description: 'Rental administration' },
@@ -25,6 +26,7 @@ test('main command menu builds a native-flow category selector and hides owner-o
   assert.ok(list.some(row => row.id === '.menu developer 1'));
   assert.ok(list.some(row => row.id === '.profile'));
   assert.ok(list.some(row => row.id === '.website'));
+  assert.ok(list.some(row => row.id === '.yts'), 'YouTube search should be directly visible in the main menu');
   assert.ok(!list.some(row => row.id.includes('owner')));
 });
 
@@ -48,6 +50,22 @@ test('owner category is available only to verified owners and no-prefix mode emi
   assert.ok(!rows(publicModel).some(row => row.id.startsWith('menu owner')));
   const ownerRows = rows(ownerModel);
   assert.ok(ownerRows.some(row => row.id === 'menu owner 1'));
+  assert.ok(ownerRows.some(row => row.id === 'test'), 'owner menu should expose Message Test Lab');
+  assert.ok(ownerRows.some(row => row.id === 'master status'), 'owner menu should expose Master Console status');
   const category = buildMenuButtonModel({ plugins, prefixes: [], isOwner: true, category: 'owner' });
   assert.ok(rows(category).some(row => row.id === 'rentals'));
+});
+
+
+test('YouTube canonical command and every registered alias are visible in the general menu', () => {
+  const first = buildMenuButtonModel({ plugins, prefixes: ['.'], category: 'general', isOwner: false, page: 1 });
+  const commands = [...first.body];
+  for (let page = 2; page <= first.totalPages; page += 1) {
+    commands.push(...buildMenuButtonModel({ plugins, prefixes: ['.'], category: 'general', isOwner: false, page }).body);
+  }
+  const names = commands.map(item => item.name);
+  for (const name of ['yts', 'ytsearch', 'ytmp3', 'ytmp4', 'ytm', 'ytmusic', 'ytplay']) assert.ok(names.includes(name), `${name} should be visible`);
+  const mp3 = commands.find(item => item.name === 'ytmp3');
+  assert.equal(mp3.canonical, 'yts');
+  assert.equal(mp3.alias, true);
 });

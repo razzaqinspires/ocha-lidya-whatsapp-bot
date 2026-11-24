@@ -26,19 +26,47 @@ function truncate(value, max) {
   return text.length > max ? `${text.slice(0, Math.max(1, max - 1)).trimEnd()}…` : text;
 }
 
+function usageForCommand(plugin, commandName) {
+  const usage = String(plugin?.usage || '').trim();
+  if (!usage) return '';
+  const pieces = usage.split('|').map(item => item.trim()).filter(Boolean);
+  const matching = pieces.find(item => {
+    const normalized = item.replace(/^[.!/#]+/, '').toLowerCase();
+    return normalized === commandName || normalized.startsWith(`${commandName} `);
+  });
+  if (matching) return matching.replace(/^[.!/#]*[a-z0-9_-]+/i, '').trim();
+  return commandName === String(plugin?.name || '').toLowerCase() ? usage : '';
+}
+
 function visibleCommands(plugins, isOwner) {
+  const source = (plugins || []).filter(plugin => plugin?.name && plugin.menu !== false
+    && (isOwner || (!plugin.ownerOnly && String(plugin.menuCategory || plugin.category || '').toLowerCase() !== 'owner')));
+  const canonicalNames = new Set(source.map(plugin => String(plugin.name).trim().toLowerCase()).filter(Boolean));
   const unique = new Map();
-  for (const plugin of plugins || []) {
-    const name = String(plugin?.name || '').trim().toLowerCase();
-    if (!name || plugin.menu === false || (!isOwner && (plugin.ownerOnly || String(plugin.menuCategory || plugin.category || '').toLowerCase() === 'owner'))) continue;
-    if (!/^[a-z0-9][a-z0-9_-]*$/.test(name) || unique.has(name)) continue;
+  for (const plugin of source) {
+    const canonical = String(plugin.name || '').trim().toLowerCase();
+    if (!/^[a-z0-9][a-z0-9_-]*$/.test(canonical) || unique.has(canonical)) continue;
     const category = String(plugin.menuCategory || plugin.category || 'other').trim().toLowerCase() || 'other';
-    unique.set(name, {
-      name,
-      category,
-      usage: String(plugin.usage || '').trim(),
+    unique.set(canonical, {
+      name: canonical, canonical, alias: false, category,
+      usage: usageForCommand(plugin, canonical),
       description: String(plugin.description || '').trim()
     });
+  }
+  // Keep aliases visible as executable entries. Canonical names always win
+  // collisions, matching getPlugin() and preserveAlias dispatch semantics.
+  for (const plugin of source) {
+    const canonical = String(plugin.name || '').trim().toLowerCase();
+    const category = String(plugin.menuCategory || plugin.category || 'other').trim().toLowerCase() || 'other';
+    for (const rawAlias of Array.isArray(plugin.aliases) ? plugin.aliases : []) {
+      const alias = String(rawAlias || '').trim().toLowerCase();
+      if (!/^[a-z0-9][a-z0-9_-]*$/.test(alias) || canonicalNames.has(alias) || unique.has(alias)) continue;
+      unique.set(alias, {
+        name: alias, canonical, alias: true, category,
+        usage: usageForCommand(plugin, alias),
+        description: `Alias dari .${canonical}. ${String(plugin.description || '').trim()}`.trim()
+      });
+    }
   }
   return [...unique.values()].sort((a, b) => a.category.localeCompare(b.category) || a.name.localeCompare(b.name, 'en', { numeric: true }));
 }
@@ -70,8 +98,13 @@ export function buildMenuButtonModel({ plugins = [], prefixes = ['.'], isOwner =
       };
     });
     rows.push(
+      { id: `${prefix}yts`, title: 'YouTube Search', description: 'Cari video dan pilih unduhan MP3 atau MP4' },
       { id: `${prefix}profile`, title: 'Profile Saya', description: 'XP, level, rank, aktivitas, dan badge' },
       { id: `${prefix}website`, title: 'Website Builder', description: 'Mulai membuat website profesional' }
+    );
+    if (isOwner) rows.push(
+      { id: `${prefix}test`, title: 'Message Test Lab', description: '16 pengujian payload WhatsApp bernomor' },
+      { id: `${prefix}master status`, title: 'Master Console', description: 'Status runner, warning, dan akses grup owner' }
     );
     return {
       kind: 'categories',
@@ -126,18 +159,31 @@ function parseMenuArgs(args = []) {
 }
 
 async function sendInteractiveMenu(sock, message, options, image = null) {
-  if (typeof sock.sendInteractive !== 'function') return null;
+  if (typeof sock.buttonBuilder !== 'function') return null;
   try {
-    return await sock.sendInteractive(message.chat, {
-      title: options.title,
-      subtitle: 'OCHA LIDYA · NEXORA COMMAND CENTER',
-      body: options.body,
-      footer: 'Razzaq Ventures · Pilih satu baris untuk menjalankan command',
-      ...(image ? { image } : {}),
-      buttons: options.buttons
-    }, message);
+    const listButton = (options.buttons || []).find(button => String(button?.name || '').toLowerCase() === 'single_select');
+    if (!listButton) return null;
+    const params = typeof listButton.buttonParamsJson === 'string'
+      ? JSON.parse(listButton.buttonParamsJson)
+      : (listButton.buttonParamsJson || {});
+    if (!Array.isArray(params.sections) || !params.sections.length) return null;
+    const builder = sock.buttonBuilder()
+      .setTitle(options.title || '')
+      .setSubtitle(options.subtitle || 'OCHA LIDYA · NEXORA COMMAND CENTER')
+      .setBody(options.body || '')
+      .setFooter(options.footer || 'Razzaq Ventures');
+    if (image) builder.setImage(image);
+    builder.addSelection(params.title || 'Pilih');
+    for (const section of params.sections) {
+      builder.makeSection(section.title || 'Pilihan', section.highlight_label || '');
+      for (const row of section.rows || []) {
+        builder.makeRow(row.header || '', row.title || '', row.description || '', row.id || '');
+      }
+    }
+    return await builder.send(message.chat, { quoted: message });
   } catch (error) {
-    // A native-flow failure should never suppress the ordinary text fallback.
+    // Use the same serializer ButtonBuilder used by working carousel/test flows.
+    // If it cannot serialize, callers deliberately fall back to text output.
     return null;
   }
 }
@@ -187,7 +233,8 @@ async function sendMenuPage(sock, message, { category = '', page = 1, isOwner = 
     `Mode: *${String(config.mode || 'public').toUpperCase()}*`,
     '',
     'Pilih kategori untuk melihat daftar command. Setiap item dapat ditekan langsung dari daftar.',
-    `Navigasi teks: ${prefix}menu general · ${prefix}menu developer${isOwner ? ` · ${prefix}menu owner` : ''} · ${prefix}profile · ${prefix}website`,
+    `Akses cepat: ${prefix}yts · ${prefix}profile · ${prefix}website${isOwner ? ` · ${prefix}test · ${prefix}master status` : ''}`,
+    `Navigasi teks: ${prefix}menu general · ${prefix}menu developer${isOwner ? ` · ${prefix}menu owner` : ''}`, 
     'Akses command tetap mengikuti izin akun dan kebijakan grup.'
   ].join('\n');
 
@@ -220,6 +267,8 @@ async function sendMenuPage(sock, message, { category = '', page = 1, isOwner = 
   }
   return sentFallback;
 }
+
+export const menuButtonTestHooks = Object.freeze({ sendInteractiveMenu });
 
 export default {
   name: 'menu', aliases: ['help', 'commands'], category: 'general', usage: '[kategori] [halaman]',

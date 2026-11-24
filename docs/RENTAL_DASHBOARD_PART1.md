@@ -25,11 +25,11 @@ The raw key is shown only once. Only SHA-256 hashes are stored in the JSONL repo
 
 ## HTTP and TryCloudflare
 
-The local API listens on `127.0.0.1:8787` by default. Optional quick tunnel:
+The local API listens on `127.0.0.1:8788` by default. Optional quick tunnel:
 
 ```dotenv
 OCHA_RENTAL_API_HOST=127.0.0.1
-OCHA_RENTAL_API_PORT=8787
+OCHA_RENTAL_API_PORT=8788
 OCHA_RENTAL_API_TUNNEL=1
 CLOUDFLARED_BIN=cloudflared
 ```
@@ -39,8 +39,8 @@ CLOUDFLARED_BIN=cloudflared
 Test endpoints:
 
 ```bash
-curl -H 'x-api-key: ocha_live_...' http://127.0.0.1:8787/v1/rental/overview
-curl -H 'x-api-key: ocha_live_...' http://127.0.0.1:8787/v1/profile
+curl -H 'x-api-key: ocha_live_...' http://127.0.0.1:8788/v1/rental/overview
+curl -H 'x-api-key: ocha_live_...' http://127.0.0.1:8788/v1/profile
 ```
 
 ## One-time website verification

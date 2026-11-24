@@ -192,41 +192,25 @@ function formatAssessment(runtime, heuristic, assessment, code, { localFallback 
   ].join('\n');
 }
 
-function warningButtons(code) {
-  return [
-    {
-      name: 'cta_copy',
-      buttonParamsJson: JSON.stringify({ display_text: 'Salin Konfirmasi', copy_code: `CONFIRM ${code}` })
-    },
-    {
-      name: 'quick_reply',
-      buttonParamsJson: JSON.stringify({ display_text: 'Konfirmasi & Jalankan', id: `CONFIRM ${code}` })
-    },
-    {
-      name: 'quick_reply',
-      buttonParamsJson: JSON.stringify({ display_text: 'Batalkan', id: 'CANCEL' })
-    }
-  ];
-}
-
 async function sendWorkloadWarning(sock, m, text, code) {
-  if (typeof sock?.sendInteractive === 'function') {
+  if (typeof sock?.buttonBuilder === 'function') {
     try {
-      return await sock.sendInteractive(m.chat, {
-        title: 'OCHA MASTER · SECURITY REVIEW',
-        body: text,
-        footer: 'Owner-only · satu kali · berlaku 120 detik',
-        buttons: warningButtons(code)
-      }, m);
+      return await sock.buttonBuilder()
+        .setTitle('OCHA MASTER · SECURITY REVIEW')
+        .setBody(text)
+        .setFooter('Owner-only · satu kali · berlaku 120 detik')
+        .addCopy('Salin Konfirmasi', `CONFIRM ${code}`)
+        .addReply('Konfirmasi & Jalankan', `CONFIRM ${code}`)
+        .addReply('Batalkan', 'CANCEL')
+        .send(m.chat, { quoted: m });
     } catch (error) {
-      logger.warn({ err: error }, 'Native-flow workload warning failed; using text fallback');
+      logger.warn({ err: error }, 'Serializer ButtonBuilder workload warning failed; using text fallback');
     }
   }
   return m.reply(`${text}\n\nCONFIRM ${code}\nCANCEL`);
 }
 
 async function requestRiskConfirmation(sock, m, body, token, command, heuristic) {
-  if (m.isGroup) return m.reply('Konfirmasi eksekusi berisiko hanya tersedia di chat pribadi owner. Tidak ada kode yang dijalankan.');
   if (heuristic.hardBlock) {
     return m.reply(['╭─ OCHA SECURITY BLOCK ─────────────────', 'Perintah ditolak sebelum dieksekusi.', ...heuristic.reasons,
       'Perintah yang dapat merusak host/OS secara luas tidak dapat dibuka melalui konfirmasi chat.',
@@ -239,20 +223,21 @@ async function requestRiskConfirmation(sock, m, body, token, command, heuristic)
     : 'compact';
   const commandHash = crypto.createHash('sha256').update(`${token}\0${command}`).digest('hex');
 
-  // Warning OFF suppresses notifications, not the risk gate. Suspicious work is
-  // recorded and denied silently; it is never converted into implicit approval.
+  // Warning OFF means no prompt for non-hard-blocked work. Local hard-block
+  // patterns are evaluated before this branch and remain non-bypassable.
   if (warningMode === 'off') {
-    logger.warn({ runtime: token, commandHash, sender: m.sender, risk: heuristic.level, warningMode }, 'Suspicious master workload silently blocked because warnings are disabled');
-    await database.appendRecord('master.workload.suppressed', {
+    logger.warn({ runtime: token, commandHash, sender: m.sender, risk: heuristic.level, warningMode, action: 'continue-without-prompt' }, 'Master workload continued because warning prompts are disabled');
+    await database.appendRecord('master.workload.warning-bypass', {
       runtime: token,
       commandHash,
       sender: String(m.sender || '').slice(0, 80),
       risk: heuristic.level,
       reasons: heuristic.reasons,
-      action: 'blocked-silently',
+      action: 'executed-with-warning-off',
+      hardBlockStillEnforced: true,
       timestamp: new Date().toISOString()
     }, { source: 'master-workload-guard' });
-    return;
+    return executeMasterCommand(sock, m, body);
   }
 
   let assessment;

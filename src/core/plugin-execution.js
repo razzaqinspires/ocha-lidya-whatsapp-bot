@@ -61,6 +61,10 @@ export async function executeRegisteredPlugin({ sock, message, plugin, parsed, c
 
   const auth = authorize(message, plugin);
   if (!auth.ok) return deny(message, auth.reason, plugin);
+  if (String(plugin.name || '').toLowerCase() === 'master' && message.isGroup && !config.security?.allowMasterInGroups) {
+    await message.reply('Master console dinonaktifkan di grup. Aktifkan dari DM owner dengan .master group on.');
+    return { handled: true, allowed: false, reason: 'master_group_disabled' };
+  }
 
   if (message.isGroup && !ownerVerified) {
     const access = await isTenantCommandAllowed(message.chat, plugin.name);

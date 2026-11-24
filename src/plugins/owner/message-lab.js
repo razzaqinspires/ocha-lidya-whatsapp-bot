@@ -1,7 +1,11 @@
-import { proto, generateWAMessageFromContent } from '@whiskeysockets/baileys';
+import { proto, generateWAMessageFromContent, prepareWAMessageMedia } from '@whiskeysockets/baileys';
+import { randomBytes } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { logger } from '../../core/logger.js';
+import { NUMBERED_TESTS, sendMessageTestMenu } from './message-test-catalog.js';
+
+const sendTestMenu = sendMessageTestMenu;
 
 const OWNER_PHONE = '6283193905842';
 const DEFAULT_TEST_URL = 'https://example.com';
@@ -37,40 +41,6 @@ async function logTestDelivery(testId, m, operation) {
   }
 }
 
-const TEST_MENU_ROWS = [
-  { id: '.test select full-buttons', title: 'Full Button Suite', description: 'Seluruh 5 halaman Native Flow + tombol tambahan' },
-  { id: '.test select nativeflow', title: 'Native Flow All', description: 'Lima halaman action Native Flow' },
-  { id: '.test select quick', title: 'Quick Reply & List', description: 'Quick reply, single-select, dan pilihan baris' },
-  { id: '.test select poll', title: 'Poll Message', description: 'Poll dengan pertanyaan dan opsi bawaan' },
-  { id: '.test select carousel', title: 'Carousel', description: 'Dua kartu gambar lokal dengan tombol' },
-  { id: '.test select media', title: 'Media Pack', description: 'Image, video, audio, PDF, sticker, dan view-once' },
-  { id: '.test select legacy', title: 'Legacy & Hydrated', description: 'ButtonsMessage lama dan hydrated template' },
-  { id: '.test select extras', title: 'Location, Contact & Event', description: 'Koordinat dummy, kartu kontak, kalender' },
-  { id: '.test select rich', title: 'AI Rich Message', description: 'Pesan rich text dan code block' },
-  { id: '.test select all', title: 'Run Everything', description: 'Jalankan semua format pesan yang disediakan' }
-];
-
-async function sendTestMenu(sock, m) {
-  const options = {
-    title: 'OCHA · MESSAGE TEST LAB',
-    subtitle: 'OWNER ONLY · LOCAL TEST ASSETS',
-    body: 'Pilih satu jenis pengujian. Ocha akan langsung mengirim contoh payload. Jika sebuah format gagal, detailnya hanya masuk ke log runtime.',
-    footer: 'Tidak ada laporan relay panjang di chat',
-    buttons: [{
-      name: 'single_select',
-      buttonParamsJson: JSON.stringify({
-        title: 'Pilih pengujian',
-        sections: [{ title: 'TEST CATALOG', rows: TEST_MENU_ROWS }]
-      })
-    }]
-  };
-  try {
-    if (typeof sock.sendInteractive === 'function') return await sock.sendInteractive(m.chat, options, m);
-  } catch (error) {
-    logger.warn({ err: error, chat: m.chat }, 'Native-flow test menu could not be rendered; using text fallback');
-  }
-  return m.reply(`${HELP}\n\n${TEST_MENU_ROWS.map((row, index) => `${index + 1}. ${row.title}`).join('\n')}`);
-}
 
 
 function requireUrl(value, label) {
@@ -297,47 +267,316 @@ async function sendExtraTests(sock, m) {
   return { handled: true, test: 'extras', total: tests.length, success: deliveries.every(item => item.success), resultIds: deliveries.map(item => item.resultId).filter(Boolean) };
 }
 
+function testMessageContext() {
+  return { deviceListMetadata: {}, deviceListMetadataVersion: 2, messageSecret: randomBytes(32) };
+}
+
+async function relayTestPayload(sock, m, message, nodeName = 'mixed') {
+  if (typeof sock.relayMessage !== 'function') throw new Error('Socket tidak memiliki relayMessage().');
+  return sock.relayMessage(m.chat, message, { additionalNodes: nativeFlowNode(nodeName) });
+}
+
+async function runNumberedTest(sock, m, number) {
+  const deliver = (id, operation) => logTestDelivery(`test-${String(number).padStart(2, '0')}-${id}`, m, operation);
+  const ownerJid = `${OWNER_PHONE}@s.whatsapp.net`;
+  const github = 'https://github.com/razzaqinspires';
+  const order = {
+    status: 'pending',
+    items: [{ retailer_id: 'OCHA-TEST-SKU-01', name: 'Synthetic Test Product', amount: { value: 10000, offset: 100 }, quantity: 1 }],
+    subtotal: { value: 10000, offset: 100 }
+  };
+  switch (number) {
+    case 1:
+      return deliver('legacy-buttons', () => relayTestPayload(sock, m, {
+        messageContextInfo: testMessageContext(),
+        buttonsMessage: {
+          contentText: 'Uji Legacy buttonsMessage polos (Type 1).',
+          footerText: 'Ocha Lidya AI · Legacy Compatibility', headerType: 1,
+          buttons: [
+            { buttonId: '.test response legacy_1', buttonText: { displayText: 'Legacy Tombol 1' }, type: 1 },
+            { buttonId: '.test response legacy_2', buttonText: { displayText: 'Legacy Tombol 2' }, type: 1 }
+          ]
+        }
+      }));
+
+    case 2:
+      return deliver('legacy-list', () => relayTestPayload(sock, m, {
+        messageContextInfo: testMessageContext(),
+        listMessage: {
+          title: 'Legacy List Menu', description: 'Struktur listMessage klasik dengan sections dan rows.',
+          buttonText: 'Buka Daftar Legacy', listType: 1, footerText: 'Ocha Lidya AI · Legacy Compatibility',
+          sections: [{ title: 'Kategori Utama', rows: [
+            { title: 'Opsi Legacy A', rowId: '.test response legacy_row_a', description: 'Baris pertama' },
+            { title: 'Opsi Legacy B', rowId: '.test response legacy_row_b', description: 'Baris kedua' }
+          ] }]
+        }
+      }));
+
+    case 3:
+      return deliver('legacy-template', () => relayTestPayload(sock, m, {
+        messageContextInfo: testMessageContext(),
+        templateMessage: {
+          hydratedTemplate: {
+            hydratedContentText: 'Uji Legacy hydratedTemplateMessage.',
+            hydratedFooterText: 'Ocha Lidya AI · Hydrated Template',
+            hydratedButtons: [
+              { index: 1, urlButton: { displayText: 'URL Legacy', url: github } },
+              { index: 2, callButton: { displayText: 'Call Test', phoneNumber: '+6280000000000' } },
+              { index: 3, quickReplyButton: { displayText: 'Reply Legacy', id: '.test response legacy_template' } }
+            ]
+          }
+        }
+      }));
+
+    case 4:
+      return deliver('button-v2', () => sock.relayMessage(m.chat, {
+        viewOnceMessage: {
+          message: {
+            messageContextInfo: testMessageContext(),
+            buttonsMessage: {
+              contentText: 'ButtonV2 test: viewOnce + headerType 6 location.',
+              footerText: 'Ocha Lidya AI · ButtonV2', headerType: 6,
+              locationMessage: { degreesLatitude: 3.635, degreesLongitude: 98.675, name: 'Razzaq Ventures Lab', address: 'Medan, Indonesia' },
+              buttons: [
+                { buttonId: '.test response v2_ping', buttonText: { displayText: 'Cek Server' }, type: 1 },
+                { buttonId: '.test response v2_menu', buttonText: { displayText: 'Buka Menu' }, type: 1 }
+              ]
+            }
+          }
+        }
+      }, {}));
+
+    case 5: {
+      const image = await readTestAsset('sample-image.png');
+      return deliver('image-adreply', () => sock.sendMessage(m.chat, {
+        image, mimetype: 'image/png', caption: 'Image Message + ExternalAdReply · local test asset',
+        contextInfo: { externalAdReply: {
+          title: 'Ocha Lidya AI · Nexora 0.1', body: 'WhatsApp Automation & Craft Studio',
+          mediaType: 1, thumbnail: image, sourceUrl: github, renderLargerThumbnail: true
+        } }
+      }, { quoted: m }));
+    }
+
+    case 6: {
+      const assets = [
+        ['video', async () => sock.sendMessage(m.chat, { video: await readTestAsset('sample-video.mp4'), mimetype: 'video/mp4', caption: 'Video Message URL/Buffer Test' }, { quoted: m })],
+        ['audio', async () => sock.sendMessage(m.chat, { audio: await readTestAsset('sample-audio.wav'), mimetype: 'audio/wav', ptt: false }, { quoted: m })],
+        ['document', async () => sock.sendMessage(m.chat, { document: await readTestAsset('sample-document.pdf'), mimetype: 'application/pdf', fileName: 'Ocha_Test_Document.pdf', caption: 'Document Message Test' }, { quoted: m })]
+      ];
+      const results = [];
+      for (const [id, operation] of assets) { results.push(await deliver(id, operation)); await sleep(700); }
+      return { handled: true, test: 'test-06-media', success: results.every(item => item.success), resultIds: results.map(item => item.resultId).filter(Boolean) };
+    }
+
+    case 7: {
+      const results = [];
+      results.push(await deliver('location', () => sock.sendMessage(m.chat, { location: { degreesLatitude: 3.635, degreesLongitude: 98.675, name: 'Razzaq Ventures Lab', address: 'Medan, Indonesia' } }, { quoted: m })));
+      await sleep(700);
+      results.push(await deliver('contact', () => m.sendContact({ number: OWNER_PHONE, displayName: 'Ocha Test Contact', organization: 'Razzaq Ventures' }, { quoted: m })));
+      await sleep(700);
+      results.push(await deliver('poll-v3', () => relayTestPayload(sock, m, {
+        messageContextInfo: testMessageContext(),
+        pollCreationMessageV3: { name: '📊 Ocha Native Message Test', options: [
+          { optionName: 'Native Flow Interactive' }, { optionName: 'AIRich Response' },
+          { optionName: 'Carousel Media Cards' }, { optionName: 'Media & Poll Native' }
+        ], selectableOptionsCount: 1 }
+      })));
+      await sleep(700);
+      results.push(await deliver('event', () => relayTestPayload(sock, m, {
+        messageContextInfo: testMessageContext(),
+        eventMessage: { isCanceled: false, name: 'Ocha Message Test Event', description: 'Synthetic RSVP event; not a real appointment.', location: { degreesLatitude: 3.635, degreesLongitude: 98.675, name: 'Medan, Indonesia' }, startTime: String(Math.floor(Date.now() / 1000) + 7200) }
+      })));
+      await sleep(700);
+      results.push(await deliver('scheduled-call', () => relayTestPayload(sock, m, {
+        messageContextInfo: testMessageContext(),
+        scheduledCallCreationMessage: { scheduledTimestampMs: String(Date.now() + 3600000), callType: 1, title: 'Ocha Test Voice Sync' }
+      })));
+      return { handled: true, test: 'test-07-utilities', success: results.every(item => item.success), resultIds: results.map(item => item.resultId).filter(Boolean) };
+    }
+
+    case 8: {
+      const buttons = [
+        nativeButton('single_select', { title: 'Menu Pilihan', sections: [{ title: 'Modul Sistem', highlight_label: 'Stable', rows: [
+          { header: 'Core', title: 'Telemetry Live', description: 'Pantau CPU dan RAM', id: '.test response nf_telemetry' },
+          { header: 'System', title: 'Ocha Menu', description: 'Buka command directory', id: '.menu' }
+        ] }] }),
+        nativeButton('quick_reply', { display_text: 'Balas Cepat', id: '.test response nf_quick_reply' }),
+        nativeButton('cta_url', { display_text: 'Kunjungi GitHub', url: github, merchant_url: github, webview_interaction: true }),
+        nativeButton('cta_call', { display_text: 'Call Test Number', phone_number: '6280000000000' }),
+        nativeButton('cta_copy', { display_text: 'Salin Token', copy_code: 'OCHA-NEXORA-TEST-2026' }),
+        nativeButton('send_location', { display_text: 'Kirim Lokasi Saya' }),
+        nativeButton('cta_reminder', { display_text: 'Aktifkan Pengingat', id: '.test response nf_reminder' }),
+        nativeButton('cta_cancel_reminder', { display_text: 'Batalkan Pengingat', id: '.test response nf_cancel_reminder' })
+      ];
+      return deliver('native-flow-core', () => relayTestPayload(sock, m, {
+        messageContextInfo: testMessageContext(),
+        interactiveMessage: {
+          header: { title: 'Native Flow Core Suite', subtitle: '8 Action Buttons', hasMediaAttachment: false },
+          body: { text: 'Uji delapan tipe action Native Flow inti.' },
+          footer: { text: 'Ocha Lidya AI · Nexora 0.1' },
+          nativeFlowMessage: { buttons, messageParamsJson: '{}', messageVersion: 1 }
+        }
+      }));
+    }
+
+    case 9: {
+      const image = await readTestAsset('sample-image.png');
+      if (typeof sock.waUploadToServer !== 'function') throw new Error('sock.waUploadToServer tidak tersedia untuk media header.');
+      const uploaded = await prepareWAMessageMedia({ image }, { upload: sock.waUploadToServer });
+      if (!uploaded?.imageMessage) throw new Error('Upload image header gagal.');
+      return deliver('native-flow-media-header', () => relayTestPayload(sock, m, {
+        messageContextInfo: testMessageContext(),
+        interactiveMessage: {
+          header: { title: 'Ocha Media Header Test', subtitle: 'Local image upload', hasMediaAttachment: true, imageMessage: uploaded.imageMessage },
+          body: { text: 'Native Flow dengan header gambar lokal yang diunggah ke WhatsApp.' },
+          footer: { text: 'Ocha Lidya AI · Media Header' },
+          nativeFlowMessage: { buttons: [
+            nativeButton('quick_reply', { display_text: 'Pilih Test', id: '.test response media_header' }),
+            nativeButton('cta_url', { display_text: 'Buka Repo', url: github, merchant_url: github })
+          ], messageParamsJson: JSON.stringify({ bottom_sheet: { in_thread_buttons_limit: 2, list_title: 'Pilihan', button_title: 'Buka Menu' } }), messageVersion: 1 }
+        }
+      }));
+    }
+
+    case 10:
+      return deliver('galaxy-catalog-address', () => relayTestPayload(sock, m, {
+        messageContextInfo: testMessageContext(),
+        interactiveMessage: {
+          header: { title: 'Galaxy Flow & Address Form', hasMediaAttachment: false },
+          body: { text: 'Uji Galaxy Flow v3, Catalog CTA, dan Address Message menggunakan data dummy.' },
+          footer: { text: 'Ocha Lidya AI · Nexora' },
+          nativeFlowMessage: { buttons: [
+            nativeButton('galaxy_message', { flow_message_version: '3', flow_token: 'ocha-flow-test-token', flow_id: '1234567890123456', flow_cta: 'Buka Galaxy Flow', flow_action: 'navigate', mode: 'published', flow_action_payload: { screen: 'START', data: { user_name: 'Ocha Test', order_ref: 'OCHA-FLOW-TEST' } } }),
+            nativeButton('cta_catalog', { business_phone_number: OWNER_PHONE, catalog_product_id: '9876543210987654', thumbnail_product_id: '9876543210987654' }),
+            nativeButton('address_message', { display_text: 'Form Alamat Test', id: '.test response address_form', country: 'ID', values: { name: 'Ocha Test', phone_number: '6280000000000', in_pin_code: '20111', address: 'Alamat Pengujian', city: 'Medan', state: 'Sumatera Utara' } })
+          ], messageParamsJson: '{}', messageVersion: 1 }
+        }
+      }));
+
+    case 11:
+      return deliver('voice-call-permission', () => relayTestPayload(sock, m, {
+        messageContextInfo: testMessageContext(),
+        interactiveMessage: {
+          header: { title: 'Voice Call & Permission', hasMediaAttachment: false },
+          body: { text: 'Uji voice_call dan permintaan izin panggilan.' },
+          footer: { text: 'Ocha Lidya AI · Experimental' },
+          nativeFlowMessage: { buttons: [
+            nativeButton('voice_call', { display_text: 'Voice Call Test', ttl_minutes: 10 }),
+            nativeButton('call_permission_request', { has_multiple_buttons: true })
+          ], messageParamsJson: '{}', messageVersion: 1 }
+        }
+      }, 'voice_call'));
+
+    case 12:
+      return deliver('commerce-payment', () => relayTestPayload(sock, m, {
+        messageContextInfo: testMessageContext(),
+        interactiveMessage: {
+          header: { title: 'Commerce & Payment Test', hasMediaAttachment: false },
+          body: { text: 'Payload dummy untuk pemeriksaan struktur commerce. Bukan invoice atau transaksi nyata.' },
+          footer: { text: 'Ocha Lidya AI · TEST ONLY' },
+          nativeFlowMessage: { buttons: [
+            nativeButton('mpm', { product_list_info: { title: 'Ocha Test Catalog', product_sections: [{ title: 'Synthetic Products', products: [{ product_retailer_id: 'OCHA-TEST-SKU-01' }] }], business_owner_jid: ownerJid } }),
+            nativeButton('review_and_pay', { currency: 'IDR', total_amount: { value: 10000, offset: 100 }, reference_id: 'OCHA-TEST-INV-01', type: 'physical-goods', order }),
+            nativeButton('payment_info', { payment_settings: [{ type: 'pix_static_code', pix_static_code: { merchant_name: 'OCHA TEST ONLY', key: 'TEST-NOT-A-REAL-PAYMENT-KEY', key_type: 'PHONE' } }] }),
+            nativeButton('payment_status', { reference_id: 'OCHA-TEST-INV-01', payment_status: 'pending', payment_timestamp: Math.floor(Date.now() / 1000) })
+          ], messageParamsJson: '{}', messageVersion: 1 }
+        }
+      }));
+
+    case 13:
+      return deliver('extended-cta', () => relayTestPayload(sock, m, {
+        messageContextInfo: testMessageContext(),
+        interactiveMessage: {
+          header: { title: 'Extended CTA Actions', hasMediaAttachment: false },
+          body: { text: 'Uji OTP, prefilled message, Webview, WhatsApp Channel dan request phone.' },
+          footer: { text: 'Ocha Lidya AI · Experimental CTA' },
+          nativeFlowMessage: { buttons: [
+            nativeButton('cta_otp', { display_text: 'Salin OTP Test', copy_code: '849201' }),
+            nativeButton('cta_message', { display_text: 'Chat Test Number', phone_number: '6280000000000', text: 'Halo Ocha Test' }),
+            nativeButton('open_webview', { title: 'Buka Webview', link: { url: 'https://example.com' } }),
+            nativeButton('cta_whatsapp_channel', { display_text: 'Channel Test', newsletter_jid: '120363000000000000@newsletter', newsletter_name: 'Ocha Test Channel' }),
+            nativeButton('request_phone_number', { display_text: 'Kirim Nomor HP' })
+          ], messageParamsJson: '{}', messageVersion: 1 }
+        }
+      }));
+
+    case 14:
+      return sendCarouselTest(sock, m);
+
+    case 15: {
+      const first = await deliver('shop-storefront', () => relayTestPayload(sock, m, {
+        messageContextInfo: testMessageContext(),
+        interactiveMessage: {
+          body: { text: 'Etalase toko Ocha Test (shopStorefrontMessage).' },
+          footer: { text: 'Ocha Lidya AI' },
+          shopStorefrontMessage: { surface: 1, id: 'shop-ocha-test', messageVersion: 1 }
+        }
+      }));
+      await sleep(700);
+      const second = await deliver('collection', () => relayTestPayload(sock, m, {
+        messageContextInfo: testMessageContext(),
+        interactiveMessage: {
+          body: { text: 'Koleksi katalog Ocha Test (collectionMessage).' },
+          footer: { text: 'Ocha Lidya AI' },
+          collectionMessage: { bizJid: ownerJid, id: 'collection-ocha-test', messageVersion: 1 }
+        }
+      }));
+      return { handled: true, test: 'test-15-storefront', success: first.success && second.success, resultIds: [first.resultId, second.resultId].filter(Boolean) };
+    }
+
+    case 16: {
+      const aiHtml = '<div style="background:#101726;color:#f1f5f9;padding:13px;border-radius:14px;font-family:sans-serif;border:1px solid #263148"><b style="color:#38bdf8">OCHA · AIRICH TEST</b><p style="font-size:11px;color:#94a3b8">Uji richResponseMessage dan inline HTML tanpa script.</p></div>';
+      return deliver('ai-rich-response', () => sock.relayMessage(m.chat, {
+        messageContextInfo: { deviceListMetadata: {}, deviceListMetadataVersion: 2, botMessageSecret: randomBytes(32) },
+        botForwardedMessage: { message: { richResponseMessage: {
+          messageType: 1,
+          submessages: [{ messageType: 2, messageText: '✅ Ocha AIRich Response Test · Razzaq Ventures' }],
+          unifiedResponse: { data: new TextEncoder().encode(JSON.stringify({
+            title: 'OCHA AIRICH TEST', footer: 'Ocha Lidya AI · Razzaq Ventures',
+            sections: [{ view_model: { __typename: 'GenAISingleLayoutViewModel', primitive: { __typename: 'FOAHtmlPrimitiveDemoDONOTUSE', trusted_sources: [], payload: aiHtml } } }]
+          })) },
+          contextInfo: { forwardingScore: 1, isForwarded: true, forwardedAiBotMessageInfo: { botJid: '13135550002@s.whatsapp.net', botName: 'Meta AI' } }
+        } } }
+      }, {}));
+    }
+    default:
+      throw new Error('Nomor test harus 1 sampai 16.');
+  }
+}
+
 async function runTestSelection(sock, m, selection) {
   const key = String(selection || '').toLowerCase();
   if (!key || key === 'menu') return sendTestMenu(sock, m);
   if (key === 'all') {
-    const deliveries = [];
-    deliveries.push(await sendNativeFlowTests(sock, m, 'all'));
-    deliveries.push(await sendQuickReplyAndList(sock, m));
-    deliveries.push(await logTestDelivery('poll', m, () => runTest(sock, m, 'poll', [])));
-    deliveries.push(await sendCarouselTest(sock, m));
-    deliveries.push(await sendMediaPack(sock, m));
-    deliveries.push(await logTestDelivery('legacy-buttons', m, () => runTest(sock, m, 'legacy_button', [])));
-    deliveries.push(await logTestDelivery('hydrated-template', m, () => runTest(sock, m, 'hydrated', [])));
-    deliveries.push(await sendExtraTests(sock, m));
-    deliveries.push(await logTestDelivery('ai-rich', m, () => runTest(sock, m, 'airich', [])));
-    return { handled: true, test: 'all', success: deliveries.every(item => item.success !== false), resultIds: deliveries.flatMap(item => item.resultIds || (item.resultId ? [item.resultId] : [])) };
+    const results = [];
+    for (let number = 1; number <= NUMBERED_TESTS.length; number += 1) {
+      results.push(await runNumberedTest(sock, m, number));
+      await sleep(850);
+    }
+    return { handled: true, test: 'all-numbered', success: results.every(item => item.success !== false), resultIds: results.flatMap(item => item.resultIds || (item.resultId ? [item.resultId] : [])) };
   }
-  if (key === 'full-buttons') {
-    const deliveries = [];
-    deliveries.push(await sendNativeFlowTests(sock, m, 'all'));
-    await sleep(TEST_DELAY_MS);
-    deliveries.push(await sendQuickReplyAndList(sock, m));
-    await sleep(TEST_DELAY_MS);
-    deliveries.push(await logTestDelivery('legacy-buttons', m, () => runTest(sock, m, 'legacy_button', [])));
-    await sleep(TEST_DELAY_MS);
-    deliveries.push(await logTestDelivery('hydrated-template', m, () => runTest(sock, m, 'hydrated', [])));
-    return { handled: true, test: 'full-buttons', success: deliveries.every(item => item.success !== false), resultIds: deliveries.flatMap(item => item.resultIds || (item.resultId ? [item.resultId] : [])) };
-  }
-  if (key === 'nativeflow') return sendNativeFlowTests(sock, m, 'all');
-  if (key.startsWith('nativeflow-')) return sendNativeFlowTests(sock, m, key.split('-')[1]);
-  if (key === 'quick') return sendQuickReplyAndList(sock, m);
-  if (key === 'poll') { const delivery = await logTestDelivery('poll', m, () => runTest(sock, m, 'poll', [])); return { handled: true, test: 'poll', success: delivery.success, resultIds: delivery.resultId ? [delivery.resultId] : [] }; }
-  if (key === 'carousel') return sendCarouselTest(sock, m);
-  if (key === 'media') return sendMediaPack(sock, m);
-  if (key === 'legacy') {
-    const first = await logTestDelivery('legacy-buttons', m, () => runTest(sock, m, 'legacy_button', []));
-    await sleep(TEST_DELAY_MS);
-    const second = await logTestDelivery('hydrated-template', m, () => runTest(sock, m, 'hydrated', []));
-    return { handled: true, test: 'legacy', success: first.success && second.success, resultIds: [first.resultId, second.resultId].filter(Boolean) };
-  }
-  if (key === 'extras') return sendExtraTests(sock, m);
-  if (key === 'rich') { const delivery = await logTestDelivery('ai-rich', m, () => runTest(sock, m, 'airich', [])); return { handled: true, test: 'rich', success: delivery.success, resultIds: delivery.resultId ? [delivery.resultId] : [] }; }
+  const number = Number(key);
+  if (Number.isInteger(number) && number >= 1 && number <= NUMBERED_TESTS.length) return runNumberedTest(sock, m, number);
+  const legacySelections = {
+    'full-buttons': async () => runNumberedTest(sock, m, 8),
+    nativeflow: async () => runNumberedTest(sock, m, 8),
+    quick: () => sendQuickReplyAndList(sock, m),
+    poll: async () => {
+      const result = await logTestDelivery('poll', m, () => runTest(sock, m, 'poll', []));
+      return { handled: true, test: 'poll', success: result.success, resultIds: result.resultId ? [result.resultId] : [] };
+    },
+    carousel: () => runNumberedTest(sock, m, 14),
+    media: () => runNumberedTest(sock, m, 6),
+    legacy: async () => {
+      const first = await runNumberedTest(sock, m, 1);
+      await sleep(700);
+      const second = await runNumberedTest(sock, m, 3);
+      return { handled: true, test: 'legacy', success: first.success && second.success, resultIds: [...(first.resultIds || []), ...(second.resultIds || [])] };
+    },
+    extras: () => runNumberedTest(sock, m, 7),
+    rich: () => runNumberedTest(sock, m, 16)
+  };
+  if (legacySelections[key]) return legacySelections[key]();
   return sendTestMenu(sock, m);
 }
 
@@ -683,6 +922,13 @@ async function runTest(sock, m, type, args) {
   }
 }
 
+export const messageTestTestHooks = Object.freeze({
+  catalog: () => NUMBERED_TESTS.map(item => ({ ...item })),
+  sendTestMenu,
+  runNumberedTest,
+  runTestSelection
+});
+
 export default {
   name: 'test',
   fullButton: false,
@@ -696,7 +942,8 @@ export default {
     const [type = 'menu', ...options] = args;
     const normalizedType = String(type || 'menu').toLowerCase();
     try {
-      if (normalizedType === 'menu' || normalizedType === 'help') return await sendTestMenu(sock, m);
+      if (normalizedType === 'menu' || normalizedType === 'help') return await sendTestMenu(sock, m, 1);
+      if (normalizedType === 'page') return await sendTestMenu(sock, m, options[0]);
       if (normalizedType === 'select') return await runTestSelection(sock, m, options[0]);
       const result = await runTest(sock, m, normalizedType, options);
       if (result?.handled) {

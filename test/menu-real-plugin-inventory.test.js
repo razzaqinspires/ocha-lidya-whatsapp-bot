@@ -26,7 +26,9 @@ function readCommandMetadata(file) {
   if (!name) return null;
   const category = pluginSource.match(/\bcategory\s*:\s*['"]([^'"]+)['"]/m)?.[1] || 'other';
   const usage = pluginSource.match(/\busage\s*:\s*['"]([^'"]*)['"]/m)?.[1] || '';
-  return { name, category, usage };
+  const aliasesSource = pluginSource.match(/\baliases\s*:\s*\[([^\]]*)\]/m)?.[1] || '';
+  const aliases = [...aliasesSource.matchAll(/['"]([^'"]+)['"]/g)].map(match => match[1]);
+  return { name, category, usage, aliases };
 }
 
 test('all current source plugins contribute canonical commands, including .test and .apikey', () => {
@@ -37,6 +39,8 @@ test('all current source plugins contribute canonical commands, including .test 
   assert.match(body, /\.test \[pilihan dari daftar\]/);
   assert.match(body, /\.react \[menu\|on\|off\|status\]/);
   assert.match(body, /\.apikey <add\|delete\|list\|get> <provider> \[value\]/);
-  assert.equal(stats.commands, plugins.length);
+  const expectedCommands = plugins.reduce((total, plugin) => total + 1 + (plugin.aliases || []).length, 0);
+  assert.equal(stats.commands, expectedCommands);
+  assert.match(body, /\.ytmp3/);
   assert.doesNotMatch(body, /daftar perintah|Kelola API key|laboratorium uji/i, 'menu lists command syntax without descriptions');
 });

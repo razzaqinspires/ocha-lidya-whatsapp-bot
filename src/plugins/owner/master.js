@@ -24,7 +24,8 @@ function statusText(security) {
     `│ Warning          : ${warningMode.toUpperCase()}`,
     `│ AI semantic review: ${reviewEnabled ? 'ON' : 'OFF · local heuristic only'}`,
     '│ Hard-block        : ALWAYS ON',
-    '│ Owner confirmation: mandatory for flagged work',
+    `│ Risk confirmation : ${warningMode === 'off' ? 'OFF · non-hard-blocked work continues' : 'ON for flagged work'}`,
+    `│ Master in groups  : ${security.allowMasterInGroups ? 'ON' : 'OFF'}`,
     '├─ COMMANDS',
     '│ .master status',
     '│ .master eval on/off',
@@ -33,9 +34,11 @@ function statusText(security) {
     '│ .master golang on/off',
     '│ .master warning on/off/true/false/compact/detailed/status',
     '│ .master review on/off/true/false/status',
+    '│ .master group on/off/status',
     '├─ NOTES',
-    '│ warning off = suppress notices and silently block flagged code.',
-    '│ review off = disable AI assessment, keep local guard + confirmation.',
+    '│ warning off = skip prompts for non-hard-blocked work; audit silently.',
+    '│ Hard-block rules remain active in every warning mode.',
+    '│ review off = disable AI assessment; local heuristic remains active.',
     '│ eval off = disable the JavaScript runner itself.',
     '│ Legacy .master exec on/off is an alias for CLI.',
     '╰──────────────────────────────────────'
@@ -44,8 +47,8 @@ function statusText(security) {
 }
 
 export default {
-  name: 'master', aliases: ['masterconfig'], category: 'owner', ownerOnly: true, privateOnly: true,
-  usage: '[status|eval|cli|python|golang|warning|review] [on|off|true|false|compact|detailed|status]',
+  name: 'master', aliases: ['masterconfig'], category: 'owner', ownerOnly: true, privateOnly: false,
+  usage: '[status|eval|cli|python|golang|warning|review|group] [on|off|true|false|compact|detailed|status]',
   description: 'Manage owner-only developer runners and workload review policy',
   async execute({ m, args }) {
     const [requestedFeature, requestedValue] = args;
@@ -58,15 +61,23 @@ export default {
 
     if (canonicalFeature === 'warning') {
       if (!['status', 'on', 'off', 'compact', 'detailed'].includes(value)) {
-        return m.reply('Gunakan .master warning status|on|off|compact|detailed. Mode off menyembunyikan notifikasi dan memblokir workload berisiko secara diam-diam.');
+        return m.reply('Gunakan .master warning status|on|off|compact|detailed. Mode off melewati prompt untuk workload non-hard-blocked; hard-block tetap aktif.');
       }
       if (value === 'status') return m.reply(`Workload warning: ${(security.masterWorkloadWarningMode || 'compact').toUpperCase()}\nPilihan: on/true, off/false, compact, detailed.`);
       const mode = value === 'on' ? 'compact' : value;
       await updateConfig(config => { config.security.masterWorkloadWarningMode = mode; }, { actor: m.sender, reason: `master workload warning ${mode}` });
       const description = mode === 'off'
-        ? 'Notifikasi peringatan dimatikan. Workload mencurigakan tidak akan dijalankan dan akan diblokir tanpa balasan.'
+        ? 'Prompt peringatan dimatikan. Workload non-hard-blocked tetap dijalankan tanpa konfirmasi; seluruh hard-block tetap berlaku dan aktivitas dicatat di audit log.'
         : `Peringatan workload aktif dalam mode ${mode}. CTA Copy dan tombol tindakan tersedia untuk konfirmasi owner.`;
       return m.reply(description);
+    }
+
+    if (canonicalFeature === 'group') {
+      if (!['status', 'on', 'off'].includes(value)) return m.reply('Gunakan .master group status|on|off. Pengaturan ini mengizinkan runner Master dan .master console digunakan oleh owner terverifikasi di grup.');
+      if (value === 'status') return m.reply(`Master console di grup: ${security.allowMasterInGroups ? 'ON' : 'OFF'}\nDefault aman: OFF. Aktifkan dari DM owner dengan .master group on.`);
+      const enabled = value === 'on';
+      await updateConfig(config => { config.security.allowMasterInGroups = enabled; }, { actor: m.sender, reason: `master group access ${value}` });
+      return m.reply(`Master console di grup: ${enabled ? 'ON' : 'OFF'}. ${enabled ? 'Hanya owner terverifikasi yang dapat memakai runner Master di grup.' : 'Perintah Master kembali dibatasi ke DM owner.'}`);
     }
 
     if (canonicalFeature === 'review') {
@@ -74,7 +85,7 @@ export default {
       if (value === 'status') return m.reply(`AI semantic review: ${security.masterWorkloadReviewEnabled === false ? 'OFF' : 'ON'}\nLocal heuristic dan hard-block: ALWAYS ON.`);
       const enabled = value === 'on';
       await updateConfig(config => { config.security.masterWorkloadReviewEnabled = enabled; }, { actor: m.sender, reason: `master workload AI review ${value}` });
-      return m.reply(`AI semantic review: ${enabled ? 'ON' : 'OFF'}. ${enabled ? 'Pemeriksaan AI dan lokal aktif.' : 'AI tidak dipanggil; pemeriksaan lokal dan konfirmasi untuk kode berisiko tetap aktif.'}`);
+      return m.reply(`AI semantic review: ${enabled ? 'ON' : 'OFF'}. ${enabled ? 'Pemeriksaan AI dan lokal aktif.' : 'AI tidak dipanggil; pemeriksaan lokal tetap aktif. Konfirmasi mengikuti pengaturan .master warning.'}`);
     }
 
     const runner = runners[canonicalFeature];
@@ -89,8 +100,9 @@ export default {
         '.master golang on/off',
         '.master warning on/off/true/false/compact/detailed/status',
         '.master review on/off/true/false/status',
+        '.master group on/off/status',
         '',
-        'Catatan: eval off mematikan runner JavaScript. review off hanya mematikan AI assessor. exec adalah alias lama untuk cli.'
+        'Catatan: eval off mematikan runner JavaScript. warning off melewati prompt untuk risiko non-hard-blocked; hard-block tetap aktif. exec adalah alias lama untuk cli.'
       ].join('\n'));
     }
 
