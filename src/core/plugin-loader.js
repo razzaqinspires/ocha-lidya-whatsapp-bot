@@ -3,7 +3,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import fsSync from 'node:fs';
 import { pathToFileURL } from 'node:url';
-import chokidar from 'chokidar';
+import { watchFiles } from './file-watcher.js';
 import { logger } from './logger.js';
 import { isRuntimeWatchIgnored } from './watch-policy.js';
 import { canCommitSourceBatch, classifySourceBatch, DEPENDENCY_MANIFESTS, validateJsonFile } from './source-batch.js';
@@ -156,7 +156,7 @@ function requireStatSync(file) {
 }
 
 export function watchSourceFiles({ onRestartRequired = () => {}, onBatchStart = () => {}, onBatchSettled = () => {} } = {}) {
-  const watcher = chokidar.watch(PROJECT_ROOT, {
+  const watcher = watchFiles(PROJECT_ROOT, {
     ignoreInitial: true,
     persistent: true,
     awaitWriteFinish: { stabilityThreshold: 650, pollInterval: 120 },

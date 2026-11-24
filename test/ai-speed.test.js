@@ -18,6 +18,7 @@ test('AI batches rapid adjacent messages and answers once through the fast provi
   const requestUrls = [];
   let requestBody;
   let replies = 0;
+  let engineModule = null;
   globalThis.fetch = async (url, options) => {
     calls += 1;
     requestUrls.push(String(url));
@@ -30,7 +31,7 @@ test('AI batches rapid adjacent messages and answers once through the fast provi
   try {
     const config = await import(pathToFileURL(path.resolve(original, 'src/config.js')).href);
     await config.loadConfig();
-    const engine = await import(pathToFileURL(path.resolve(original, 'src/ai/engine.js')).href);
+    const engine = engineModule = await import(pathToFileURL(path.resolve(original, 'src/ai/engine.js')).href);
     await engine.initializeAIHistoryCache();
     const sock = { sendPresenceUpdate: async () => {} };
     const makeMessage = body => ({
@@ -46,7 +47,7 @@ test('AI batches rapid adjacent messages and answers once through the fast provi
     assert.equal(calls, 1, 'rapid messages are sent as one provider request');
     assert.equal(replies, 1, 'one combined turn produces one WhatsApp reply');
     assert.equal(requestBody.messages.at(-1).content, 'Halo\nBisa bantu?');
-    assert.equal(requestBody.max_tokens, 180, 'default AI profile uses a bounded low-latency output budget');
+    assert.equal(requestBody.max_tokens, 2048, 'Groq output is capped at the configured free-tier maximum');
     assert.equal(a.provider, 'groq');
     assert.equal(b.provider, 'groq');
 
@@ -73,6 +74,7 @@ test('AI batches rapid adjacent messages and answers once through the fast provi
     assert.equal(localResult.provider, 'local-policy', 'public identity remains available during provider maintenance');
     assert.equal(ownerReports, 1, 'maintenance does not spam duplicate owner reports');
   } finally {
+    try { await engineModule?.flushAIPersistenceWrites?.(); } catch {}
     globalThis.fetch = previousFetch;
     if (previousKey === undefined) delete process.env.GROQ_API_KEY; else process.env.GROQ_API_KEY = previousKey;
     for (const [key, value] of Object.entries(previousOtherKeys)) {

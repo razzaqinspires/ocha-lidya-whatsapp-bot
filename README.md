@@ -1,8 +1,12 @@
 # Ocha Lidya WhatsApp Bot
 
-## Rental Dashboard & Website Builder Part 2 (v1.10.35)
+## Native Button Menu, Kernel Response Reliability & Redesigned Profile Canvas (v1.10.37)
 
-The rental dashboard now supports scoped read/write API keys, idempotent member-limit updates, queued group-member actions, and tenant command allowlist/denylist controls with audit history. The website builder includes seven responsive templates, persistent publishing through the existing shared TryCloudflare gateway, a 24-hour private editor session, custom sections, image/MP4 posts, and 1:1 PNG share cards. A native Java Android dashboard source project is included at `apps/android-dashboard/`. The repository contains Android source, not a compiled APK; build it with Android SDK 35 and Gradle on a configured Android host. See `docs/RENTAL_DASHBOARD_PART1.md` and `docs/RENTAL_DASHBOARD_PART2.md` for the API contract, tenant boundaries, setup, backup and validation notes.
+`.menu` now opens a native WhatsApp category selector and paged command lists; selecting a row sends the canonical command through the normal permission/tenant gates. Owner-only commands are hidden from non-owners. `.kernel` now acknowledges immediately with a local telemetry summary before initializing the shared public TryCloudflare gateway, then sends a WebView CTA or a clear diagnostic if publishing fails. `.profile` uses a redesigned 1080×1520 SVG canvas with level medallion, XP progress, activity metrics, relationship/trust indicators, and achievement chips. The profile card and PNG rendering still require the optional `sharp` package; without it the command returns the complete text profile.
+
+## Rental Dashboard & Website Builder Part 2 + Watcher Reliability Fix (v1.10.36)
+
+The rental dashboard now supports scoped read/write API keys, idempotent member-limit updates, queued group-member actions, and tenant command allowlist/denylist controls with audit history. The website builder includes seven responsive templates, persistent publishing through the existing shared TryCloudflare gateway, a 24-hour private editor session, custom sections, image/MP4 posts, and 1:1 PNG share cards. A native Java Android dashboard source project is included at `apps/android-dashboard/`. The repository contains Android source, not a compiled APK; build it with Android SDK 35 and Gradle on a configured Android host. Chokidar is pinned to 4.0.3; if it is temporarily unavailable, the source watcher uses a Node.js filesystem fallback without blocking startup. See `docs/CHOKIDAR_SETUP.md` and `docs/RENTAL_DASHBOARD_PART1.md` and `docs/RENTAL_DASHBOARD_PART2.md` for the API contract, tenant boundaries, setup, backup and validation notes.
 
 ## NADI external operational-state component (v1.10.31)
 
@@ -364,7 +368,7 @@ Default multi-prefix values are `.`, `!`, `/`, and `#`.
 | `.joingc <url>` | `.joingroup` | Owner-only private command; joins a group using an official WhatsApp invite link and starts it muted |
 | `.mute on/off/status` | `.groupmute` | Owner-only in-group control for the current group; private `.mute on all` is an emergency global mute |
 | `.test <type> <options>` | `.testmsg`, `.messagetest` | Owner-only Baileys message lab: native-flow, hydrated template, event/date, poll, PTV, view-once, AI rich, and carousel |
-| `.yts <query>` | `.ytsearch` | YouTube thumbnail carousel; each result offers MP3 and all detected MP4 resolutions |
+| `.yts <query>` | `.ytsearch` | YouTube text-only carousel (five results per page), MP3/MP4 choices, and a next-page quick reply |
 | `.ytmp3 <url>` | — | Download audio as MP3 |
 | `.ytmp4 <url> [resolution]` | — | Show available MP4 resolutions, or download a selected quality |
 | `.ytm <song title>` | `.ytmusic`, `.ytplay` | Search and send audio only using an isolated temporary job directory |
@@ -740,7 +744,7 @@ See [`docs/RENTAL_USER_GUIDE.md`](docs/RENTAL_USER_GUIDE.md) for the full custom
 
 The internal native-flow registry supports lossless parameter forwarding for the registered sample button types. It distinguishes stable, observed and experimental payloads; it does not promise that all WhatsApp clients or business accounts render experimental commerce/call flows. The raw low-level `sock.relayMessage()` path is left untouched. `sendInteractive`/`sendNativeFlow` validate registered payloads and retain a text fallback. The owner-only `.test nativeflow all` sends five pages based on the current evaluation fixture; `.test identity` and `.test inspect` expose PN/LID and parsed-response diagnostics. Quick-reply and single-select test IDs route through `.test response ...`; URL, call, copy, and location controls may be handled entirely by the WhatsApp app and are not guaranteed to send a bot callback. See [`docs/NATIVE_FLOW_SERIALIZER.md`](docs/NATIVE_FLOW_SERIALIZER.md).
 
-YouTube commands use `yt-dlp` plus FFmpeg/ffprobe installed on the host; these are system tools, not npm dependencies. `.ytconfig` lets the owner adjust their executable paths, maximum file size, maximum duration, and search count without editing `.env`. `.yts`, `.ytmp3`, `.ytmp4`, and audio-only `.ytm` are documented in [`docs/YOUTUBE_COMMANDS.md`](docs/YOUTUBE_COMMANDS.md). The executable path and media limits live in the non-secret `youtube` application configuration. Inspect or update them with `.ytconfig`; live retrieval still depends on YouTube availability and format changes.
+YouTube commands use `yt-dlp` plus FFmpeg/ffprobe installed on the host; these are system tools, not npm dependencies. `.ytconfig` lets the owner adjust their executable paths, maximum file size, maximum duration, and search count without editing `.env`. `.yts` (five text-only results per page with a next-page button), `.ytmp3`, `.ytmp4`, and audio-only `.ytm` are documented in [`docs/YOUTUBE_COMMANDS.md`](docs/YOUTUBE_COMMANDS.md). The executable path and media limits live in the non-secret `youtube` application configuration. Inspect or update them with `.ytconfig`; live retrieval still depends on YouTube availability and format changes.
 
 See `docs/RENTAL_100_FEATURE_CATALOG.md` for the distinction between implemented capabilities and the roadmap. The catalog does not market dynamic QR, automatic refunds, payment webhooks or a customer web dashboard as delivered.
 
@@ -759,6 +763,21 @@ Renters can create separate private API keys with `.sewaapi`: `rental:read` expo
 
 The local dashboard API binds to `127.0.0.1:8787`. Set `OCHA_RENTAL_API_TUNNEL=1` to start an optional temporary TryCloudflare quick tunnel (requires `cloudflared`). The URL is ephemeral; use a stable domain and production gateway for permanent customer dashboards. Part 1 endpoints are read-only.
 
-`.website verify` starts a one-time Rp10.000 verification request. `.website paid <invoice>` reports payment; `.website bukti <invoice>` sends private image evidence. Owner reviews with `.webverify list|approve|reject`. Approval grants a blue-check badge and one website slot. Seven templates, editor, sharing workflow, APK/WebView wrapper, and write-capable tenant dashboard actions are planned for Part 2.
+`.website verify` starts a one-time Rp10.000 verification request. `.website paid <invoice>` reports payment; `.website bukti <invoice>` sends private image evidence. Owner reviews with `.webverify list|approve|reject`. Approval grants a blue-check badge and one website slot. Part 2 now includes seven templates, the editor, sharing workflow, and write-capable tenant dashboard actions; Android source is included but a compiled APK is not.
 
 `.commandaudit` checks duplicate plugin command names and aliases. It records a report and suggested resolution without deleting or silently rewriting source files. See `docs/RENTAL_DASHBOARD_PART1.md`.
+
+### Message testing and owner reaction controls (v1.10.40)
+- `.test` opens an interactive message-format catalogue. Fixtures are stored in `assets/message-test/`; no external media URL or manually typed poll/button content is required.
+- Successful tests send only their actual payload. Result IDs are logged when available; exceptions are logged with the test ID. No verbose relay summary is sent to chat.
+- `.react` opens owner controls for automatic command and AI reactions (`.react on`, `.react off`, `.react status`). The feature is disabled by default.
+- Quoted-message context parsing was hardened; AI turns that contain a quote are prevented from falling back to generic greeting-only responses.
+
+
+### v1.10.40 — Quoted AI, Message Test Lab, Auto Reaction
+
+- Quoted-message extraction and AI context handling hardened for nested WhatsApp message wrappers.
+- Quoted turns suppress generic greeting-only output; the “Coba lihat sirkuitmu” example receives a truthful software-vs-hardware response.
+- `.test` opens an owner-only interactive catalogue with local fixtures in `assets/message-test/`; successful tests send only the target payload, while failures are written to runtime logs with test IDs.
+- Result IDs are logged when available; no “relay success” summary is sent to chat.
+- `.react` is an owner-only private manager for command and AI reactions (`⏳` / `💭` → `✅`, failure `❌`). It is disabled by default.

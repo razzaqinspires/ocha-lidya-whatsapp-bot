@@ -1,49 +1,77 @@
 import { proto, generateWAMessageFromContent } from '@whiskeysockets/baileys';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { logger } from '../../core/logger.js';
 
 const OWNER_PHONE = '6283193905842';
 const DEFAULT_TEST_URL = 'https://example.com';
 
 const HELP = [
-  '*OCHA TEST MESSAGE LAB*',
-  'Command owner-only untuk menguji format pesan Baileys.',
+  '*OCHA MESSAGE TEST LAB*',
+  'Pilih jenis pengujian dari daftar. Semua media dan contoh pesan sudah disediakan di assets/message-test/.',
+  'Tidak perlu mengetik URL, isi poll, teks tombol, atau thumbnail.',
   '',
-  '.test types',
-  '.test identity  (JID PN/LID, addressing mode, sender, bot, message)',
-  '.test inspect   (payload serializer dan tombol terpilih)',
-  '.test button [teks]',
-  '.test hydrated [teks]',
-  '.test nativeflow [url] | all | 1-5',
-  '.test quick_reply [teks]',
-  '.test cta_url <https-url>',
-  '.test cta_call <nomor>',
-  '.test selection',
-  '.test location_button',
-  '.test address_button',
-  '.test catalog_button',
-  '.test legacy_button [teks]',
-  '.test image <url>',
-  '.test video <url>',
-  '.test audio <url>',
-  '.test document <url>',
-  '.test sticker <webp-url>',
-  '.test location <latitude> <longitude> [nama]',
-  '.test contact',
-  '.test reminder [teks]',
-  '.test date [nama acara] [ISO-date]',
-  '.test event [nama acara] [ISO-date]',
-  '.test poll [pertanyaan | opsi 1 | opsi 2]',
-  '.test circle <video-url>',
-  '.test viewonce <image-url>',
-  '.test airich [teks]',
-  '.test carousel [thumbnail-url-1] [thumbnail-url-2]',
-  '.test nativeflow all | 1 | 2 | 3 | 4 | 5',
-  '.test identity',
-  '.test inspect',
-  '.test response <label>  (dipanggil saat quick-reply/list test diklik)',
-  '.test stubtypes',
-  '',
-  'Media URL wajib dapat diakses server dan memiliki MIME type yang sesuai.'
+  'Ketik .test untuk membuka daftar test. Hasil test yang berhasil hanya berupa pesan uji; kegagalan dicatat di log.'
 ].join('\n');
+
+const TEST_ASSET_DIR = path.resolve(process.cwd(), 'assets', 'message-test');
+const TEST_DELAY_MS = 350;
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+async function readTestAsset(name) {
+  const resolved = path.resolve(TEST_ASSET_DIR, name);
+  if (!resolved.startsWith(`${TEST_ASSET_DIR}${path.sep}`)) throw new Error('Path asset test tidak valid.');
+  return fs.readFile(resolved);
+}
+
+async function logTestDelivery(testId, m, operation) {
+  try {
+    const result = await operation();
+    const resultId = result?.key?.id || result?.messageId || null;
+    if (resultId) logger.info({ testId, resultId }, 'Message test payload accepted with result ID');
+    else logger.debug({ testId }, 'Message test payload call resolved without a result ID');
+    return { success: true, testId, resultId };
+  } catch (error) {
+    logger.error({ err: error, testId, chat: m.chat }, 'Message test payload failed');
+    return { success: false, testId };
+  }
+}
+
+const TEST_MENU_ROWS = [
+  { id: '.test select full-buttons', title: 'Full Button Suite', description: 'Seluruh 5 halaman Native Flow + tombol tambahan' },
+  { id: '.test select nativeflow', title: 'Native Flow All', description: 'Lima halaman action Native Flow' },
+  { id: '.test select quick', title: 'Quick Reply & List', description: 'Quick reply, single-select, dan pilihan baris' },
+  { id: '.test select poll', title: 'Poll Message', description: 'Poll dengan pertanyaan dan opsi bawaan' },
+  { id: '.test select carousel', title: 'Carousel', description: 'Dua kartu gambar lokal dengan tombol' },
+  { id: '.test select media', title: 'Media Pack', description: 'Image, video, audio, PDF, sticker, dan view-once' },
+  { id: '.test select legacy', title: 'Legacy & Hydrated', description: 'ButtonsMessage lama dan hydrated template' },
+  { id: '.test select extras', title: 'Location, Contact & Event', description: 'Koordinat dummy, kartu kontak, kalender' },
+  { id: '.test select rich', title: 'AI Rich Message', description: 'Pesan rich text dan code block' },
+  { id: '.test select all', title: 'Run Everything', description: 'Jalankan semua format pesan yang disediakan' }
+];
+
+async function sendTestMenu(sock, m) {
+  const options = {
+    title: 'OCHA · MESSAGE TEST LAB',
+    subtitle: 'OWNER ONLY · LOCAL TEST ASSETS',
+    body: 'Pilih satu jenis pengujian. Ocha akan langsung mengirim contoh payload. Jika sebuah format gagal, detailnya hanya masuk ke log runtime.',
+    footer: 'Tidak ada laporan relay panjang di chat',
+    buttons: [{
+      name: 'single_select',
+      buttonParamsJson: JSON.stringify({
+        title: 'Pilih pengujian',
+        sections: [{ title: 'TEST CATALOG', rows: TEST_MENU_ROWS }]
+      })
+    }]
+  };
+  try {
+    if (typeof sock.sendInteractive === 'function') return await sock.sendInteractive(m.chat, options, m);
+  } catch (error) {
+    logger.warn({ err: error, chat: m.chat }, 'Native-flow test menu could not be rendered; using text fallback');
+  }
+  return m.reply(`${HELP}\n\n${TEST_MENU_ROWS.map((row, index) => `${index + 1}. ${row.title}`).join('\n')}`);
+}
+
 
 function requireUrl(value, label) {
   let url;
@@ -176,20 +204,143 @@ function nativeFlowPages() {
 async function sendNativeFlowTests(sock, m, selected = 'all') {
   const pages = nativeFlowPages();
   const indexes = selected === 'all' ? [0, 1, 2, 3, 4] : [Number(selected) - 1];
-  if (indexes.some(index => !Number.isInteger(index) || index < 0 || index > 4)) throw new Error('Pilih .test nativeflow all atau nomor 1 sampai 5.');
-  const results = [];
+  if (indexes.some(index => !Number.isInteger(index) || index < 0 || index > 4)) throw new Error('Pilihan Native Flow harus all atau nomor 1 sampai 5.');
+  const deliveries = [];
   for (const index of indexes) {
-    const page = pages[index];
-    try {
-      await sendNativeFlowPage(sock, m, page);
-      results.push(`Bagian ${index + 1}/5: terkirim ke relay`);
-    } catch (error) {
-      results.push(`Bagian ${index + 1}/5: gagal — ${String(error.message || error).slice(0, 180)}`);
-    }
-    if (indexes.length > 1) await new Promise(resolve => setTimeout(resolve, 450));
+    deliveries.push(await logTestDelivery(`nativeflow-${index + 1}`, m, () => sendNativeFlowPage(sock, m, pages[index])));
+    if (indexes.length > 1) await sleep(450);
   }
-  return m.reply(`*Hasil Native Flow Test*\n${results.join('\n')}\n\nStatus relay bukan bukti bahwa semua tombol akan dirender atau berfungsi pada setiap klien WhatsApp.`);
+  return { handled: true, test: 'nativeflow', pages: indexes.length, success: deliveries.every(item => item.success), resultIds: deliveries.map(item => item.resultId).filter(Boolean) };
 }
+
+async function sendQuickReplyAndList(sock, m) {
+  const deliveries = [];
+  deliveries.push(await logTestDelivery('quick-reply', m, () => sock.buttonBuilder()
+    .setTitle('Quick Reply Test')
+    .setBody('Pilih tombol untuk menguji callback quick-reply.')
+    .setFooter('Ocha Message Test Lab')
+    .addReply('Pilih A', '.test response quick_a')
+    .addReply('Pilih B', '.test response quick_b')
+    .send(m.chat, { quoted: m })));
+  await sleep(TEST_DELAY_MS);
+  deliveries.push(await logTestDelivery('single-select', m, () => sock.buttonBuilder()
+    .setTitle('Single Select Test')
+    .setBody('Buka daftar dan pilih salah satu baris.')
+    .addSelection('Pilih opsi')
+    .makeSection('Pilihan')
+    .makeRow('', 'Opsi pertama', 'Baris pertama', '.test response list_first')
+    .makeRow('', 'Opsi kedua', 'Baris kedua', '.test response list_second')
+    .send(m.chat, { quoted: m })));
+  return { handled: true, test: 'quick-and-list', success: deliveries.every(item => item.success), resultIds: deliveries.map(item => item.resultId).filter(Boolean) };
+}
+
+async function sendMediaPack(sock, m) {
+  const image = await readTestAsset('sample-image.png');
+  const video = await readTestAsset('sample-video.mp4');
+  const audio = await readTestAsset('sample-audio.wav');
+  const document = await readTestAsset('sample-document.pdf');
+  const sticker = await readTestAsset('sample-sticker.webp');
+  const tests = [
+    ['image', () => sock.sendMessage(m.chat, { image, mimetype: 'image/png', caption: 'Ocha local image test asset' }, { quoted: m })],
+    ['video', () => sock.sendMessage(m.chat, { video, mimetype: 'video/mp4', caption: 'Ocha local video test asset' }, { quoted: m })],
+    ['audio', () => sock.sendMessage(m.chat, { audio, mimetype: 'audio/wav', ptt: false }, { quoted: m })],
+    ['document', () => sock.sendMessage(m.chat, { document, mimetype: 'application/pdf', fileName: 'ocha-message-test.pdf', caption: 'Ocha local PDF test asset' }, { quoted: m })],
+    ['sticker', () => sock.sendMessage(m.chat, { sticker }, { quoted: m })],
+    ['view-once', () => sock.sendMessage(m.chat, { image, mimetype: 'image/png', viewOnce: true, caption: 'View-once fixture' }, { quoted: m })],
+    ['ptv', () => sock.sendMessage(m.chat, { video, mimetype: 'video/mp4', ptv: true }, { quoted: m })]
+  ];
+  const deliveries = [];
+  for (const [testId, send] of tests) {
+    deliveries.push(await logTestDelivery(testId, m, send));
+    await sleep(TEST_DELAY_MS);
+  }
+  return { handled: true, test: 'media-pack', total: tests.length, success: deliveries.every(item => item.success), resultIds: deliveries.map(item => item.resultId).filter(Boolean) };
+}
+
+async function sendCarouselTest(sock, m) {
+  const [imageOne, imageTwo] = await Promise.all([
+    readTestAsset('carousel-01.png'), readTestAsset('carousel-02.png')
+  ]);
+  const builder = sock.carouselBuilder()
+    .setTitle('Ocha Message Test Carousel')
+    .setBody('Uji dua kartu media dan callback tombol pada setiap kartu.')
+    .setFooter('Ocha Lidya AI · Local Assets');
+  builder.addCard([
+    {
+      header: { title: 'Card 1 · Nexora AI', subtitle: 'WhatsApp Automation', image: imageOne },
+      body: { text: 'Kartu pertama menggunakan gambar lokal.' },
+      footer: { text: 'Kartu 1/2' },
+      nativeFlowMessage: { buttons: [nativeButton('quick_reply', { display_text: 'Pilih Nexora', id: '.test response carousel_nexora' })] }
+    },
+    {
+      header: { title: 'Card 2 · Lumóra', subtitle: 'Aromatherapy & Lifestyle', image: imageTwo },
+      body: { text: 'Kartu kedua menggunakan gambar lokal.' },
+      footer: { text: 'Kartu 2/2' },
+      nativeFlowMessage: { buttons: [nativeButton('quick_reply', { display_text: 'Pilih Lumóra', id: '.test response carousel_lumora' })] }
+    }
+  ]);
+  const delivery = await logTestDelivery('carousel', m, () => builder.send(m.chat, { quoted: m }));
+  return { handled: true, test: 'carousel', success: delivery.success, resultId: delivery.resultId || null, resultIds: delivery.resultId ? [delivery.resultId] : [] };
+}
+
+async function sendExtraTests(sock, m) {
+  const tests = [
+    ['location', () => sock.sendMessage(m.chat, { location: { degreesLatitude: 0, degreesLongitude: 0, name: 'Ocha Test Coordinate' } }, { quoted: m })],
+    ['contact', () => m.sendContact({ number: OWNER_PHONE, displayName: 'Ocha Test Contact', organization: 'Razzaq Ventures' }, { quoted: m })],
+    ['event', () => sock.sendMessage(m.chat, { event: { name: 'Ocha Calendar Test', description: 'Synthetic calendar event test.', startDate: new Date(Date.now() + 60 * 60_000), endDate: new Date(Date.now() + 2 * 60 * 60_000), extraGuestsAllowed: true } }, { quoted: m })]
+  ];
+  const deliveries = [];
+  for (const [testId, send] of tests) {
+    deliveries.push(await logTestDelivery(testId, m, send));
+    await sleep(TEST_DELAY_MS);
+  }
+  return { handled: true, test: 'extras', total: tests.length, success: deliveries.every(item => item.success), resultIds: deliveries.map(item => item.resultId).filter(Boolean) };
+}
+
+async function runTestSelection(sock, m, selection) {
+  const key = String(selection || '').toLowerCase();
+  if (!key || key === 'menu') return sendTestMenu(sock, m);
+  if (key === 'all') {
+    const deliveries = [];
+    deliveries.push(await sendNativeFlowTests(sock, m, 'all'));
+    deliveries.push(await sendQuickReplyAndList(sock, m));
+    deliveries.push(await logTestDelivery('poll', m, () => runTest(sock, m, 'poll', [])));
+    deliveries.push(await sendCarouselTest(sock, m));
+    deliveries.push(await sendMediaPack(sock, m));
+    deliveries.push(await logTestDelivery('legacy-buttons', m, () => runTest(sock, m, 'legacy_button', [])));
+    deliveries.push(await logTestDelivery('hydrated-template', m, () => runTest(sock, m, 'hydrated', [])));
+    deliveries.push(await sendExtraTests(sock, m));
+    deliveries.push(await logTestDelivery('ai-rich', m, () => runTest(sock, m, 'airich', [])));
+    return { handled: true, test: 'all', success: deliveries.every(item => item.success !== false), resultIds: deliveries.flatMap(item => item.resultIds || (item.resultId ? [item.resultId] : [])) };
+  }
+  if (key === 'full-buttons') {
+    const deliveries = [];
+    deliveries.push(await sendNativeFlowTests(sock, m, 'all'));
+    await sleep(TEST_DELAY_MS);
+    deliveries.push(await sendQuickReplyAndList(sock, m));
+    await sleep(TEST_DELAY_MS);
+    deliveries.push(await logTestDelivery('legacy-buttons', m, () => runTest(sock, m, 'legacy_button', [])));
+    await sleep(TEST_DELAY_MS);
+    deliveries.push(await logTestDelivery('hydrated-template', m, () => runTest(sock, m, 'hydrated', [])));
+    return { handled: true, test: 'full-buttons', success: deliveries.every(item => item.success !== false), resultIds: deliveries.flatMap(item => item.resultIds || (item.resultId ? [item.resultId] : [])) };
+  }
+  if (key === 'nativeflow') return sendNativeFlowTests(sock, m, 'all');
+  if (key.startsWith('nativeflow-')) return sendNativeFlowTests(sock, m, key.split('-')[1]);
+  if (key === 'quick') return sendQuickReplyAndList(sock, m);
+  if (key === 'poll') { const delivery = await logTestDelivery('poll', m, () => runTest(sock, m, 'poll', [])); return { handled: true, test: 'poll', success: delivery.success, resultIds: delivery.resultId ? [delivery.resultId] : [] }; }
+  if (key === 'carousel') return sendCarouselTest(sock, m);
+  if (key === 'media') return sendMediaPack(sock, m);
+  if (key === 'legacy') {
+    const first = await logTestDelivery('legacy-buttons', m, () => runTest(sock, m, 'legacy_button', []));
+    await sleep(TEST_DELAY_MS);
+    const second = await logTestDelivery('hydrated-template', m, () => runTest(sock, m, 'hydrated', []));
+    return { handled: true, test: 'legacy', success: first.success && second.success, resultIds: [first.resultId, second.resultId].filter(Boolean) };
+  }
+  if (key === 'extras') return sendExtraTests(sock, m);
+  if (key === 'rich') { const delivery = await logTestDelivery('ai-rich', m, () => runTest(sock, m, 'airich', [])); return { handled: true, test: 'rich', success: delivery.success, resultIds: delivery.resultId ? [delivery.resultId] : [] }; }
+  return sendTestMenu(sock, m);
+}
+
 
 function listStubTypes() {
   const entries = Object.entries(proto?.WebMessageInfo?.StubType || {})
@@ -212,8 +363,12 @@ async function runTest(sock, m, type, args) {
   const text = args.join(' ').trim();
   switch (type) {
     case 'help':
+    case 'menu':
     case '':
-      return m.reply(HELP);
+      return sendTestMenu(sock, m);
+
+    case 'select':
+      return runTestSelection(sock, m, args[0]);
 
     case 'types':
     case 'messagetypes':
@@ -281,7 +436,8 @@ async function runTest(sock, m, type, args) {
     case 'response':
     case 'callback': {
       const label = text || m.buttonId || m.body || 'tidak diketahui';
-      return m.reply(`*Native Flow callback diterima*\nAction: ${m.buttonName || 'quick_reply / single_select'}\nID: ${label}\nSender: ${m.sender || '-'}\nChat: ${m.chat || '-'}\n\nSerializer berhasil mengubah respons tombol menjadi teks command yang dapat diproses dispatcher.`);
+      logger.info({ testId: 'nativeflow-callback', action: m.buttonName || 'unknown', selectedId: label, messageId: m.id || null }, 'Native-flow test callback received');
+      return { handled: true, test: 'callback' };
     }
 
     case 'nativeflow1':
@@ -403,38 +559,38 @@ async function runTest(sock, m, type, args) {
     }
 
     case 'image': {
-      const url = requireUrl(args[0] || '', 'Image URL');
-      return sock.sendMessage(m.chat, { image: { url }, caption: args.slice(1).join(' ').trim() || 'Image message test' }, { quoted: m });
+      const image = args[0] ? { url: requireUrl(args[0], 'Image URL') } : await readTestAsset('sample-image.png');
+      return sock.sendMessage(m.chat, { image, caption: 'Ocha image test asset' }, { quoted: m });
     }
 
     case 'video': {
-      const url = requireUrl(args[0] || '', 'Video URL');
-      return sock.sendMessage(m.chat, { video: { url }, caption: args.slice(1).join(' ').trim() || 'Video message test' }, { quoted: m });
+      const video = args[0] ? { url: requireUrl(args[0], 'Video URL') } : await readTestAsset('sample-video.mp4');
+      return sock.sendMessage(m.chat, { video, mimetype: 'video/mp4', caption: 'Ocha video test asset' }, { quoted: m });
     }
 
     case 'audio': {
-      const url = requireUrl(args[0] || '', 'Audio URL');
-      return sock.sendMessage(m.chat, { audio: { url }, mimetype: 'audio/mpeg', ptt: false }, { quoted: m });
+      const audio = args[0] ? { url: requireUrl(args[0], 'Audio URL') } : await readTestAsset('sample-audio.wav');
+      return sock.sendMessage(m.chat, { audio, mimetype: 'audio/wav', ptt: false }, { quoted: m });
     }
 
     case 'document': {
-      const url = requireUrl(args[0] || '', 'Document URL');
+      const document = args[0] ? { url: requireUrl(args[0], 'Document URL') } : await readTestAsset('sample-document.pdf');
       const fileName = args[1] || 'ocha-message-test.pdf';
-      return sock.sendMessage(m.chat, { document: { url }, fileName, mimetype: 'application/pdf', caption: 'Document test' }, { quoted: m });
+      return sock.sendMessage(m.chat, { document, fileName, mimetype: 'application/pdf', caption: 'Ocha local document test asset' }, { quoted: m });
     }
 
     case 'sticker': {
-      const url = requireUrl(args[0] || '', 'Sticker URL');
-      return sock.sendMessage(m.chat, { sticker: { url } }, { quoted: m });
+      const sticker = args[0] ? { url: requireUrl(args[0], 'Sticker URL') } : await readTestAsset('sample-sticker.webp');
+      return sock.sendMessage(m.chat, { sticker }, { quoted: m });
     }
 
     case 'location': {
-      const latitude = Number(args[0]);
-      const longitude = Number(args[1]);
+      const latitude = args[0] === undefined ? 0 : Number(args[0]);
+      const longitude = args[1] === undefined ? 0 : Number(args[1]);
       if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90 || !Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
-        throw new Error('Gunakan .test location <latitude> <longitude> [nama]. Koordinat harus dalam rentang geografis yang valid.');
+        throw new Error('Koordinat harus dalam rentang geografis yang valid.');
       }
-      const name = args.slice(2).join(' ') || 'Test location';
+      const name = args.slice(2).join(' ') || 'Ocha Test Coordinate';
       return sock.sendMessage(m.chat, { location: { degreesLatitude: latitude, degreesLongitude: longitude, name } }, { quoted: m });
     }
 
@@ -519,47 +675,39 @@ async function runTest(sock, m, type, args) {
       return rich.send(m.chat, { quoted: m, forwarded: false, notification: false });
     }
 
-    case 'carousel': {
-      const images = [
-        requireUrl(args[0] || 'https://github.com/razzaqinspires.png', 'Thumbnail 1'),
-        requireUrl(args[1] || 'https://avatars.githubusercontent.com/u/9919?v=4', 'Thumbnail 2')
-      ];
-      const builder = sock.carouselBuilder()
-        .setTitle('Carousel Test')
-        .setBody('Uji carousel native interaktif dengan gambar yang diunggah sebagai imageMessage.')
-        .setFooter('Ocha Lidya AI · Razzaq Ventures');
-      builder.addCard([
-        {
-          header: { title: 'Card 1 · Nexora AI', subtitle: 'WhatsApp Automation', imageUrl: images[0] },
-          body: { text: 'Uji gambar carousel, body, footer dan callback quick-reply.' },
-          footer: { text: 'Kartu 1/2' },
-          nativeFlowMessage: { buttons: [nativeButton('quick_reply', { display_text: 'Pilih Nexora', id: '.test response carousel_nexora' }), nativeButton('cta_url', { display_text: 'Buka GitHub', url: 'https://github.com/razzaqinspires', merchant_url: 'https://github.com/razzaqinspires' })] }
-        },
-        {
-          header: { title: 'Card 2 · Lumóra', subtitle: 'Aromatherapy Craft', imageUrl: images[1] },
-          body: { text: 'Kartu kedua untuk memastikan gambar dan tombol tiap kartu tidak tertukar.' },
-          footer: { text: 'Kartu 2/2' },
-          nativeFlowMessage: { buttons: [nativeButton('quick_reply', { display_text: 'Pilih Lumóra', id: '.test response carousel_lumora' }), nativeButton('cta_copy', { display_text: 'Salin Kode', copy_code: 'LUMORA-01' })] }
-        }
-      ]);
-      return builder.send(m.chat, { quoted: m });
-    }
+    case 'carousel':
+      return sendCarouselTest(sock, m);
 
     default:
-      return m.reply(`Tipe test tidak dikenal: *${type}*\n\n${HELP}`);
+      return sendTestMenu(sock, m);
   }
 }
 
 export default {
   name: 'test',
-  fullButton: false, aliases: ['testmsg', 'messagetest'], category: 'owner', ownerOnly: true, usage: '<type> [args]',
-  description: 'Laboratorium uji serializer dan format pesan Baileys',
+  fullButton: false,
+  aliases: ['testmsg', 'messagetest'],
+  category: 'owner',
+  ownerOnly: true,
+  privateOnly: true,
+  usage: '[pilihan dari daftar]',
+  description: 'Message Test Lab: daftar native-flow, buttons, poll, media, carousel, dan format pesan WhatsApp',
   async execute({ sock, m, args }) {
-    const [type = 'help', ...options] = args;
+    const [type = 'menu', ...options] = args;
+    const normalizedType = String(type || 'menu').toLowerCase();
     try {
-      await runTest(sock, m, type.toLowerCase(), options);
+      if (normalizedType === 'menu' || normalizedType === 'help') return await sendTestMenu(sock, m);
+      if (normalizedType === 'select') return await runTestSelection(sock, m, options[0]);
+      const result = await runTest(sock, m, normalizedType, options);
+      if (result?.handled) {
+        const resultIds = result.resultIds || (result.resultId ? [result.resultId] : result.key?.id ? [result.key.id] : []);
+        if (resultIds.length) logger.info({ testId: result.test || normalizedType, resultIds, success: result.success !== false }, 'Message test payloads completed');
+        else logger.debug({ testId: result.test || normalizedType, success: result.success !== false }, 'Message test completed without a result ID');
+      }
+      return result;
     } catch (error) {
-      await m.reply(`Test *${type}* gagal dijalankan.\n${error.message || error}`);
+      logger.error({ err: error, testId: normalizedType, chat: m.chat }, 'Message test command failed');
+      return { handled: true, test: normalizedType, success: false };
     }
   }
 };

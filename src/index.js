@@ -21,7 +21,7 @@ import { initializeContacts, addContactFromPnJid } from './core/contacts.js';
 import { initializeGroupMetadata } from './core/group-metadata.js';
 import { resolveMessageSenderPn } from './core/jid-resolution.js';
 import { ensureGroupMetadata, hydrateParticipatingGroupsOnce, handleGroupsUpsert, handleGroupsUpdate, handleGroupParticipantsUpdate } from './core/group-runtime.js';
-import { resumePendingAI, initializeAIHistoryCache } from './ai/engine.js';
+import { resumePendingAI, initializeAIHistoryCache, flushAIPersistenceWrites } from './ai/engine.js';
 import { initializeUserProfiles } from './ai/user-profiles.js';
 import { initializeProviderKeys } from './ai/providers.js';
 import { startModelCatalogScheduler, stopModelCatalogScheduler } from './ai/model-catalog.js';
@@ -36,6 +36,7 @@ import { handleGroupWelcome } from './core/group-tools.js';
 import { getTenantStatus } from './rental/service.js';
 import { startConsciousnessRuntime, stopConsciousnessRuntime } from './runtime/consciousness-runtime.js';
 import { initializeKernelTelemetry, recordIncomingMessage, setWhatsAppConnection, flushKernelTelemetry } from './runtime/kernel-telemetry.js';
+import { classifyReactionTarget, dispatchWithAutoReaction } from './core/auto-reactions.js';
 
 setOutgoingMessageObserver(observeOutgoingMessage);
 
@@ -478,14 +479,18 @@ async function start() {
             senderPnResolved: Boolean(senderPn),
             senderIsLid: String(raw.key.participant || raw.key.remoteJid || '').endsWith('@lid'),
             isGroup: message.isGroup,
-            fromMe: Boolean(message.fromMe)
+            fromMe: Boolean(message.fromMe),
+            quotedMessageId: message.quoted?.key?.id || null,
+            quotedType: message.quoted?.type || null,
+            quotedTextLength: String(message.quoted?.text || '').length
           }, 'Incoming sender identity verified from WhatsApp metadata');
           observeIncomingMessage(message);
           if (!message.fromMe) recordIncomingMessage({ isGroup: Boolean(message.isGroup) });
           if (message.fromMe && !message.isOwner) continue;
           if (!message.fromMe && senderPn) await addContactFromPnJid(senderPn);
           if (message.isGroup) await ensureGroupMetadata(sock, message.chat);
-          await dispatch(sock, message);
+          const reactionMode = classifyReactionTarget(sock, message);
+          await dispatchWithAutoReaction(sock, message, () => dispatch(sock, message), reactionMode);
         } catch (error) {
           logger.error({ err: error }, 'Message pipeline failed');
         }
@@ -544,6 +549,8 @@ async function shutdownRuntime(signal, exitCode = 0) {
   try { await autoGitSync.close(); } catch {}
   try { await stopCodeLab(); }
   catch (error) { logger.error({ message: error.message }, 'Code Lab shutdown cleanup failed'); }
+  try { await flushAIPersistenceWrites({ timeoutMs: 10_000 }); }
+  catch (error) { logger.warn({ err: error }, 'Deferred AI persistence could not be fully flushed during shutdown'); }
   try { await flushKernelTelemetry(); }
   catch (error) { logger.warn({ message: error.message }, 'Kernel telemetry could not be flushed during shutdown'); }
   try { await runtimeLock.release(); }

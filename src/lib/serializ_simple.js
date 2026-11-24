@@ -186,6 +186,31 @@ function getContentType(msg) {
   return type || keys[0];
 }
 
+
+function findQuotedContextInfo(root) {
+  if (!root || typeof root !== 'object') return null;
+  const queue = [{ value: root, depth: 0 }];
+  const seen = new WeakSet();
+  let fallback = null;
+  while (queue.length) {
+    const { value, depth } = queue.shift();
+    if (!value || typeof value !== 'object' || seen.has(value) || depth > 8) continue;
+    seen.add(value);
+    for (const [key, child] of Object.entries(value)) {
+      if (key === 'contextInfo' && child && typeof child === 'object') {
+        if (child.quotedMessage) return child;
+        if (!fallback && (child.stanzaId || child.mentionedJid?.length)) fallback = child;
+        continue;
+      }
+      // Do not descend into a quoted message: its own context belongs to the
+      // quoted sender, not to the incoming message being serialized.
+      if (key === 'quotedMessage') continue;
+      if (child && typeof child === 'object') queue.push({ value: child, depth: depth + 1 });
+    }
+  }
+  return fallback;
+}
+
 function unwrapMessage(message) {
   if (!message) return { message: null, type: '' };
   let msg = message;
@@ -506,7 +531,8 @@ function serialize(sock, m) {
   }
 
   if (m.message) {
-    const unwrapped = unwrapMessage(m.message);
+    const rawMessageContent = m.message;
+    const unwrapped = unwrapMessage(rawMessageContent);
     m.message = unwrapped.message;
     m.type = unwrapped.type;
 
@@ -537,7 +563,16 @@ function serialize(sock, m) {
       m.buttonName = m.type;
     }
 
-    const contextInfo = m.msg?.contextInfo;
+    const directContextCandidates = [
+      m.msg?.contextInfo,
+      m.message?.messageContextInfo?.contextInfo,
+      m.message?.extendedTextMessage?.contextInfo
+    ];
+    const contextInfo = directContextCandidates.find(value => value?.quotedMessage)
+      || directContextCandidates.find(value => value?.stanzaId || value?.mentionedJid?.length)
+      || findQuotedContextInfo(m.message)
+      || findQuotedContextInfo(rawMessageContent)
+      || null;
     m.mentionedJid = contextInfo?.mentionedJid || [];
 
     if (contextInfo?.quotedMessage) {
@@ -547,9 +582,15 @@ function serialize(sock, m) {
 
       if (qMsg) {
         const qPayload = (qMsg[qType] && typeof qMsg[qType] === 'object') ? qMsg[qType] : qMsg;
+        const storedQuotedMessage = contextInfo.stanzaId ? getStoredMessage(contextInfo.stanzaId, m.chat) : null;
+        const ownJids = getBotIdentifiers(sock);
+        const quotedParticipant = contextInfo.participant ? sock.decodeJid(contextInfo.participant) : '';
+        const quotedFromMe = storedQuotedMessage
+          ? Boolean(storedQuotedMessage.key?.fromMe)
+          : Boolean(quotedParticipant && ownJids.has(quotedParticipant));
         const qKey = {
           remoteJid: m.chat,
-          fromMe: contextInfo.participant === sock.decodeJid(sock.user?.id),
+          fromMe: quotedFromMe,
           id: contextInfo.stanzaId,
           participant: contextInfo.participant
         };
@@ -571,6 +612,7 @@ function serialize(sock, m) {
         }
 
         m.quoted = {
+          id: contextInfo.stanzaId || '',
           key: qKey,
           message: qMsg,
           type: qType,
@@ -580,13 +622,13 @@ function serialize(sock, m) {
           directPath: qPayload.directPath || '',
           url: qPayload.url || '',
           sender: sock.decodeJid(contextInfo.participant || m.chat),
-          fromMe: contextInfo.participant === sock.decodeJid(sock.user?.id),
+          fromMe: quotedFromMe,
           text: extractMessageText(qMsg, qType) || qPayload.caption || qPayload.text || '',
           delete: async () => {
             return await sock.sendMessage(m.chat, {
               delete: {
                 remoteJid: m.chat,
-                fromMe: Boolean(contextInfo.participant === sock.decodeJid(sock.user?.id)),
+                fromMe: quotedFromMe,
                 id: qKey.id,
                 participant: contextInfo.participant || m.chat
               }

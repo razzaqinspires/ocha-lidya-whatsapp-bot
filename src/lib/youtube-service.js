@@ -197,18 +197,26 @@ export async function getYouTubeVideoInfo(input) {
   return result;
 }
 
-export async function searchYouTube(query, limit) {
+export async function searchYouTubePage(query, { limit = 5, offset = 0 } = {}) {
   const cleanQuery = cleanText(query, 120);
   if (cleanQuery.length < 2) throw new Error('Masukkan kata kunci YouTube minimal 2 karakter.');
   const settings = youtubeSettings();
-  const count = clampNumber(limit, settings.searchResults, 1, 8);
+  const count = clampNumber(limit, 5, 1, 8);
+  const start = clampNumber(offset, 0, 0, 35);
+  const requestedCount = start + count + 1;
   const result = await runYtDlp([
-    '--dump-single-json', '--flat-playlist', '--skip-download', '--no-warnings', '--no-progress', '--no-cache-dir', `ytsearch${count}:${cleanQuery}`
+    '--dump-single-json', '--flat-playlist', '--skip-download', '--no-warnings', '--no-progress', '--no-cache-dir',
+    `ytsearch${requestedCount}:${cleanQuery}`
   ], { timeoutMs: DEFAULT_TIMEOUT_MS });
   const data = parseJsonOutput(result.stdout);
   const entries = Array.isArray(data.entries) ? data.entries : [data];
-  const validEntries = entries.map(entry => ({ entry, url: canonicalUrlFromEntry(entry) })).filter(item => item.url).slice(0, count);
-  const detailed = await mapLimit(validEntries, 2, async ({ entry, url }) => {
+  const validEntries = entries
+    .map(entry => ({ entry, url: canonicalUrlFromEntry(entry) }))
+    .filter(item => item.url);
+  const pageEntries = validEntries.slice(start, start + count + 1);
+  const hasMore = pageEntries.length > count;
+  const selectedEntries = pageEntries.slice(0, count);
+  const detailed = await mapLimit(selectedEntries, 2, async ({ entry, url }) => {
     try {
       const info = await getVideoInfo(url);
       return normalizeResult(entry, info);
@@ -216,7 +224,18 @@ export async function searchYouTube(query, limit) {
       return normalizeResult(entry, null);
     }
   });
-  return detailed.filter(Boolean);
+  return {
+    videos: detailed.filter(Boolean),
+    hasMore,
+    offset: start,
+    limit: count,
+    nextOffset: start + selectedEntries.length
+  };
+}
+
+export async function searchYouTube(query, limit) {
+  const page = await searchYouTubePage(query, { limit, offset: 0 });
+  return page.videos;
 }
 
 function validateDuration(info) {

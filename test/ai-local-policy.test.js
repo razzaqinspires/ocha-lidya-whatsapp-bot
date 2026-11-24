@@ -48,7 +48,7 @@ test('creator identity and varied greetings work without any provider API key', 
     assert.match(output.replies[6], /Arifi Razzaq/);
     assert.equal(output.profile.displayName, 'Arifi Razzaq');
     assert.equal(output.profile.role, 'Owner & Creator');
-    assert.ok(output.profile.xp >= 30);
+    assert.equal(output.profile.xp, 12, 'the daily first-contact award is retained while cooldown prevents rapid XP farming');
   } finally {
     await fs.rm(temp, { recursive: true, force: true });
   }

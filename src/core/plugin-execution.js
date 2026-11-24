@@ -37,10 +37,19 @@ async function deny(message, reason, plugin) {
   return { handled: true, allowed: false, reason };
 }
 
+/** Resolve the spelling that invoked the plugin without weakening canonical policy checks. */
+export function resolvePluginExecutionCommand(plugin, parsed = {}) {
+  if (plugin?.preserveAlias) {
+    return String(parsed?.matchedCommand || parsed?.command || plugin.name || '').toLowerCase();
+  }
+  return String(parsed?.command || plugin?.name || '').toLowerCase();
+}
+
 /** Shared policy gate for direct commands and explicit AI-requested commands. */
 export async function executeRegisteredPlugin({ sock, message, plugin, parsed, config = getConfig(), source = 'dispatcher' } = {}) {
   if (!plugin || typeof plugin.execute !== 'function') return { handled: false, reason: 'plugin_missing' };
   const command = String(parsed?.command || plugin.name || '').toLowerCase();
+  const executionCommand = resolvePluginExecutionCommand(plugin, parsed);
   const ownerVerified = isVerifiedOwnerMessage(message, config.bot.owner);
   message.isOwner = ownerVerified;
 
@@ -113,7 +122,7 @@ export async function executeRegisteredPlugin({ sock, message, plugin, parsed, c
   });
   try {
     const result = await plugin.execute({
-      sock, m: message, args: parsed?.args || [], text: parsed?.text || '', command,
+      sock, m: message, args: parsed?.args || [], text: parsed?.text || '', command: executionCommand,
       config, isOwner: auth.owner
     });
     return { handled: true, allowed: true, result, source };

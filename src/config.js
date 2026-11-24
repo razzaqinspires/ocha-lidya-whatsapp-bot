@@ -6,14 +6,15 @@
 import { initializeDatabase, appendRecord, getRecords, getLatestConfigRecord, configureDatabase } from './core/database.js';
 
 const DEFAULTS = Object.freeze({
-  schemaVersion: 36,
+  schemaVersion: 37,
   bot: { name: 'Ocha Lidya', aliases: ['Ocha', 'Lidya'], owner: '6283193905842', ownerName: 'Arifi Razzaq', creatorName: 'Arifi Razzaq', organization: 'Razzaq Ventures', publicCreatorDisclosure: true, expectedNumber: '6282177461231' },
   whatsapp: { authMode: 'pairing', pairingNumber: '6282177461231', browserName: 'Chrome', sessionDir: 'sessions/ocha-lidya', recoverInvalidSession: true, connectTimeoutMs: 60000, queryTimeoutMs: 60000, keepAliveIntervalMs: 25000 },
   logging: { level: 'info', color: 'auto', timeZone: 'Asia/Jakarta' },
   mode: 'public',
   ui: {
     buttonsEnabled: true,
-    fullButton: { enabled: false, strategy: 'adaptive', maxBodyChars: 1800, excludedCommands: [] }
+    fullButton: { enabled: false, strategy: 'adaptive', maxBodyChars: 1800, excludedCommands: [] },
+    autoReactions: { enabled: false, commandEmoji: '⏳', thinkingEmoji: '💭', successEmoji: '✅', failureEmoji: '❌' }
   },
   menu: { showDescriptions: false, pagination: { enabled: false, pageSize: 50 } },
   commandGuard: { cooldown: { enabled: false }, antiSpam: { enabled: false, dailyWarnings: 5 } },
@@ -455,6 +456,17 @@ export async function loadConfig() {
       reason: 'v1.10.33 move YouTube non-secret runtime settings into application config'
     });
   }
+  // v1.10.38 schema v37: add owner-controlled automatic message reactions.
+  // Disabled by default so existing installations keep their previous UX.
+  if (activeConfig.schemaVersion < 37) {
+    activeConfig.schemaVersion = 37;
+    activeConfig.ui = merge(DEFAULTS.ui, activeConfig.ui || {});
+    await appendRecord('config.replace', {
+      config: activeConfig,
+      changedBy: 'system:migration',
+      reason: 'v1.10.38 add owner-controlled automatic command and AI reactions'
+    });
+  }
   activeConfig.menu = merge(DEFAULTS.menu, activeConfig.menu || {});
   activeConfig.commandGuard = merge(DEFAULTS.commandGuard, activeConfig.commandGuard || {});
   activeConfig.security = { ...DEFAULTS.security, ...(activeConfig.security || {}) };
@@ -508,6 +520,11 @@ function validateConfig(c) {
   if (c.ui?.fullButton?.strategy !== 'adaptive') throw new Error('ui.fullButton.strategy harus adaptive');
   if (!Number.isInteger(c.ui?.fullButton?.maxBodyChars) || c.ui.fullButton.maxBodyChars < 300 || c.ui.fullButton.maxBodyChars > 3500) throw new Error('ui.fullButton.maxBodyChars harus 300-3500');
   if (!Array.isArray(c.ui?.fullButton?.excludedCommands) || c.ui.fullButton.excludedCommands.some(value => typeof value !== 'string' || !/^[a-z0-9][a-z0-9_-]{0,39}$/i.test(value))) throw new Error('ui.fullButton.excludedCommands harus array nama command yang valid');
+  if (typeof c.ui?.autoReactions?.enabled !== 'boolean') throw new Error('ui.autoReactions.enabled harus boolean');
+  for (const key of ['commandEmoji', 'thinkingEmoji', 'successEmoji', 'failureEmoji']) {
+    const value = c.ui?.autoReactions?.[key];
+    if (typeof value !== 'string' || !value.trim() || [...value].length > 8) throw new Error(`ui.autoReactions.${key} harus emoji teks 1-8 karakter`);
+  }
   if (typeof c.menu?.showDescriptions !== 'boolean') throw new Error('menu.showDescriptions harus boolean');
   if (typeof c.menu?.pagination?.enabled !== 'boolean') throw new Error('menu.pagination.enabled harus boolean');
   if (!Number.isInteger(c.menu?.pagination?.pageSize) || c.menu.pagination.pageSize < 10 || c.menu.pagination.pageSize > 200) throw new Error('menu.pagination.pageSize harus 10-200');

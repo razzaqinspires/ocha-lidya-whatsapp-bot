@@ -83,7 +83,7 @@ export async function dispatch(sock, message) {
   if (plugin) {
     return executeRegisteredPlugin({
       sock, message, plugin,
-      parsed: { ...parsed, command: plugin.name, args: parsed.args, text: parsed.text },
+      parsed: { ...parsed, command: plugin.name, matchedCommand: parsed.command, args: parsed.args, text: parsed.text },
       config, source: 'dispatcher'
     });
   }
@@ -128,6 +128,6 @@ export async function dispatch(sock, message) {
         return;
       }
     }
-    await answerMessage(sock, message);
+    return answerMessage(sock, message);
   }
 }

@@ -1,3 +1,32 @@
+## v1.10.37 — Native command menu, Kernel response reliability & profile canvas refresh
+
+### Added / Changed
+- Replace the two quick-access-only menu buttons with a native-flow category selector and paginated command selector sourced from the live plugin registry. Rows execute canonical command IDs through the regular dispatcher, permissions, tenant command policy, and quota checks.
+- Hide owner-category and `ownerOnly` commands from non-owner interactive menus; owner category remains visible to backend-verified owner sessions. Add category navigation for General, Developer, and Owner/System plus Profile and Website shortcuts.
+- Send an immediate local telemetry acknowledgement when `.kernel` is invoked, before waiting for Code Lab/TryCloudflare initialization. Follow with a WebView CTA and URL when available, or a clear diagnostic reply when the gateway is unavailable.
+- Redesign the `.profile` SVG canvas to a 1080×1520 dark graphite/gold layout with level medallion, rank, XP progress, activity metrics, familiarity, trust, role progression, and achievement chips. Keep all profile fields escaped and progress values clamped.
+
+### Validation
+- `npm run check`: 225 JavaScript files passed.
+- Focused menu, Kernel, profile-canvas and menu-renderer tests: 11 passed, 0 failed.
+- Full `npm test`: 286 tests, 281 passed, 3 failed, 2 skipped. The failures are outside the edited modules: one AI local-policy XP threshold assertion and two test cleanup races (`ENOTEMPTY`) while asynchronous User Vault persistence is still finishing (AI batching and website-builder integration).
+- SVG profile canvas passed XML parsing and local PNG rendering. Live button delivery, Cloudflare tunnel publication, and Sharp PNG rendering must still be confirmed on the target VPS/WhatsApp client.
+
+## v1.10.36 — Chokidar dependency and watcher fallback reliability
+
+### Fixed
+- Pin `chokidar` to `4.0.3`, which remains compatible with the repository's Node.js `>=20.18.0` engine range.
+- Route plugin hot reload and Auto Git Sync through a shared watcher adapter. Chokidar remains the primary watcher; a native Node.js filesystem watcher is used if the package cannot be resolved.
+- Keep runtime/cache/session directories excluded from the native fallback and normalize add/change/unlink events for the existing transactional reload and Git-sync handlers.
+- Prevent `npm start` preflight from aborting startup when `chokidar` is the only missing dependency; it reports the manual install command and uses the fallback. Other missing dependencies remain installation blockers.
+- Add watcher regression tests for add, change, unlink and ignored-directory behavior.
+
+### Validation
+- `npm run check`: 222 JavaScript files passed.
+- Focused watcher tests: 2 passed, 0 failed, including add/change/unlink, nested directory discovery, and ignored-directory behavior.
+- Full `npm test`: 273 passed, 3 failed, 2 skipped. The six prior `ERR_MODULE_NOT_FOUND` failures caused by Chokidar are gone. The remaining failures are outside this watcher patch: one AI XP threshold assertion and two `ENOTEMPTY` cleanup races while asynchronous User Vault writes are still completing.
+- Direct installation was attempted but the build container could not resolve `registry.npmjs.org` (`EAI_AGAIN`). The package remains pinned in `package.json`; run `npm install --no-audit --no-fund` on a host with registry access to install it and create/update `package-lock.json`.
+
 ## v1.10.35 — Website Builder, tenant dashboard mutations & Android source
 
 ### Added
@@ -979,3 +1008,32 @@ All notable changes to Ocha Lidya are recorded here. The newest release is liste
 - Hardened ZIP layout normalization for GitHub-generated archive roots and versioned NADI release-folder wrappers.
 - Added focused tests for configured repository/ref, safe offline failure, and unchanged Ocha fallback behavior.
 - Preserved NADI data directory and HTTP sidecar API contract.
+
+## v1.10.39 — Quoted AI, Test Lab, Auto Reaction
+- Harden WhatsApp quoted-message extraction across wrapped message payloads and record privacy-safe quote diagnostics.
+- Prevent generic greeting-only AI output from replacing the response to a quoted turn; add a contextual clarification guard.
+- Replace manual message test setup with an owner-only interactive `.test` catalog backed by local fixtures in `assets/message-test/`; successful tests are silent in chat apart from the actual test payload, while failures are recorded in runtime logs.
+- Add an owner-only interactive `.react` manager; command reactions use ⏳ → ✅, AI replies use 💭 → ✅, failures use ❌, and the feature remains disabled until the owner enables it.
+- Track deferred AI turn/checkpoint writes and flush them during graceful shutdown to protect private conversation persistence.
+- Align legacy test expectations with the current 60-second XP cooldown and the 2,048-token Groq free-tier output cap.
+- Update configuration migration tests to schema v37.
+
+
+## v1.10.40 — Quoted AI, Message Test Lab, Auto Reaction
+
+- Hardened quoted-message context preservation and generic greeting suppression for quoted AI turns.
+- Added deterministic contextual fallback for the quoted “Coba lihat sirkuitmu” example; it distinguishes the software runtime from physical hardware.
+- Refined owner-only `.test` delivery logging: result IDs when present, errors with test IDs, and no verbose chat-side relay report.
+- Added aggregate test result IDs and failure propagation so a failed test can end with the failure reaction.
+- Kept local message-test fixtures under `assets/message-test/`.
+- Added owner-only `.react` settings for global command and AI processing reactions; default remains disabled until owner activation.
+
+
+## v1.10.41 — YouTube selection and pagination fix
+
+- Preserve the matched command alias for the YouTube plugin while retaining canonical plugin identity for permission, rental quota, and cooldown policy. This fixes `.ytmp3` / `.ytmp4` native-flow selections being routed back into `.yts` search.
+- Render YouTube results as text-only carousel cards with no thumbnail uploads.
+- Show five search results per page and append a final **Hasil berikutnya** quick-reply card when more results are available.
+- Add sender/chat-bound, expiring pagination sessions and bounded yt-dlp search offsets.
+- Add regression tests for alias dispatch, selection row IDs, text-only carousel structure, next-page quick reply, and pagination session isolation.
+- Validation: syntax check passed for 231 JavaScript files; full suite passed 300 tests with 2 skipped and 0 failures.

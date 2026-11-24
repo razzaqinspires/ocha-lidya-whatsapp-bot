@@ -34,7 +34,8 @@ test('all current source plugins contribute canonical commands, including .test 
   const body = buildMenuText({ plugins, config: { mode: 'public', bot: { name: 'Ocha Lidya' } }, prefixes: ['.'] });
   const stats = getMenuStats(plugins);
   assert.ok(plugins.length >= 25, `expected broad plugin set, found ${plugins.length}`);
-  assert.match(body, /\.test <type> \[args\]/);
+  assert.match(body, /\.test \[pilihan dari daftar\]/);
+  assert.match(body, /\.react \[menu\|on\|off\|status\]/);
   assert.match(body, /\.apikey <add\|delete\|list\|get> <provider> \[value\]/);
   assert.equal(stats.commands, plugins.length);
   assert.doesNotMatch(body, /daftar perintah|Kelola API key|laboratorium uji/i, 'menu lists command syntax without descriptions');

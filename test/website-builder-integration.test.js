@@ -18,6 +18,8 @@ test('natural-language website request generates a validated project and returns
   for (const key of Object.keys(previousKeys)) delete process.env[key];
   let capturedBody;
   let replyText = '';
+  let engineModule = null;
+  let unregisterCapability = null;
   globalThis.fetch = async (_url, options) => {
     capturedBody = JSON.parse(options.body);
     const project = {
@@ -37,9 +39,9 @@ test('natural-language website request generates a validated project and returns
   try {
     const config = await import(pathToFileURL(path.resolve(original, 'src/config.js')).href);
     await config.loadConfig();
-    const engine = await import(pathToFileURL(path.resolve(original, 'src/ai/engine.js')).href);
+    const engine = engineModule = await import(pathToFileURL(path.resolve(original, 'src/ai/engine.js')).href);
     const capabilities = await import(pathToFileURL(path.resolve(original, 'src/ai/capability-manager.js')).href);
-    const unregister = capabilities.registerAICapability({
+    const unregister = unregisterCapability = capabilities.registerAICapability({
       name: 'website_builder', label: 'Test Website Builder', description: 'mock',
       isEnabled: () => true,
       execute: async project => {
@@ -57,7 +59,7 @@ test('natural-language website request generates a validated project and returns
     };
     const result = await engine.answerMessage(sock, message);
     assert.equal(result.capability, 'website_builder');
-    assert.equal(capturedBody.max_tokens, 12288);
+    assert.equal(capturedBody.max_tokens, 2048, 'provider payload respects the Groq free-tier output cap even for website jobs');
     assert.match(capturedBody.messages[0].content, /Nexora Website Engineer/);
     assert.match(replyText, /NEXORA PROJECT LIBRARY/);
     assert.match(replyText, /https:\/\/sample\.trycloudflare\.com/);
@@ -67,9 +69,12 @@ test('natural-language website request generates a validated project and returns
     const projects = await (await import(pathToFileURL(path.resolve(original, 'src/ai/project-library.js')).href)).listUserProjects({ ownerId: message.sender });
     assert.equal(projects.length, 1);
     assert.equal(projects[0].slug, 'demo-portfolio');
-    await new Promise(resolve => setTimeout(resolve, 100));
+    await engine.flushAIPersistenceWrites();
     unregister();
+    unregisterCapability = null;
   } finally {
+    try { await engineModule?.flushAIPersistenceWrites?.(); } catch {}
+    try { unregisterCapability?.(); } catch {}
     globalThis.fetch = previousFetch;
     if (previousProjectRoot === undefined) delete process.env.OCHA_PROJECT_LIBRARY_ROOT; else process.env.OCHA_PROJECT_LIBRARY_ROOT = previousProjectRoot;
     if (previousKey === undefined) delete process.env.GROQ_API_KEY; else process.env.GROQ_API_KEY = previousKey;

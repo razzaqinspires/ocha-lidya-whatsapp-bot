@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import chokidar from 'chokidar';
+import { watchFiles } from './file-watcher.js';
 import dotenv from 'dotenv';
 import { logger } from './logger.js';
 import { createAutomaticCommitMessage, parseGitIgnore, parsePorcelainZ } from './git-utils.js';
@@ -220,7 +220,7 @@ export async function startAutoGitSync({ root = PROJECT_ROOT } = {}) {
   };
 
   let watcherFailureHandled = false;
-  const watcher = chokidar.watch(PROJECT_ROOT, {
+  const watcher = watchFiles(PROJECT_ROOT, {
     ignoreInitial: true,
     persistent: true,
     awaitWriteFinish: { stabilityThreshold: 700, pollInterval: 100 },

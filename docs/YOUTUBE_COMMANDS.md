@@ -4,7 +4,7 @@
 
 | Command | Function |
 |---|---|
-| `.yts <query>` | Search YouTube and show result cards with video thumbnails. Open the list button on a card to choose MP3 or one of the MP4 resolutions detected for that video. |
+| `.yts <query>` | Search YouTube and show five text-only video cards per page. Open a card list to choose MP3 or one of the MP4 resolutions detected for that video. The final carousel card contains a **Hasil berikutnya** quick-reply button when more results are available. |
 | `.ytmp3 <youtube-url>` | Download the selected video's audio as MP3. |
 | `.ytmp4 <youtube-url>` | Inspect the video's available MP4 resolutions and show a quality-selection list. |
 | `.ytmp4 <youtube-url> <resolution>` | Download MP4 at the selected resolution, for example `720`, `720p`, `1080`, or `best`. |
@@ -13,10 +13,11 @@
 ### How to use the result carousel
 
 1. Send `.yts <artist / title / keyword>`.
-2. Swipe through the thumbnail cards.
+2. Swipe through up to five text-only video cards (no thumbnails are sent).
 3. Open **MP3 / MP4 · Pilih kualitas** on the chosen card.
 4. Select **Unduh MP3** for sound only or one of the listed MP4 heights.
-5. For a direct request, use `.ytmp3 <url>` or `.ytmp4 <url> <resolution>`.
+5. Swipe to the final **HASIL BERIKUTNYA** card and tap its quick-reply button to load the next five results. Search sessions are bound to the original sender and chat and expire after 15 minutes.
+6. For a direct request, use `.ytmp3 <url>` or `.ytmp4 <url> <resolution>`.
 
 The list is built from the video's `yt-dlp` format metadata. Only MP4 video formats with a detected height are listed; duplicate heights are collapsed. The MP3 row remains separate. When MP4 metadata is unavailable, a best-quality MP4 fallback is shown and the downloader reports if the format cannot be produced.
 
@@ -74,3 +75,8 @@ Use this feature only for videos or music that you own, are licensed to download
 YouTube changes its player and delivery mechanisms periodically. Update yt-dlp when YouTube extraction stops working. The bot's format list is a snapshot from the time of the query; formats can disappear before download. A listed resolution is not a guarantee that the subsequent request will succeed.
 
 MP4 extraction may require FFmpeg to merge separate video and audio streams. MP3 conversion also requires FFmpeg. Actual file delivery size may be further constrained by WhatsApp client/server upload limits, which are outside the local unit tests.
+
+
+## Interactive selection routing
+
+The YouTube plugin preserves the exact command alias selected by native-flow rows. This is important because `.ytmp3` and `.ytmp4` are aliases of the `.yts` plugin: policy, quota, and cooldown checks still use the canonical plugin identity, while the plugin handler receives the matched alias so an MP3 selection cannot be misinterpreted as a new `.yts` search.

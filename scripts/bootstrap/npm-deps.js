@@ -46,6 +46,15 @@ if (!nodeVersionAtLeast(process.versions.node, MIN_NODE)) {
 
 const packageJson = JSON.parse(fs.readFileSync(PACKAGE_JSON, 'utf8'));
 let missing = missingDependencies(packageJson);
+
+// The source watcher has a Node.js fs.watch fallback. Do not block bot startup
+// when chokidar is the only unavailable package (for example, while npm DNS is
+// offline); normal `npm install` still installs the pinned dependency.
+if (missing.length > 0 && missing.every(name => name === 'chokidar')) {
+  log('chokidar belum tersedia; watcher native Node.js akan digunakan sementara. Saat registry npm tersedia, jalankan: npm install --save-exact chokidar@4.0.3');
+  process.exit(0);
+}
+
 const treeHealthy = missing.length === 0 && dependencyTreeIsHealthy();
 if (treeHealthy) {
   log(`Semua ${Object.keys(packageJson.dependencies || {}).length} dependency utama tersedia dan lolos pemeriksaan npm; tidak menjalankan npm install.`);
