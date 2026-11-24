@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "enabled": true,
+  "defaultExecution": "deny",
+  "sandbox": {
+    "configured": false,
+    "engine": null,
+    "enginePath": null,
+    "images": {},
+    "timeoutMs": 20000,
+    "resources": { "memory": "256m", "cpus": 1, "pids": 64 },
+    "network": "deny",
+    "filesystem": "read-only-source-and-ephemeral-workspace"
+  }
+}

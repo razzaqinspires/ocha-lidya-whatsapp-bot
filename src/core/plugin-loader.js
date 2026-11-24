@@ -7,6 +7,7 @@ import { watchFiles } from './file-watcher.js';
 import { logger } from './logger.js';
 import { isRuntimeWatchIgnored } from './watch-policy.js';
 import { canCommitSourceBatch, classifySourceBatch, DEPENDENCY_MANIFESTS, validateJsonFile } from './source-batch.js';
+import { loadGeneratedCommandPlugins } from '../acie/command-engine/runtime-commands.js';
 
 const registry = new Map();
 const PROJECT_ROOT = path.resolve('.');
@@ -42,6 +43,27 @@ async function walkJavaScript(directory, files = []) {
   return files.sort();
 }
 
+async function mergeGeneratedCommands(target) {
+  const existingPlugins = [...target.values()].map(entry => entry.plugin);
+  const generated = await loadGeneratedCommandPlugins({ root: PROJECT_ROOT, existingPlugins });
+  for (const plugin of generated.plugins) {
+    const key = keyOf(plugin, path.join(PLUGIN_ROOT, '__generated__', `${plugin.name}.js`));
+    if (target.has(key)) continue;
+    target.set(key, { plugin, file: null, generated: true });
+  }
+  if (generated.skipped.length) logger.warn({ skipped: generated.skipped.slice(0, 30) }, 'Some ACIE commands were not loaded because provider gate or runtime collision checks failed');
+  return generated;
+}
+
+export async function refreshGeneratedCommandPlugins() {
+  const next = new Map([...registry.entries()].filter(([, entry]) => !entry.generated));
+  const result = await mergeGeneratedCommands(next);
+  registry.clear();
+  for (const [key, entry] of next) registry.set(key, entry);
+  logger.info({ loaded: result.loaded, skipped: result.skipped.length }, 'ACIE generated command registry synchronized');
+  return { loaded: result.loaded, skipped: result.skipped.length, reasons: result.skipped };
+}
+
 export async function loadPlugins() {
   const files = await walkJavaScript(PLUGIN_ROOT);
   const previousByFile = new Map([...registry.values()].map(entry => [entry.file, entry]));
@@ -65,8 +87,11 @@ export async function loadPlugins() {
     }
   }
 
+  try { await mergeGeneratedCommands(next); }
+  catch (error) { logger.error({ code: error.code || error.name }, 'ACIE generated command registry could not be loaded; static plugins remain available'); }
+
   // Commit one complete registry snapshot. Deleted plugin files are removed,
-  // added plugins become visible immediately, and menus read this same registry.
+  // added plugins and eligible ACIE commands become visible in the same registry.
   registry.clear();
   for (const [key, entry] of next) registry.set(key, entry);
   const plugins = listPlugins();
@@ -79,7 +104,7 @@ export function listPlugins() {
 }
 
 export function listPluginEntries() {
-  return [...registry.values()].map(({ plugin, file }) => ({ plugin, file }));
+  return [...registry.values()].map(({ plugin, file }) => ({ plugin, file: file || `generated:acie/${plugin.name}` }));
 }
 
 export function getPlugin(name) {
@@ -132,6 +157,9 @@ async function reloadPluginTree(changes) {
       if (previous) next.set(keyOf(previous.plugin, file), previous);
     }
   }
+
+  try { await mergeGeneratedCommands(next); }
+  catch (error) { logger.error({ code: error.code || error.name }, 'ACIE generated command reload failed; static source snapshot is retained'); }
 
   // Replace the registry in one synchronous turn, never expose a half-applied folder copy.
   registry.clear();

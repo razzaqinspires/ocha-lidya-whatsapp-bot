@@ -1,5 +1,13 @@
 # Ocha Lidya WhatsApp Bot
 
+## ACIE — Autonomous Contribution Integration & Orchestration Engine (v1.10.45 · Part 3/3)
+
+ACIE is an internal Ocha subsystem for immutable third-party contribution intake, bounded multi-language static discovery, governance, isolated provider execution, routing/fallback and command engineering. Original source bytes remain in a private versioned vault and are never imported into the bot process. Adapter code and generated commands live outside the original source.
+
+Parts 1–3 include SHA-256/provenance preservation, archive/path safety, static capability candidates, JSON-stdio adapter descriptors, a fail-closed Docker/Podman runner, digest-pinned/no-network execution policy, provider health and circuit breaker, owner approval stages, automatic command drafts and collision namespacing, and virtual generated plugin descriptors integrated with the existing Ocha plugin loader, dispatcher, `.menu` and command catalog. Only owner-approved commands backed by an active provider and all successful policy gates become visible.
+
+**Default execution remains DENY.** The target VPS must have a configured absolute Docker/Podman engine path, reviewed digest-pinned images and a successful `.acie runtime probe`. The current sandbox denies network egress, so public-service downloaders cannot fetch remote content yet. TypeScript/Rust require dedicated build adapters, dependencies are not installed into original source, and generated command responses currently return sanitized text/HTTPS links rather than upload arbitrary local media. Vault encryption-at-rest is host-managed. Review [`docs/ACIE_README.md`](docs/ACIE_README.md), [`docs/ACIE_PART1_AUDIT.md`](docs/ACIE_PART1_AUDIT.md), [`docs/ACIE_PART2_RUNTIME_ISOLATION.md`](docs/ACIE_PART2_RUNTIME_ISOLATION.md), and [`docs/ACIE_PART3_COMMAND_INTEGRATION.md`](docs/ACIE_PART3_COMMAND_INTEGRATION.md).
+
 ## Native Button Menu, Kernel Response Reliability & Redesigned Profile Canvas (v1.10.37)
 
 `.menu` now opens a native WhatsApp category selector and paged command lists; selecting a row sends the canonical command through the normal permission/tenant gates. Owner-only commands are hidden from non-owners. `.kernel` now acknowledges immediately with a local telemetry summary before initializing the shared public TryCloudflare gateway, then sends a WebView CTA or a clear diagnostic if publishing fails. `.profile` uses a redesigned 1080×1520 SVG canvas with level medallion, XP progress, activity metrics, relationship/trust indicators, and achievement chips. The profile card and PNG rendering still require the optional `sharp` package; without it the command returns the complete text profile.
@@ -473,6 +481,10 @@ User-supplied modules are retained under `src/lib/`:
 - `helpers.js`
 
 The original function bodies, classes, constants, and export aliases are preserved as far as the ESM conversion allows. Conversion history, hashes, import changes, and compatibility notes are documented in [`docs/SOURCE_CONVERSION.md`](docs/SOURCE_CONVERSION.md).
+
+
+
+ACIE release status, preservation policy, runtime boundaries, and command activation workflow are documented in [`docs/ACIE_README.md`](docs/ACIE_README.md) and [`docs/ACIE_PART3_COMMAND_INTEGRATION.md`](docs/ACIE_PART3_COMMAND_INTEGRATION.md).
 
 ## 13. Documentation and release discipline
 

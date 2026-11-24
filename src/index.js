@@ -37,6 +37,7 @@ import { getTenantStatus } from './rental/service.js';
 import { startConsciousnessRuntime, stopConsciousnessRuntime } from './runtime/consciousness-runtime.js';
 import { initializeKernelTelemetry, recordIncomingMessage, setWhatsAppConnection, flushKernelTelemetry } from './runtime/kernel-telemetry.js';
 import { classifyReactionTarget, dispatchWithAutoReaction } from './core/auto-reactions.js';
+import { initializeACIE } from './acie/index.js';
 
 setOutgoingMessageObserver(observeOutgoingMessage);
 
@@ -47,6 +48,8 @@ if (!runtimeLock.acquired) {
 }
 
 await initializeDatabase();
+try { await initializeACIE({ logger }); }
+catch (error) { logger.error({ err: error }, 'ACIE initialization failed; standard Ocha runtime will continue'); }
 await initializeKernelTelemetry();
 await loadConfig();
 if (getConfig().commandGuard?.antiSpam?.enabled) {

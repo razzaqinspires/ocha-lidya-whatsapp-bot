@@ -60,3 +60,10 @@ data/kernel/
 __pycache__/
 **/__pycache__/
 *.py[cod]
+
+# ACIE private contribution vault, runtime metadata, adapters and generated artifacts
+contributions/
+adapters/
+generated-commands/
+runtime-workspaces/
+config/acie.runtime.json

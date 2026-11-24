@@ -1,3 +1,64 @@
+## v1.10.45 — ACIE Part 3: autonomous command engineering & live registry integration
+
+### Added / Changed
+- Complete ACIE command lifecycle from static capability drafts to owner-approved virtual plugin descriptors. Drafts remain hidden until provider, sandbox, adapter protocol, integrity, license, attribution, security and owner-approval gates pass.
+- Integrate generated commands into the existing `src/core/plugin-loader.js` registry. Existing Ocha dispatcher, permission, cooldown, group policy, menu and command catalog remain authoritative; no second command framework or contributed-source imports are introduced.
+- Add explicit lifecycle operations for command inspect, protocol test, approve (`public` or `owner`), reject, revoke and runtime registry sync. Owner-only generated commands are private-chat-only.
+- Add collision-safe namespacing (`acie-...`) and drop conflicting aliases without overwriting existing commands. Unresolvable collisions remain blocked.
+- Make `generated-commands/index.json` the canonical lifecycle registry and synchronize the compatibility `contributions/registry/commands.json` with exclusive locks.
+- Strengthen provider eligibility to require license review, attribution confirmation, source integrity, adapter review, adapter test, protocol-test proof, sandbox approval, successful runtime probe, owner authorization, output-contract proof and no critical/high static findings.
+- Clear stale protocol-test success before re-testing; persist provider health, consecutive failure, response duration and circuit-breaker changes.
+- Add provider protocol command test `.acie commands test <command-id>` and expand owner operations/help.
+- Normalize provider output through field allowlists, HTTPS-only references, bounded metadata, credential-pattern redaction and attribution mapping.
+- Update ACIE Part 1–3 documentation and operations workflow.
+
+### Validation
+- `npm run check`: 262 JavaScript files passed syntax validation.
+- `npm test`: 344 tests total, 342 passed, 0 failed, 2 skipped.
+- ACIE focused command-engine/foundation/runtime tests passed. Live container execution, target VPS provider behavior and WhatsApp client rendering remain target-host checks.
+
+### Operational boundaries
+- The sandbox still uses `--network=none`; public-service downloader contributions cannot fetch external URLs. Dependencies must already be present in a reviewed pinned runtime image. Generic JSON-stdio execution currently supports Node.js, Python, Go, PHP, Java source-launch and Bash; TypeScript/Rust require dedicated build adapters. Generated command output currently renders text and HTTPS links, not arbitrary local media uploads. Vault encryption-at-rest remains an encrypted-host-volume responsibility.
+
+## v1.10.43 — ACIE Part 1: preservation and audit hardening
+
+- Harden contribution intake with source-vs-vault byte verification, empty-directory inventory, bounded ZIP input size, and SHA-256 verification of the preserved source archive.
+- Add version integrity anchors for the final manifest, provenance and static analysis; refresh the anchors after the intake pipeline finalizes metadata.
+- Extend integrity verification to report altered/missing archive files, metadata, and directory-tree discrepancies without modifying any original source bytes.
+- Bound static analysis to 5,000 candidate files, 64 MiB scanned text and 8 MiB retained snippets; report partial coverage instead of exhausting memory on large contributions.
+- Expand static text scanning to `.env`, PEM/key files, manifests, configuration and extensionless scripts. Credential findings store detector/file/line only; matched values are never retained in reports.
+- Discover additional CommonJS export forms and runtime requirement metadata; keep all function/capability findings explicitly heuristic and unverified.
+- Prevent worker error summaries from retaining exception messages that may contain embedded credentials.
+- Add a dedicated governance evaluator that keeps contributor identity, license, attribution, independent review and owner authorization as separate states; submitted rights text never grants activation.
+- Serialize provider registry updates and add a mandatory production-sandbox-available gate. A provider cannot become routable merely because registry metadata is edited to look approved.
+- Keep all contributed source quarantined and non-executable. The production sandbox, dependency installation isolation, executable adapters and live generated-command activation remain later-part deliverables.
+- Add Part 1 architecture/audit documentation and expanded preservation, security, budget, archive-integrity, metadata-integrity and sandbox fail-closed tests.
+
+Validation: `npm run check` passed (255 JavaScript files); ACIE focused tests passed 23/23; full `npm test` passed 323, failed 0, skipped 2 (325 total). ZIP intake requires the declared `yauzl` dependency to be installed on the VPS.
+
+## v1.10.42 — ACIE contribution intelligence foundation
+
+### Added
+- Introduce ACIE as an internal Ocha subsystem with private Git-ignored contribution storage, immutable version paths, original-file SHA-256 inventory, provenance records, static analysis, capability candidates, adapter descriptors, provider registry, command specification drafts, worker roles, routing/fallback primitives, circuit breaker, trace IDs and JSONL audit records.
+- Add directory and ZIP intake through `npm run acie:intake`; ZIP extraction rejects traversal, absolute paths, symlinks, duplicate entries, special entries and configured size/count overflows. A source ZIP is retained byte-for-byte alongside the extracted original tree.
+- Support static discovery for JavaScript/Node, CommonJS/ESM, TypeScript, Python, Go, PHP, Java, Rust and Bash, with heuristic runtime, dependency, imports, function/parameter, export, environment, network, output-shape and risk candidates.
+- Add owner/private `.acie` commands for contribution inspection and verification, provider status, capability and command drafts, routing status, worker health, security/dependency/compatibility summaries and audit history.
+- Add conservative command drafts and collision checks; active Ocha menu/plugin registration remains on the existing plugin loader and is not bypassed.
+- Integrate ACIE initialization after the JSONL database and before WhatsApp socket startup. ACIE initialization errors are isolated so regular bot startup can continue.
+- Add 17 ACIE architecture, preservation, intake, language, adapter, routing, fallback, command, runtime, security, governance, monitoring, troubleshooting and operations documents.
+
+### Security and limitations
+- Original contribution bytes are copied into `original/`, checked by SHA-256 and made read-only best effort. Every re-submission is a new version; no source patching/refactoring occurs.
+- Original contributions are never imported or executed by the bot. Providers default to quarantined; command candidates default to pending validation; credentials are not printed or added to telemetry.
+- The current release is a foundation, not full acceptance of all ACIE goals: no production Docker/OCI sandbox runner, isolated dependency installation, live multi-language process execution, automatic active command factory, external malware/license review, signed contributor identity, or ACIE-managed encryption-at-rest is included. The vault currently relies on restrictive host filesystem permissions; place it on an encrypted volume before accepting contributions containing live credentials. Provider activation is fail-closed until the execution and governance gates are implemented and proven.
+- Language/capability/interface detection is static heuristic analysis; findings are candidates, not runtime proof. ZIP intake requires the already declared `yauzl` package to be installed.
+
+### Validation
+- `npm run check`: 254 JavaScript files passed syntax checking.
+- ACIE focused tests: 14 passed, 0 failed. Tests cover path traversal rejection, multi-language recognition, capability candidate filtering, byte preservation, provenance, immutable versioning, provider quarantine, static alias collision scanning, fallback eligibility, credential redaction and error classification.
+- Full `npm test`: 316 tests, 314 passed, 0 failed, 2 skipped. `npm run check`: 254 JavaScript files passed syntax checking.
+- ZIP extraction was not exercised in this build environment because project dependencies were not installed here. The declared `yauzl` dependency must be installed with `npm install`; target-VPS/WhatsApp runtime validation is still required before production use.
+
 ## v1.10.37 — Native command menu, Kernel response reliability & profile canvas refresh
 
 ### Added / Changed
@@ -1037,3 +1098,15 @@ All notable changes to Ocha Lidya are recorded here. The newest release is liste
 - Add sender/chat-bound, expiring pagination sessions and bounded yt-dlp search offsets.
 - Add regression tests for alias dispatch, selection row IDs, text-only carousel structure, next-page quick reply, and pagination session isolation.
 - Validation: syntax check passed for 231 JavaScript files; full suite passed 300 tests with 2 skipped and 0 failures.
+
+## v1.10.44 — ACIE Part 2: Runtime Isolation & Provider Orchestration
+
+- Restored the missing external `universal-adapter.js` module referenced by the Part 1 intake pipeline.
+- Added `acie-json-stdio-v1` adapter descriptors, bounded input/output normalization, and strict provider/contribution binding.
+- Added Docker/Podman sandbox process runner using argv only, digest-pinned images, no network, read-only source mount, non-root identity, dropped capabilities, no-new-privileges, resource limits, timeout, and bounded output.
+- Added runtime engine/image probe and owner-only `.acie runtime status|probe`.
+- Routed provider execution through the internal sandbox runner; caller-provided executor callbacks are no longer used.
+- Kept provider activation fail-closed until governance, adapter, sandbox, integrity, output-contract and owner authorization gates pass.
+- Added Part 2 runtime, adapter and provider-routing documentation and tests.
+- Generic runner supports CLI-style JavaScript, Python, Go, PHP, Java source-launch, and Bash entrypoints. TypeScript/Rust remain discovery-only pending dedicated build adapters.
+- Production container execution was not tested in this environment because Docker/Podman is not installed; runtime remains unavailable by default.

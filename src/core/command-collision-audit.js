@@ -7,7 +7,7 @@ export async function auditCommandCollisions({ persist = true } = {}) {
   const index = new Map();
   const entries = listPluginEntries();
   for (const { plugin, file } of entries) {
-    const fileHint = path.relative(process.cwd(), file).replaceAll(path.sep, '/');
+    const fileHint = String(file).startsWith('generated:') ? file : path.relative(process.cwd(), file).replaceAll(path.sep, '/');
     const entries = [{ value: plugin.name, kind: 'canonical' }, ...(Array.isArray(plugin.aliases) ? plugin.aliases.map(value => ({ value, kind: 'alias' })) : [])];
     for (const entry of entries) {
       const command = norm(entry.value);
