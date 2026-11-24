@@ -25,7 +25,7 @@ test('owner master warning controls, CTA Copy and silent-off policy', async () =
     await masterPluginModule.default.execute({ m: ownerMessage, args: ['review', 'false'] });
     assert.equal(config.getConfig().security.masterWorkloadWarningMode, 'detailed');
     assert.equal(config.getConfig().security.masterWorkloadReviewEnabled, false);
-    assert.equal(config.getConfig().schemaVersion, 35);
+    assert.equal(config.getConfig().schemaVersion, 36);
     await masterPluginModule.default.execute({ m: ownerMessage, args: ['warning', 'off'] });
     assert.equal(config.getConfig().security.masterWorkloadWarningMode, 'off');
     assert.match(replies.at(-1), /diblokir tanpa balasan/i);

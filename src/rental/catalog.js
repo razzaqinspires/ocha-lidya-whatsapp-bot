@@ -35,7 +35,7 @@ export const DEFAULT_PLANS = Object.freeze({
 });
 
 export const BILLING_EXEMPT_COMMANDS = new Set([
-  'sewa', 'rent', 'paketsewa', 'paket', 'bayar', 'owner', 'menu', 'ping', 'about', 'groupinfo'
+  'sewa', 'rent', 'paketsewa', 'paket', 'bayar', 'owner', 'menu', 'ping', 'about', 'groupinfo', 'kernel'
 ]);
 
 export function normalizePlanId(value) {

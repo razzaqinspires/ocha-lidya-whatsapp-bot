@@ -144,6 +144,8 @@ Jalankan semua perintah berikut di chat pribadi bot setelah memilih grup dari da
 | `.sewa pay <invoice> <metode>` | Memilih metode pembayaran |
 | `.sewa paid <invoice>` | Melaporkan bahwa pembayaran sudah dilakukan |
 | `.sewa bukti <invoice>` + gambar | Mengirim bukti pembayaran secara pribadi |
+| `.sewa invoice [id]` | Melihat invoice terbaru atau invoice tertentu yang dibuat oleh akun WhatsApp Anda |
+| `.sewa pesanan` | Melihat hingga 10 invoice terbaru milik Anda untuk grup yang sedang dipilih |
 | `.sewa status` | Memeriksa status sewa, jumlah anggota, batas anggota, masa aktif dan kuota |
 | `.sewa rating` / `.sewa testimoni` | Membaca ulasan pelanggan terverifikasi |
 | `.sewa ulasan <1-5> [komentar]` | Mengirim satu ulasan untuk invoice yang disetujui |
@@ -152,7 +154,7 @@ Jalankan semua perintah berikut di chat pribadi bot setelah memilih grup dari da
 | `.sewa konsultasi <pesan>` | Meminta konsultasi paket/teknis |
 | `.sewa cancel <invoice>` | Membatalkan invoice yang belum disetujui |
 
-Perintah pembayaran hanya dapat diproses terhadap invoice grup yang sedang dipilih. Jika invoice berasal dari grup lain, buka grup itu dan ketik `.sewa` untuk mengganti konteks.
+Perintah pembayaran hanya dapat diproses terhadap invoice grup yang sedang dipilih. Jika invoice berasal dari grup lain, buka grup itu dan ketik `.sewa` untuk mengganti konteks. Riwayat dan detail invoice pelanggan hanya menampilkan invoice yang dibuat oleh nomor WhatsApp peminta untuk grup terpilih; invoice milik pengguna lain tidak akan ditampilkan. Lookup baca-saja ini dapat digunakan tanpa status admin saat ini, tetapi tetap wajib melalui chat pribadi dan sesi konteks grup yang masih berlaku.
 
 
 

@@ -6,7 +6,7 @@
 import { initializeDatabase, appendRecord, getRecords, getLatestConfigRecord, configureDatabase } from './core/database.js';
 
 const DEFAULTS = Object.freeze({
-  schemaVersion: 35,
+  schemaVersion: 36,
   bot: { name: 'Ocha Lidya', aliases: ['Ocha', 'Lidya'], owner: '6283193905842', ownerName: 'Arifi Razzaq', creatorName: 'Arifi Razzaq', organization: 'Razzaq Ventures', publicCreatorDisclosure: true, expectedNumber: '6282177461231' },
   whatsapp: { authMode: 'pairing', pairingNumber: '6282177461231', browserName: 'Chrome', sessionDir: 'sessions/ocha-lidya', recoverInvalidSession: true, connectTimeoutMs: 60000, queryTimeoutMs: 60000, keepAliveIntervalMs: 25000 },
   logging: { level: 'info', color: 'auto', timeZone: 'Asia/Jakarta' },
@@ -40,6 +40,7 @@ const DEFAULTS = Object.freeze({
   },
   features: { autoRead: false, autoTyping: false, selfModeReply: false, groupsMuted: true, groupMuteOverrides: {}, lastJoinedGroupId: '' },
   ai: { enabled: true, providerOrder: ['groq', 'gemini', 'deepseek', 'openai'], models: { gemini: 'gemini-3.8-flash', groq: 'openai/gpt-oss-120b', deepseek: 'deepseek-flash', openai: 'gpt-6.2-sol' }, freeOnly: true, timeoutMs: 60000, totalBudgetMs: 180000, maxOutputTokens: 4096, temperature: 0.55, historyMessages: 96, maxInputChars: 96000, coalesceMs: 100 },
+  youtube: { ytDlpBin: 'yt-dlp', ffmpegLocation: '', maxDownloadMb: 48, maxDurationSeconds: 1800, searchResults: 5 },
   codeLab: { enabled: true, aiExecutionEnabled: true, publicTunnelEnabled: true, websiteBuilderEnabled: true, websiteBuilderConcurrency: 2, websiteBuilderQueueLimit: 8, tunnelIdleMs: 300000, projectLibraryRoot: '', cloudflaredBin: 'cloudflared', containerRuntime: 'auto', port: 8787, ttlMs: 3600000, maxRuntimeMs: 120000, maxSourceBytes: 65536, maxOutputBytes: 49152, maxConcurrent: 2, maxSessionsTotal: 20, maxSessionsPerUser: 2, maxExecutionsPerMinute: 3, pythonImage: 'python:3.12-alpine', nodeImage: 'node:22-alpine' }
 });
 
@@ -443,6 +444,17 @@ export async function loadConfig() {
       reason: 'v1.10.29 owner workload warning controls and AI review switch'
     });
   }
+  // v1.10.33 schema v36: move YouTube executable and media caps into the
+  // persisted non-secret application config; legacy env overrides are retired.
+  if (activeConfig.schemaVersion < 36) {
+    activeConfig.schemaVersion = 36;
+    activeConfig.youtube = merge(DEFAULTS.youtube, activeConfig.youtube || {});
+    await appendRecord('config.replace', {
+      config: activeConfig,
+      changedBy: 'system:migration',
+      reason: 'v1.10.33 move YouTube non-secret runtime settings into application config'
+    });
+  }
   activeConfig.menu = merge(DEFAULTS.menu, activeConfig.menu || {});
   activeConfig.commandGuard = merge(DEFAULTS.commandGuard, activeConfig.commandGuard || {});
   activeConfig.security = { ...DEFAULTS.security, ...(activeConfig.security || {}) };
@@ -452,6 +464,7 @@ export async function loadConfig() {
   activeConfig.features = { ...DEFAULTS.features, ...(activeConfig.features || {}) };
   activeConfig.groupMetadata = { ...DEFAULTS.groupMetadata, ...(activeConfig.groupMetadata || {}) };
   activeConfig.codeLab = { ...DEFAULTS.codeLab, ...(activeConfig.codeLab || {}) };
+  activeConfig.youtube = merge(DEFAULTS.youtube, activeConfig.youtube || {});
   activeConfig.ui = merge(DEFAULTS.ui, activeConfig.ui || {});
   configureDatabase(activeConfig.database);
   initialized = true;
@@ -546,6 +559,11 @@ function validateConfig(c) {
   if (!['auto', 'docker', 'podman'].includes(c.codeLab?.containerRuntime)) throw new Error('codeLab.containerRuntime harus auto, docker, atau podman');
   if (typeof c.codeLab?.projectLibraryRoot !== 'string' || c.codeLab.projectLibraryRoot.length > 500) throw new Error('codeLab.projectLibraryRoot harus berupa path teks maksimal 500 karakter');
   for (const key of ['cloudflaredBin', 'pythonImage', 'nodeImage']) if (typeof c.codeLab?.[key] !== 'string' || !c.codeLab[key].trim()) throw new Error(`codeLab.${key} wajib diisi`);
+  if (typeof c.youtube?.ytDlpBin !== 'string' || !c.youtube.ytDlpBin.trim() || c.youtube.ytDlpBin.length > 512) throw new Error('youtube.ytDlpBin wajib berupa nama/path executable maksimal 512 karakter');
+  if (typeof c.youtube?.ffmpegLocation !== 'string' || c.youtube.ffmpegLocation.length > 512) throw new Error('youtube.ffmpegLocation harus berupa path teks maksimal 512 karakter');
+  if (!Number.isInteger(c.youtube?.maxDownloadMb) || c.youtube.maxDownloadMb < 8 || c.youtube.maxDownloadMb > 128) throw new Error('youtube.maxDownloadMb harus 8-128');
+  if (!Number.isInteger(c.youtube?.maxDurationSeconds) || c.youtube.maxDurationSeconds < 30 || c.youtube.maxDurationSeconds > 7200) throw new Error('youtube.maxDurationSeconds harus 30-7200');
+  if (!Number.isInteger(c.youtube?.searchResults) || c.youtube.searchResults < 2 || c.youtube.searchResults > 8) throw new Error('youtube.searchResults harus 2-8');
 }
 
 export const configDefaults = DEFAULTS;

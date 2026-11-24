@@ -1,5 +1,6 @@
 import { logger } from './logger.js';
 import { getGroupMetadata } from './group-metadata.js';
+import { recordBotOutputMessage } from '../runtime/kernel-telemetry.js';
 
 const MAX_TRACKED = 5000;
 const MAX_PENDING = 1500;
@@ -104,6 +105,8 @@ function registerOutgoing(key, sourceKey) {
   if (!id) return;
   prune(outgoing, MAX_TRACKED, TTL_MS);
   const source = incoming.get(token(sourceKey));
+  const isReplyTurn = Boolean(source && !source.botReplied);
+  recordBotOutputMessage({ isGroup: chatType(key) === 'GROUP', isReplyTurn });
   const record = {
     key,
     sent: true,

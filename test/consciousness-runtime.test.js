@@ -41,22 +41,28 @@ test('Ocha never nags or sends angry repeated follow-ups', () => {
   assert.deepEqual(evaluateSocialFollowUp({ memberOptedIn: true, explicitFollowUpRequested: true }), { allowed: true, reason: 'explicit_follow_up', tone: 'neutral' });
 });
 
-test('NADI startup degrades safely until a standalone repository is configured', { timeout: 10_000 }, async () => {
+test('NADI startup degrades safely when Python/runtime is unavailable', { timeout: 10_000 }, async () => {
   const priorRepo = process.env.OCHA_NADI_REPO_URL;
   const priorSource = process.env.OCHA_NADI_SOURCE_DIR;
   const priorRemote = process.env.OCHA_NADI_BASE_URL;
+  const priorRef = process.env.OCHA_NADI_REF;
+  const priorPython = process.env.OCHA_PYTHON_BIN;
   try {
-    delete process.env.OCHA_NADI_REPO_URL;
+    process.env.OCHA_NADI_REPO_URL = 'https://github.com/razzaqinspires/artificial-consciousness-component';
+    process.env.OCHA_NADI_REF = '16c2fa6e1b500745f260bcf091284a6e18726883';
+    process.env.OCHA_PYTHON_BIN = '/definitely/missing/nadi-python';
     delete process.env.OCHA_NADI_SOURCE_DIR;
     delete process.env.OCHA_NADI_BASE_URL;
     const status = await startConsciousnessRuntime();
     assert.equal(status.ready, false);
-    assert.match(status.lastError, /OCHA_NADI_REPO_URL/);
+    assert.ok(status.lastError);
     assert.match(getConsciousnessPrompt(), /unavailable/);
   } finally {
     if (priorRepo === undefined) delete process.env.OCHA_NADI_REPO_URL; else process.env.OCHA_NADI_REPO_URL = priorRepo;
     if (priorSource === undefined) delete process.env.OCHA_NADI_SOURCE_DIR; else process.env.OCHA_NADI_SOURCE_DIR = priorSource;
     if (priorRemote === undefined) delete process.env.OCHA_NADI_BASE_URL; else process.env.OCHA_NADI_BASE_URL = priorRemote;
+    if (priorRef === undefined) delete process.env.OCHA_NADI_REF; else process.env.OCHA_NADI_REF = priorRef;
+    if (priorPython === undefined) delete process.env.OCHA_PYTHON_BIN; else process.env.OCHA_PYTHON_BIN = priorPython;
     await stopConsciousnessRuntime();
   }
 });

@@ -1,3 +1,34 @@
+## v1.10.33 — YouTube application config, rental customer portal & Baileys reference review
+
+- Move YouTube executable paths and non-secret resource limits from `.env` into `DEFAULTS.youtube` in `src/config.js`; schema v36 migrates existing JSONL configurations without dropping owner-defined settings.
+- Add owner-only `.ytconfig` controls for yt-dlp path, FFmpeg path, max output size, duration cap, search-result count, and reset. The downloader reads the persisted config dynamically; it no longer reads the five legacy YouTube environment variables.
+- Add private customer self-service `.sewa invoice [id]` and `.sewa pesanan` lookup. Results are limited to the exact requesting WhatsApp JID and selected group; read-only lookup does not require current group-admin status.
+- Add focused tests for customer/group isolation, invoice expiry labels, and dynamic YouTube settings.
+- Add `docs/BAILEYS_REFERENCE_REVIEW.md` with source-linked review notes from the upstream Baileys guide and public Baileys bot repositories. Research recommendations are separated from delivered code.
+
+### Validation
+- Focused YouTube config, application-config migration, and rental customer-portal tests: 12 passed, 0 failed.
+- JavaScript syntax validation: 205 files checked.
+- Live WhatsApp delivery, YouTube binary execution, full dependency installation, and VPS/Cloudflare deployment remain target-host checks.
+
+## v1.10.32 — Public Kernel WebView & live telemetry
+
+### Added
+- Added public `.kernel` command with `.kernelstatus` and `.nadiweb` aliases; it publishes a read-only WebView through the shared Nexora Code Lab HTTPS Quick Tunnel.
+- Added persistent aggregate counters for inbound messages, bot output messages, correlated reply turns, AI requests/responses/failures, provider counts, response characters, and rolling latency percentiles.
+- Added a live dashboard for NADI oscillator, homeostasis, OCC appraisal, neuromodulator fields, predictive self-model, EFE policies, integration and entropy proxies, memory-chain integrity, WhatsApp connection, and Node runtime diagnostics.
+- Added bounded event history, 24-hour activity chart, explicit model equations, telemetry tests, and public-dashboard operational documentation.
+
+### Security and interpretation
+- The public endpoint uses a 256-bit random path token, GET-only handling, restrictive response headers, rate limiting, and the existing HTTPS tunnel; it does not expose the loopback NADI API.
+- Public telemetry excludes message contents, phone numbers, JIDs, sender identities, user profiles, private conversation history, private memory, self-narrative, and workspace broadcast text. Runtime state values are synthetic computation, not evidence of biological emotion or phenomenal consciousness.
+- Runtime telemetry and dashboard token are excluded from Git through `data/kernel/`. Counters start with this version and are not reconstructed from historical chat logs.
+
+### Validation
+- JavaScript syntax check: 201 files passed.
+- Focused telemetry test: 1 passed, 0 failed.
+- Full bot integration and live WhatsApp/Cloudflare rendering still require validation on the target host with declared dependencies and `cloudflared` installed.
+
 ## v1.10.31 — External NADI component separation
 
 ### Added
@@ -896,3 +927,11 @@ All notable changes to Ocha Lidya are recorded here. The newest release is liste
 - One-hour simulated heartbeat: 3,600 ticks; energy and thermal load remained inside calibrated ranges; no user events were written to the global ledger.
 - JavaScript syntax: 195 files checked.
 - NADI sidecar integration test: start, heartbeat advance, hash-chain verification, and clean shutdown passed.
+
+## v1.10.32 — External NADI GitHub source binding
+
+- Bound the external NADI loader to `razzaqinspires/artificial-consciousness-component` at immutable commit `16c2fa6e1b500745f260bcf091284a6e18726883` (NADI 2.1.0).
+- Kept all NADI Python source outside the Ocha source tree; the loader downloads the repository archive to the external component cache.
+- Hardened ZIP layout normalization for GitHub-generated archive roots and versioned NADI release-folder wrappers.
+- Added focused tests for configured repository/ref, safe offline failure, and unchanged Ocha fallback behavior.
+- Preserved NADI data directory and HTTP sidecar API contract.

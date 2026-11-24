@@ -9,8 +9,9 @@ import {
   getQuotaStatus, getTenantStatus, createRentalOrder, setOrderPaymentMethod,
   reportPayment, attachPaymentEvidence, cancelOrder, getOrder, getPlans,
   setRentalContext, getRentalContext, submitRentalReview, getRentalReviewSummary,
-  getTenant, createRentalSupportTicket
+  getTenant, createRentalSupportTicket, listOrders
 } from '../../rental/service.js';
+import { isCustomerOrder, listCustomerOrders, customerVisibleOrderStatus } from '../../rental/customer-portal.js';
 import { PAYMENT_METHODS, normalizePaymentMethod } from '../../rental/payment-methods.js';
 import { formatRupiah } from '../../rental/catalog.js';
 
@@ -246,7 +247,7 @@ async function requirePrivateContext(sock, message, { admin = true } = {}) {
 
 export default {
   name: 'sewa', aliases: ['rent', 'paketsewa'], category: 'general', fullButton: false,
-  usage: '[bandingkan|estimasi <anggota>|faq|rating|testimoni|ulasan <1-5> [komentar]|masukan <pesan>|konsultasi <pesan>|status|plan|upgrade|perpanjang|pay|paid|bukti|cancel]',
+  usage: '[bandingkan|estimasi <anggota>|faq|rating|testimoni|ulasan <1-5> [komentar]|masukan <pesan>|konsultasi <pesan>|status|pesanan|invoice [id]|plan|upgrade|perpanjang|pay|paid|bukti|cancel]',
   description: 'Paket sewa, invoice dan pembayaran pribadi per grup WhatsApp',
   async execute({ sock, m, args }) {
     if (m.isGroup) return sendGroupRedirect(sock, m, args);
@@ -255,7 +256,7 @@ export default {
     if (['packages', 'paket', 'list', 'help', 'bantuan'].includes(action)) {
       if (action === 'help' || action === 'bantuan') {
         const context = await getRentalContext(getSenderJid(m));
-        return m.reply(`*PANDUAN SEWA OCHA LIDYA*\n${context ? `Grup terpilih: ${context.groupName}` : 'Grup belum dipilih.'}\n\n.sewa — lihat paket\n.sewa bandingkan — bandingkan paket\n.sewa estimasi <anggota> — rekomendasi kapasitas\n.sewa fitur / .sewa faq — fitur dan pertanyaan umum\n.sewa rating / testimoni — rating dan ulasan pelanggan terverifikasi\n.sewa ulasan <1-5> [komentar] — kirim satu ulasan per invoice terverifikasi\n.sewa masukan <pesan> — buat tiket saran/kendala layanan\n.sewa konsultasi <pesan> — minta konsultasi paket atau teknis\n.sewa plan <mini|standard|pro> — buat invoice\n.sewa upgrade <paket> — upgrade paket\n.sewa perpanjang — perpanjang paket aktif\n.sewa pay <invoice> <qris|ovo|gopay|dana|seabank> — pilih pembayaran\n.sewa paid <invoice> — laporkan pembayaran\n.sewa bukti <invoice> — kirim foto bukti melalui chat pribadi\n.sewa status — masa aktif dan kuota\n.sewa cancel <invoice> — batalkan invoice\n\nPemesanan, dukungan, dan pembayaran hanya diproses di chat pribadi. Untuk memilih grup, ketik .sewa di grup tujuan. Hanya admin grup yang dapat membuat invoice dan mengelola transaksi.`);
+        return m.reply(`*PANDUAN SEWA OCHA LIDYA*\n${context ? `Grup terpilih: ${context.groupName}` : 'Grup belum dipilih.'}\n\n.sewa — lihat paket\n.sewa bandingkan — bandingkan paket\n.sewa estimasi <anggota> — rekomendasi kapasitas\n.sewa fitur / .sewa faq — fitur dan pertanyaan umum\n.sewa rating / testimoni — rating dan ulasan pelanggan terverifikasi\n.sewa ulasan <1-5> [komentar] — kirim satu ulasan per invoice terverifikasi\n.sewa masukan <pesan> — buat tiket saran/kendala layanan\n.sewa konsultasi <pesan> — minta konsultasi paket atau teknis\n.sewa plan <mini|standard|pro> — buat invoice\n.sewa upgrade <paket> — upgrade paket\n.sewa perpanjang — perpanjang paket aktif\n.sewa pay <invoice> <qris|ovo|gopay|dana|seabank> — pilih pembayaran\n.sewa paid <invoice> — laporkan pembayaran\n.sewa bukti <invoice> — kirim foto bukti melalui chat pribadi\n.sewa invoice [id] — cek invoice milik Anda\n.sewa pesanan — riwayat invoice milik Anda\n.sewa status — masa aktif dan kuota\n.sewa cancel <invoice> — batalkan invoice\n\nPemesanan, dukungan, dan pembayaran hanya diproses di chat pribadi. Untuk memilih grup, ketik .sewa di grup tujuan. Hanya admin grup yang dapat membuat invoice dan mengelola transaksi.`);
       }
       return sendPlans(sock, m);
     }
@@ -287,6 +288,38 @@ export default {
     if (action === 'context' || action === 'grup') {
       const context = await getRentalContext(getSenderJid(m));
       return m.reply(context ? `Grup tujuan: ${context.groupName}\nSesi berlaku sampai ${dateWib(context.expiresAt)}.` : 'Belum ada grup tujuan. Ketik .sewa di dalam grup yang ingin disewakan.');
+    }
+
+    // Read-only customer self-service is available to the invoice requester;
+    // it does not require current group-admin status and never reveals peer orders.
+    if (['invoice', 'pesanan', 'riwayat', 'orders'].includes(action)) {
+      const sender = getSenderJid(m);
+      if (!sender || m.isGroup) return m.reply('Riwayat dan invoice hanya dapat dilihat melalui chat pribadi bot.');
+      const context = await getRentalContext(sender);
+      if (!context) return m.reply('Grup tujuan belum dipilih atau sesi telah kedaluwarsa. Ketik .sewa di grup tujuan, lalu buka chat pribadi bot.');
+
+      if (action === 'invoice') {
+        const orderId = String(args[1] || '').trim().toUpperCase();
+        const candidate = orderId ? await getOrder(orderId) : listCustomerOrders(await listOrders(), context.groupJid, sender, 1)[0];
+        if (!candidate || !isCustomerOrder(candidate, context.groupJid, sender)) {
+          return m.reply('Invoice tidak ditemukan pada grup terpilih atau invoice tersebut bukan milik akun WhatsApp ini. Ketik .sewa pesanan untuk melihat invoice milik Anda.');
+        }
+        const status = customerVisibleOrderStatus(candidate);
+        const labels = {
+          pending: 'MENUNGGU PEMBAYARAN', payment_reported: 'PEMBAYARAN DILAPORKAN · MENUNGGU VERIFIKASI',
+          approved: 'DISETUJUI · LAYANAN DIAKTIFKAN', rejected: 'DITOLAK', cancelled: 'DIBATALKAN', expired: 'KEDALUWARSA', unknown: 'STATUS TIDAK DIKENAL'
+        };
+        return m.reply(`*DETAIL INVOICE SEWA OCHA LIDYA*\nInvoice: *${candidate.id}*\nGrup: ${candidate.groupName}\nPaket: ${candidate.planName}\nTotal: *${formatRupiah(candidate.amount)}*\nStatus: *${labels[status] || labels.unknown}*\nDibuat: ${dateWib(candidate.createdAt)}\nBatas pembayaran: ${dateWib(candidate.expiresAt)}\nMetode pembayaran: ${candidate.paymentMethod || 'Belum dipilih'}\n${candidate.paymentReportedAt ? `Dilaporkan dibayar: ${dateWib(candidate.paymentReportedAt)}\n` : ''}${candidate.approvedAt ? `Disetujui: ${dateWib(candidate.approvedAt)}\n` : ''}${candidate.rejectionReason ? `Alasan penolakan: ${String(candidate.rejectionReason).slice(0, 180)}\n` : ''}\nUntuk riwayat lain: .sewa pesanan`);
+      }
+
+      const orders = listCustomerOrders(await listOrders(), context.groupJid, sender, 10);
+      if (!orders.length) return m.reply(`Belum ada invoice yang dibuat oleh akun WhatsApp ini untuk grup *${context.groupName}*. Ketik .sewa plan mini untuk membuat invoice baru.`);
+      const labels = { pending: 'Menunggu pembayaran', payment_reported: 'Menunggu verifikasi', approved: 'Disetujui', rejected: 'Ditolak', cancelled: 'Dibatalkan', expired: 'Kedaluwarsa', unknown: 'Status tidak dikenal' };
+      const rows = orders.map(order => {
+        const status = customerVisibleOrderStatus(order);
+        return `• *${order.id}* — ${order.planName} · ${formatRupiah(order.amount)}\n  ${labels[status] || labels.unknown} · ${dateWib(order.createdAt)}`;
+      });
+      return m.reply(`*RIWAYAT INVOICE ANDA*\nGrup: ${context.groupName}\nMenampilkan ${orders.length} invoice terbaru yang dibuat oleh akun ini.\n\n${rows.join('\n')}\n\nDetail invoice: .sewa invoice <id>\nInvoice terbaru: .sewa invoice`);
     }
 
     const { sender, context } = await requirePrivateContext(sock, m, { admin: true });

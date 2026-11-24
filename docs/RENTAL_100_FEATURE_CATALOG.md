@@ -1,6 +1,6 @@
 # Ocha Rental Platform — Katalog Kapabilitas
 
-Versi: **1.10.19**
+Versi: **1.10.33**
 
 Dokumen ini membedakan fitur yang sudah diimplementasikan dan diuji dari rencana lanjutan. Item roadmap bukan command yang dapat dijanjikan kepada pelanggan.
 
@@ -127,6 +127,15 @@ Durasi bawaan 30 hari dengan masa tenggang 48 jam. Selama masa tenggang, interak
 98. Sambutan anggota baru mendukung mention PN yang diketahui dan pesan khusus.
 99. Admin dapat membuat polling dengan 2–12 pilihan.
 100. Admin dapat mengirim pengumuman tanpa mention massal.
+
+## Addendum v1.10.33 — portal invoice pelanggan
+
+Dua fitur berikut sudah diimplementasikan di luar 100 item dasar katalog ini:
+
+- `.sewa invoice [id]` — melihat invoice terbaru atau ID invoice tertentu yang dibuat oleh peminta aktif untuk grup yang sedang dipilih.
+- `.sewa pesanan` — menampilkan maksimal 10 invoice terbaru milik peminta aktif untuk grup yang dipilih.
+
+Keduanya hanya berjalan di chat pribadi, memerlukan konteks grup yang masih berlaku, mengikat hasil ke requester JID dan Group JID yang tepat, serta tidak memerlukan status admin saat ini karena hanya operasi baca. ID invoice milik orang lain diperlakukan sebagai tidak ditemukan. Fitur ini tidak mengubah status pembayaran atau mengaktifkan tenant.
 
 ## Roadmap — belum diimplementasikan
 

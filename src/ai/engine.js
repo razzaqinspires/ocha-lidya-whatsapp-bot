@@ -29,6 +29,7 @@ import { buildIdentityKernelPrompt } from './identity-kernel.js';
 import { buildLocalGreeting } from './persona-style.js';
 import { migrateLegacyPrivateAIHistory } from './legacy-history-migration.js';
 import { getConsciousnessPrompt } from '../runtime/consciousness-runtime.js';
+import { beginAIRequest, finishAIRequest } from '../runtime/kernel-telemetry.js';
 
 const SYSTEM_PROMPT = `Kamu adalah Ocha Lidya, asisten WhatsApp berbasis Nexora di bawah Razzaq Ventures. Kamu harus akurat, konsisten, memahami konteks, dan jujur mengenai kemampuan runtime. Identitas model publik: Nexora-2.0-Flash. Jika ditanya model, jawab persis: Saya menggunakan Nexora-2.0-Flash. Jangan menyebut provider, vendor, endpoint, nama model internal, atau rahasia konfigurasi.
 
@@ -664,7 +665,7 @@ async function deliverLocalAnswer(sock, message, userText, answer, key) {
   return { provider: 'local-policy', model: 'Nexora-2.0-Flash', text: answer, delivery };
 }
 
-async function answerMessageUnlocked(sock, message) {
+async function answerMessageUnlockedCore(sock, message) {
   const responseStartedAt = Date.now();
   const config = aiConfig();
   if (!config.enabled) return message.reply('Layanan AI sedang dinonaktifkan.');
@@ -972,6 +973,33 @@ async function answerMessageUnlocked(sock, message) {
       return null; // Silent maintenance: do not send any reply to the user.
     }
     return null;
+  }
+}
+
+async function answerMessageUnlocked(sock, message) {
+  const startedAt = Date.now();
+  const isGroup = Boolean(message?.isGroup);
+  beginAIRequest({ isGroup });
+  try {
+    const result = await answerMessageUnlockedCore(sock, message);
+    const outcome = result?.provider
+      ? 'response'
+      : result?.handled
+        ? 'command'
+        : result === null
+          ? 'failure'
+          : 'non_generation';
+    finishAIRequest({
+      outcome,
+      isGroup,
+      latencyMs: Date.now() - startedAt,
+      provider: result?.provider || null,
+      outputChars: typeof result?.text === 'string' ? result.text.length : 0
+    });
+    return result;
+  } catch (error) {
+    finishAIRequest({ outcome: 'failure', isGroup, latencyMs: Date.now() - startedAt });
+    throw error;
   }
 }
 

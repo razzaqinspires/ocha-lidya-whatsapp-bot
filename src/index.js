@@ -34,6 +34,7 @@ import { startRentalScheduler, stopRentalScheduler } from './rental/runtime.js';
 import { handleGroupWelcome } from './core/group-tools.js';
 import { getTenantStatus } from './rental/service.js';
 import { startConsciousnessRuntime, stopConsciousnessRuntime } from './runtime/consciousness-runtime.js';
+import { initializeKernelTelemetry, recordIncomingMessage, setWhatsAppConnection, flushKernelTelemetry } from './runtime/kernel-telemetry.js';
 
 setOutgoingMessageObserver(observeOutgoingMessage);
 
@@ -44,6 +45,7 @@ if (!runtimeLock.acquired) {
 }
 
 await initializeDatabase();
+await initializeKernelTelemetry();
 await loadConfig();
 if (getConfig().commandGuard?.antiSpam?.enabled) {
   try {
@@ -352,6 +354,7 @@ async function start() {
         return;
       }
       const { connection, lastDisconnect, qr } = update;
+      if (connection) setWhatsAppConnection(connection);
 
       if (qr && AUTH_MODE === 'qr') {
         logger.info('Scan QR WhatsApp Ocha Lidya melalui Perangkat tertaut:');
@@ -471,6 +474,7 @@ async function start() {
             fromMe: Boolean(message.fromMe)
           }, 'Incoming sender identity verified from WhatsApp metadata');
           observeIncomingMessage(message);
+          if (!message.fromMe) recordIncomingMessage({ isGroup: Boolean(message.isGroup) });
           if (message.fromMe && !message.isOwner) continue;
           if (!message.fromMe && senderPn) await addContactFromPnJid(senderPn);
           if (message.isGroup) await ensureGroupMetadata(sock, message.chat);
@@ -532,6 +536,8 @@ async function shutdownRuntime(signal, exitCode = 0) {
   try { await autoGitSync.close(); } catch {}
   try { await stopCodeLab(); }
   catch (error) { logger.error({ message: error.message }, 'Code Lab shutdown cleanup failed'); }
+  try { await flushKernelTelemetry(); }
+  catch (error) { logger.warn({ message: error.message }, 'Kernel telemetry could not be flushed during shutdown'); }
   try { await runtimeLock.release(); }
   catch (error) { logger.error({ message: error.message }, 'Runtime instance lock release failed'); }
   process.exit(exitCode);

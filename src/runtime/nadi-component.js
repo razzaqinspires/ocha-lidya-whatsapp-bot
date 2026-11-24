@@ -83,7 +83,14 @@ async function zipEntries(buffer, destination) {
           if (!segments.length || segments.some(segment => segment === '.' || segment === '..')) throw new Error('Arsip NADI berisi path traversal');
           if (!archiveRoot) archiveRoot = segments[0];
           if (segments[0] !== archiveRoot) throw new Error('Arsip NADI memiliki lebih dari satu root directory');
-          const relative = segments.slice(1).join('/');
+          // GitHub zipball wraps the repository in a generated root folder.
+          // NADI's own release ZIP may add AC-Kernel-NADI-vX.Y.Z as another layer.
+          // Strip both wrappers so the installed component root contains ac/ directly.
+          let relativeSegments = segments.slice(1);
+          if (relativeSegments[0] && /^AC-Kernel-NADI-v\d+\.\d+\.\d+$/i.test(relativeSegments[0])) {
+            relativeSegments = relativeSegments.slice(1);
+          }
+          const relative = relativeSegments.join('/');
           if (!relative) { zipFile.readEntry(); return; }
           const mode = (entry.externalFileAttributes >>> 16) & 0xffff;
           const fileType = mode & 0o170000;
@@ -216,11 +223,11 @@ export async function resolveNadiComponent({ logger = console } = {}) {
       return { root, version: await readPackageVersion(root), source: 'external-directory' };
     }
 
-    const repoUrl = String(process.env.OCHA_NADI_REPO_URL || '').trim();
-    const ref = cleanRef(process.env.OCHA_NADI_REF || 'main');
+    const repoUrl = String(process.env.OCHA_NADI_REPO_URL || 'https://github.com/razzaqinspires/artificial-consciousness-component').trim();
+    const ref = cleanRef(process.env.OCHA_NADI_REF || '16c2fa6e1b500745f260bcf091284a6e18726883');
     const componentHome = path.resolve(process.env.OCHA_NADI_HOME || path.join(os.homedir(), '.ocha', 'components', 'nadi'));
     if (!repoUrl) {
-      throw Object.assign(new Error('NADI source belum dikonfigurasi. Isi OCHA_NADI_REPO_URL setelah repositori GitHub NADI tersedia.'), { code: 'NADI_NOT_CONFIGURED' });
+      throw Object.assign(new Error('NADI source belum dikonfigurasi. Isi OCHA_NADI_REPO_URL dengan URL repositori GitHub NADI.'), { code: 'NADI_NOT_CONFIGURED' });
     }
     const safeRef = ref.replace(/[^A-Za-z0-9._-]+/g, '_').slice(0, 100) || 'main';
     const cached = path.join(componentHome, 'releases', safeRef);

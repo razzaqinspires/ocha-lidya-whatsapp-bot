@@ -58,7 +58,7 @@ export default {
           const result = await readConsciousnessStatus();
           return m.reply(formatStatus({ ...getConsciousnessStatus(), state: result }));
         }
-        return m.reply(`${formatStatus(live)}\n\nKonfigurasi source NADI: set OCHA_NADI_REPO_URL dan OCHA_NADI_REF pada environment bot setelah repositori GitHub tersedia.`);
+        return m.reply(`${formatStatus(live)}\n\nKonfigurasi source NADI: source GitHub NADI sudah dikonfigurasi; jalankan ulang bot atau periksa konfigurasi OCHA_NADI_REF jika perlu mengganti versi.`);
       } catch (error) { return m.reply(`NADI status tidak tersedia: ${error.message}`); }
     }
     if (['on', 'start', 'enable'].includes(action)) {

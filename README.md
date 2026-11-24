@@ -4,7 +4,7 @@
 
 Ocha Lidya and AC-Kernel NADI are now separate repositories. The bot keeps only the Node.js HTTP integration and a secure GitHub component loader; NADI's Python source is downloaded to an external cache (`~/.ocha/components/nadi/`) and is not bundled under the Ocha source tree. The connection uses Node's built-in `fetch` and a loopback HTTP sidecar. NADI owns its managed heartbeat; the bot reads operational telemetry and adds it to the existing Nexora prompt without creating a second LLM provider chain or duplicating API-key handling.
 
-After the NADI repository is uploaded, set `OCHA_NADI_REPO_URL` and `OCHA_NADI_REF`. Prefer a stable Git tag or commit. Optional `OCHA_NADI_SHA256` pins the archive checksum. `OCHA_NADI_UPDATE=1` refreshes an installed ref. See `docs/NADI_RUNTIME.md` for the component loader, lifecycle, API boundary, and persistent-state rules. Until the repository URL is configured, the rest of Ocha remains fully operational with NADI reported as unavailable.
+The external NADI loader is preconfigured for `https://github.com/razzaqinspires/artificial-consciousness-component` and immutable commit `16c2fa6e1b500745f260bcf091284a6e18726883` (AC-Kernel NADI 2.1.0). On first launch it downloads and validates the repository archive into `~/.ocha/components/nadi/`, outside this repository, then launches the Python sidecar over loopback HTTP. Optional `OCHA_NADI_SHA256` pins the archive checksum. Upgrade only by reviewing and pinning a new immutable commit. See `docs/NADI_RUNTIME.md` for details. The public live telemetry page is available through `.kernel`; see `docs/KERNEL_DASHBOARD.md` for the URL lifecycle, privacy boundary, and metric definitions.
 
 ## Adaptive conversation intelligence, stateful games, and feature-request workflow (v1.10.28)
 
@@ -74,6 +74,8 @@ npm start
 
 `npm start` menjalankan `prestart` otomatis. Dependency Node yang hilang akan dipasang, lalu host preflight mengurus Bash (jika bisa dipasang dengan hak non-interaktif), Git, Python 3, Go, Cloudflared, dan runtime container pada Linux yang didukung. Tidak diperlukan `npm install`, `npm run git:setup`, atau `git config` untuk menjalankan bot dan fitur inti. GitHub auto-push tetap opsional: diperlukan clone/remote yang sesuai serta `GITHUB_PAT`; ZIP source tidak akan diam-diam menginisialisasi atau mendorong kode ke repository pihak lain. Node.js dan npm sendiri adalah prasyarat untuk dapat menjalankan `npm start` dan harus tersedia sebelum langkah ini.
 
+`npm install` hanya memasang dependency Node.js; perintah itu tidak menyalakan NADI. NADI dijalankan otomatis saat `npm start` memulai Ocha: loader mengunduh source AC-Kernel pada commit GitHub yang dipatok ke cache eksternal `~/.ocha/components/nadi/`, lalu mencoba menjalankannya sebagai sidecar Python. Python 3.10+ harus tersedia. Bila NADI gagal dimulai atau Python tidak tersedia, proses WhatsApp dan AI Ocha tetap berjalan; status NADI akan tercatat offline dan dapat diperiksa melalui `.nadi status`.
+
 `npm start` first checks and installs missing declared Node dependencies. On Linux, after loading saved configuration, startup runs the Nexora host manager with the `auto` runtime preference by default. It detects the actual init system, avoids `sudo` when already root, attempts a locked manual Docker daemon only on a root host without a service manager, and tries Podman if Docker cannot start. It also validates/pulls the Python and Node images and verifies `cloudflared`. If host capabilities do not permit any container engine, the bot stays online and Code Lab execution is reported unavailable rather than pretending it is ready. See `docs/CODE_LAB.md` and `docs/OWNER_SECURITY.md`.
 
 `npm run git:setup` menyiapkan repository lokal/branch `main` dan memastikan remote `origin` mengarah ke repository resmi. Bila folder ini merupakan hasil `git clone`, perintah tersebut hanya memverifikasi konfigurasi yang sudah ada.
@@ -122,16 +124,9 @@ GEMINI_API_KEY=
 GROQ_API_KEY=
 DEEPSEEK_API_KEY=
 GITHUB_PAT=
-
-# Optional non-secret YouTube integration overrides
-YT_DLP_BIN=yt-dlp
-FFMPEG_LOCATION=
-YOUTUBE_MAX_DOWNLOAD_MB=48
-YOUTUBE_MAX_DURATION_SECONDS=1800
-YOUTUBE_SEARCH_RESULTS=5
 ```
 
-Do not put bot name, owner number, prefixes, bot mode, feature flags, database paths, archive limits, execution switches, or runtime limits in `.env`. Those are managed through `src/config.js` and persisted in the JSONL database. WhatsApp login mode, pairing number, session folder, and connection timeouts are non-secret application settings persisted in the JSONL configuration database. Only `GITHUB_PAT` and provider API keys are credentials. The optional YouTube variables above are non-secret executable/limit overrides; they do not replace `src/config.js` for ordinary bot settings. Public identity fields (`bot.ownerName`, `bot.creatorName`, `bot.organization`, and `bot.publicCreatorDisclosure`) are non-secret application configuration; the AI prompt receives only this explicit allowlist, never the raw config object or secret vault.
+Do not put bot name, owner number, prefixes, bot mode, feature flags, database paths, archive limits, execution switches, or runtime limits in `.env`. Those are managed through `src/config.js` and persisted in the JSONL database. WhatsApp login mode, pairing number, session folder, and connection timeouts are non-secret application settings persisted in the JSONL configuration database. GitHub/provider API keys, an externally supplied `OCHA_ROO_MASTER_KEY`, and an `OCHA_NADI_API_TOKEN` for a deliberately remote NADI service are secrets. Keep them in the private `.env` or deployment secret manager. The User Vault master key is optional: leave it empty and the application generates a protected local key file on first vault use. YouTube executable paths and limits are non-secret application settings stored under `youtube` in the JSONL configuration database; manage them with the owner-only `.ytconfig` command. Public identity fields (`bot.ownerName`, `bot.creatorName`, `bot.organization`, and `bot.publicCreatorDisclosure`) are non-secret application configuration; the AI prompt receives only this explicit allowlist, never the raw config object or secret vault.
 
 Never commit `.env`, WhatsApp sessions, database journals, archives, or runtime logs.
 
@@ -319,6 +314,7 @@ Default multi-prefix values are `.`, `!`, `/`, and `#`.
 | `.about` | `.botinfo` | Bot identity, creator, and organization information |
 | `.profile` | `.me`, `.level`, `.xp` | Personal XP, level, rank, relationship role, and progress card |
 | `.runtime` | `.system`, `.sysinfo` | Node runtime, memory, host and process details |
+| `.kernel` | `.kernelstatus`, `.nadiweb` | Public read-only WebView for live AC-Kernel NADI circuits, WhatsApp activity, total bot outputs, AI response totals, latency, and mathematical telemetry |
 | `.groupinfo` | `.gcinfo`, `.grouplist` | Owner-only private group list with active/mute statuses; in groups, show that group's cached metadata |
 | `.run python <code>` | `.execute`, `.previewcode` | Execute Python/Node.js or display HTML in an isolated temporary web preview |
 | Natural-language `coba jalankan` | — | Run the most recent assistant code block and return a session URL |
@@ -740,7 +736,7 @@ See [`docs/RENTAL_USER_GUIDE.md`](docs/RENTAL_USER_GUIDE.md) for the full custom
 
 The internal native-flow registry supports lossless parameter forwarding for the registered sample button types. It distinguishes stable, observed and experimental payloads; it does not promise that all WhatsApp clients or business accounts render experimental commerce/call flows. The raw low-level `sock.relayMessage()` path is left untouched. `sendInteractive`/`sendNativeFlow` validate registered payloads and retain a text fallback. The owner-only `.test nativeflow all` sends five pages based on the current evaluation fixture; `.test identity` and `.test inspect` expose PN/LID and parsed-response diagnostics. Quick-reply and single-select test IDs route through `.test response ...`; URL, call, copy, and location controls may be handled entirely by the WhatsApp app and are not guaranteed to send a bot callback. See [`docs/NATIVE_FLOW_SERIALIZER.md`](docs/NATIVE_FLOW_SERIALIZER.md).
 
-YouTube commands use `yt-dlp` plus FFmpeg/ffprobe installed on the host; these are system tools, not npm dependencies. `.yts`, `.ytmp3`, `.ytmp4`, and audio-only `.ytm` are documented in [`docs/YOUTUBE_COMMANDS.md`](docs/YOUTUBE_COMMANDS.md). The current bot environment variables support executable path and download-size/duration limits; live retrieval still depends on YouTube availability and format changes.
+YouTube commands use `yt-dlp` plus FFmpeg/ffprobe installed on the host; these are system tools, not npm dependencies. `.ytconfig` lets the owner adjust their executable paths, maximum file size, maximum duration, and search count without editing `.env`. `.yts`, `.ytmp3`, `.ytmp4`, and audio-only `.ytm` are documented in [`docs/YOUTUBE_COMMANDS.md`](docs/YOUTUBE_COMMANDS.md). The executable path and media limits live in the non-secret `youtube` application configuration. Inspect or update them with `.ytconfig`; live retrieval still depends on YouTube availability and format changes.
 
 See `docs/RENTAL_100_FEATURE_CATALOG.md` for the distinction between implemented capabilities and the roadmap. The catalog does not market dynamic QR, automatic refunds, payment webhooks or a customer web dashboard as delivered.
 

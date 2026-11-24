@@ -818,14 +818,19 @@ function extendSocket(sock) {
   sock.relayMessage = async (jid, message, options = {}) => {
     if (options?.messageId) trackSentMessageId(options.messageId);
     if (!originalRelayMessage) return null;
-    const res = await originalRelayMessage(jid, message, options);
+    // sourceKey is private observer metadata; never forward it to Baileys.
+    const sourceKey = options?.sourceKey || options?.quoted?.key || null;
+    const relayOptions = { ...options };
+    delete relayOptions.sourceKey;
+    delete relayOptions.quoted;
+    const res = await originalRelayMessage(jid, message, relayOptions);
     if (typeof res === 'string') {
       trackSentMessageId(res);
-      try { outgoingMessageObserver?.({ remoteJid: jid, id: res, fromMe: true }, options?.quoted?.key || null); } catch {}
+      try { outgoingMessageObserver?.({ remoteJid: jid, id: res, fromMe: true }, sourceKey); } catch {}
     }
     if (res?.key?.id) {
       trackSentMessageId(res.key.id);
-      try { outgoingMessageObserver?.(res.key, options?.quoted?.key || null); } catch {}
+      try { outgoingMessageObserver?.(res.key, sourceKey); } catch {}
     }
     return res;
   };
@@ -1079,7 +1084,8 @@ function extendSocket(sock) {
       await sock.relayMessage(targetJid, fullMsg?.message, {
         messageId: fullMsg?.key?.id,
         additionalNodes,
-        ...options
+        ...options,
+        sourceKey: cleanQuoted?.key || null
       });
       return fullMsg;
     } catch (err) {

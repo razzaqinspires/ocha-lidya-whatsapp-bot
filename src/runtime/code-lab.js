@@ -26,6 +26,7 @@ const state = {
   tunnelOperation: Promise.resolve(),
   tunnelUrl: null,
   tunnelLease: null,
+  keepTunnelAlive: false,
   tunnelGeneration: 0,
   tunnelStartedAt: null,
   tunnelIdleTimer: null,
@@ -263,6 +264,13 @@ function publicSession(session) {
 
 async function routeRequest(request, response) {
   const url = new URL(request.url || '/', 'http://127.0.0.1');
+  if (url.pathname.startsWith('/kernel/')) {
+    if (typeof kernelDashboardRouteHandler === 'function') {
+      const handled = await kernelDashboardRouteHandler({ request, response, url });
+      if (handled) return;
+    }
+    return sendJson(response, 404, { error: 'Dashboard kernel tidak ditemukan.' });
+  }
   if (request.method === 'GET' && url.pathname === '/health') {
     return sendJson(response, 200, { ok: true, service: 'ocha-code-lab', activeSessions: state.sessions.size, activeWorkers: state.activeWorkers, queued: state.queue.length });
   }
@@ -738,11 +746,11 @@ function clearTunnelIdleTimer() {
 function scheduleTunnelIdleStop() {
   clearTunnelIdleTimer();
   const idleMs = boundedInt(setting('tunnelIdleMs', 300_000), 300_000, 0, 3_600_000);
-  if (idleMs === 0 || !state.tunnel || state.closing || state.sessions.size || state.pendingReservations) return;
+  if (idleMs === 0 || !state.tunnel || state.closing || state.keepTunnelAlive || state.sessions.size || state.pendingReservations) return;
   state.tunnelIdleTimer = setTimeout(() => {
     state.tunnelIdleTimer = null;
     void serializeTunnelOperation(async () => {
-      if (state.closing || state.sessions.size || state.pendingReservations) return;
+      if (state.closing || state.keepTunnelAlive || state.sessions.size || state.pendingReservations) return;
       await stopTunnelInternal();
       logger.info({ idleMs }, 'Quick Tunnel stopped after preview sessions became idle');
     }).catch(error => logger.warn({ message: error.message }, 'Quick Tunnel idle shutdown failed'));
@@ -1334,6 +1342,32 @@ function startHeartbeat() {
 let heartbeatTimer;
 let runtimeProbePromise;
 let runtimeProbeRetryAfter = 0;
+let kernelDashboardRouteHandler = null;
+
+export function registerKernelDashboardRouteHandler(handler) {
+  if (handler !== null && typeof handler !== 'function') throw new TypeError('Kernel dashboard route handler harus berupa function atau null.');
+  kernelDashboardRouteHandler = handler;
+  return () => { if (kernelDashboardRouteHandler === handler) kernelDashboardRouteHandler = null; };
+}
+
+/** Returns the shared HTTPS TryCloudflare gateway and keeps it alive for the public kernel page. */
+export async function getPublicGatewayUrl() {
+  if (!setting('enabled', true)) throw new Error('Code Lab gateway dinonaktifkan.');
+  if (!setting('publicTunnelEnabled', true)) throw new Error('Public TryCloudflare tunnel dinonaktifkan oleh owner.');
+  if (!state.server?.listening) await startCodeLab();
+  if (!state.server?.listening) await ensureServer();
+  state.keepTunnelAlive = true;
+  clearTunnelIdleTimer();
+  await ensureWatchdog();
+  if (!heartbeatTimer) heartbeatTimer = startHeartbeat();
+  try {
+    return await startTunnel();
+  } catch (error) {
+    state.keepTunnelAlive = false;
+    scheduleTunnelIdleStop();
+    throw error;
+  }
+}
 
 export async function startCodeLab() {
   if (!setting('enabled', true)) return { enabled: false, reason: 'disabled' };
@@ -1555,6 +1589,7 @@ export async function prepareCodeLabHandoff(nextPid) {
   }
   state.handoffInProgress = true;
   state.closing = true;
+  state.keepTunnelAlive = false;
   clearTunnelIdleTimer();
   if (state.startPromise) { try { await state.startPromise; } catch {} }
   if (runtimeProbePromise) { try { await runtimeProbePromise; } catch {} }
@@ -1735,6 +1770,7 @@ export async function cancelCodeLabHandoff() {
 export async function stopCodeLab() {
   if (state.closing) return;
   state.closing = true;
+  state.keepTunnelAlive = false;
   clearTunnelIdleTimer();
   if (state.startPromise) {
     try { await state.startPromise; } catch {}

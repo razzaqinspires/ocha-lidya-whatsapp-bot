@@ -1,4 +1,4 @@
-# Ocha NADI External Runtime — v1.10.31
+# Ocha NADI External Runtime — v1.10.33
 
 ## Architecture
 
@@ -15,15 +15,15 @@ Ocha Lidya Bot (Node.js)
                                                └── secured /v1 HTTP API
 ```
 
-The Python package is cached outside the Ocha source tree. The persistent NADI state remains in `data/consciousness/` by default to preserve the current operational history from v1.10.30. Do not remove that data directory when updating bot code. The NADI component can be replaced independently by changing its Git ref and setting `OCHA_NADI_UPDATE=1`; the component source is never merged into `src/`.
+The Python package is cached outside the Ocha source tree. The persistent NADI state remains in the configured `OCHA_NADI_DATA_DIR` (default `data/consciousness/`) to preserve the current operational history from v1.10.30. Do not remove that data directory when updating bot code. The NADI component can be replaced independently by changing its Git ref and setting `OCHA_NADI_UPDATE=1`; the component source is never merged into `src/`.
 
 ## GitHub source settings
 
-After the standalone NADI repository has been uploaded, configure these non-secret environment variables in the Ocha runtime:
+The default Ocha v1.10.33 configuration points to the verified repository `razzaqinspires/artificial-consciousness-component` and locks source ref `16c2fa6e1b500745f260bcf091284a6e18726883` (NADI 2.1.0). These defaults are used automatically; no extra environment variables are required. Override them only for a controlled release change:
 
 ```dotenv
-OCHA_NADI_REPO_URL=https://github.com/OWNER/REPOSITORY
-OCHA_NADI_REF=main
+OCHA_NADI_REPO_URL=https://github.com/razzaqinspires/artificial-consciousness-component
+OCHA_NADI_REF=16c2fa6e1b500745f260bcf091284a6e18726883
 OCHA_NADI_PORT=18765
 OCHA_AC_HEARTBEAT_MS=1000
 # Optional: pin the downloaded GitHub archive SHA-256 (64 hexadecimal chars)
@@ -34,11 +34,13 @@ OCHA_NADI_SHA256=
 # OCHA_PYTHON_BIN=python3
 ```
 
-Only point the loader at a repository you control and trust because the downloaded Python component is executable code. Prefer a Git tag or immutable commit for `OCHA_NADI_REF`, rather than a moving branch. The bot downloads a GitHub archive over HTTPS, applies size/path/symlink/entry-count limits, validates the package layout and `pyproject.toml`, computes SHA-256, and installs it atomically under the external component cache. If `OCHA_NADI_SHA256` is provided, the archive must match it. If an already installed ref is present, the cache is reused; set `OCHA_NADI_UPDATE=1` for a controlled refresh. `GITHUB_PAT` may be used for a private GitHub repository and must remain secret.
+Only point the loader at a repository you control and trust because the downloaded Python component is executable code. The shipped default uses the immutable commit SHA above, not a moving branch. Keep that SHA pinned until a deliberate NADI release upgrade is reviewed. The bot downloads a GitHub archive over HTTPS, applies size/path/symlink/entry-count limits, validates the package layout and `pyproject.toml`, computes SHA-256, and installs it atomically under the external component cache. If `OCHA_NADI_SHA256` is provided, the archive must match it. If an already installed ref is present, the cache is reused. For a controlled refresh, change `OCHA_NADI_REF` to a reviewed immutable commit SHA (the cache key changes automatically); `OCHA_NADI_UPDATE=1` forces a reinstall of the currently pinned ref. `GITHUB_PAT` may be used for a private GitHub repository and must remain secret.
 
 Manual installation is also supported by setting `OCHA_NADI_SOURCE_DIR` to an existing NADI source checkout outside the Ocha repository.
 
 ## Runtime lifecycle
+
+`npm install` hanya memasang dependency Node.js dan tidak menjalankan NADI. Sidecar NADI baru dimulai ketika `npm start` menjalankan `src/index.js`; loader mengambil source yang dipatok pada commit GitHub ke cache eksternal, lalu mencoba meluncurkannya dengan Python 3.10+. Jika Python atau komponen tidak tersedia, Ocha mencatat NADI offline dan tetap melanjutkan layanan WhatsApp serta AI utama. Tidak ada `postinstall` NADI.
 
 - Ocha starts NADI after provider-key initialization.
 - It launches `python -m ac --config <external-config> serve --host 127.0.0.1 --port <port>`.
@@ -63,6 +65,10 @@ The current prompt integration uses global operational telemetry only. Raw Whats
 - NADI's global heartbeat ledger is not a user memory store. The existing encrypted User Vault remains authoritative for conversations.
 - `data/consciousness/` and its `.scope-salt` must be backed up. Do not delete them during code updates.
 - Artificial-consciousness terminology is architectural; the system does not establish subjective consciousness or human emotion.
+
+## Public kernel dashboard
+
+The general `.kernel` command (aliases `.kernelstatus`, `.nadiweb`) publishes a public read-only WebView through the shared Code Lab Quick Tunnel. It displays aggregate inbound/output/reply counts, AI response totals and latency, and sanitized NADI operational circuits. It does not expose chat text, phone numbers, JIDs, profiles, private memory, or the loopback NADI API. See `docs/KERNEL_DASHBOARD.md` for setup, formulas, URL rotation, and data retention.
 
 ## Owner controls
 

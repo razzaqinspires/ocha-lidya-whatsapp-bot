@@ -2,15 +2,23 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { getConfig } from '../core/config.js';
 
-const YT_DLP_BIN = String(process.env.YT_DLP_BIN || 'yt-dlp').trim() || 'yt-dlp';
-const FFMPEG_LOCATION = String(process.env.FFMPEG_LOCATION || '').trim();
+
 const DEFAULT_TIMEOUT_MS = 90_000;
 const DOWNLOAD_TIMEOUT_MS = 180_000;
 const MAX_JSON_BYTES = 12 * 1024 * 1024;
-const MAX_DOWNLOAD_MB = clampNumber(process.env.YOUTUBE_MAX_DOWNLOAD_MB, 48, 8, 128);
-const MAX_DURATION_SECONDS = clampNumber(process.env.YOUTUBE_MAX_DURATION_SECONDS, 1800, 30, 7200);
-const SEARCH_RESULTS = clampNumber(process.env.YOUTUBE_SEARCH_RESULTS, 5, 2, 8);
+function youtubeSettings() {
+  let stored = {};
+  try { stored = getConfig().youtube || {}; } catch {}
+  return {
+    ytDlpBin: String(stored.ytDlpBin || 'yt-dlp').trim() || 'yt-dlp',
+    ffmpegLocation: String(stored.ffmpegLocation || '').trim(),
+    maxDownloadMb: clampNumber(stored.maxDownloadMb, 48, 8, 128),
+    maxDurationSeconds: clampNumber(stored.maxDurationSeconds, 1800, 30, 7200),
+    searchResults: clampNumber(stored.searchResults, 5, 2, 8)
+  };
+}
 
 function clampNumber(value, fallback, min, max) {
   const number = Number(value);
@@ -48,7 +56,8 @@ export function getYouTubeVideoId(input) {
 
 function runYtDlp(args, { cwd, timeoutMs = DEFAULT_TIMEOUT_MS, maxOutputBytes = MAX_JSON_BYTES } = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn(YT_DLP_BIN, args, {
+    const { ytDlpBin } = youtubeSettings();
+    const child = spawn(ytDlpBin, args, {
       cwd,
       env: process.env,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -85,7 +94,7 @@ function runYtDlp(args, { cwd, timeoutMs = DEFAULT_TIMEOUT_MS, maxOutputBytes = 
     });
     child.once('error', error => {
       if (error.code === 'ENOENT') {
-        finish(new Error(`yt-dlp tidak ditemukan. Pasang yt-dlp di server atau atur YT_DLP_BIN. (${YT_DLP_BIN})`));
+        finish(new Error(`yt-dlp tidak ditemukan. Pasang yt-dlp di server atau atur youtube.ytDlpBin pada config. (${ytDlpBin})`));
       } else finish(error);
     });
     child.once('close', (code, signal) => {
@@ -188,10 +197,11 @@ export async function getYouTubeVideoInfo(input) {
   return result;
 }
 
-export async function searchYouTube(query, limit = SEARCH_RESULTS) {
+export async function searchYouTube(query, limit) {
   const cleanQuery = cleanText(query, 120);
   if (cleanQuery.length < 2) throw new Error('Masukkan kata kunci YouTube minimal 2 karakter.');
-  const count = clampNumber(limit, SEARCH_RESULTS, 1, 8);
+  const settings = youtubeSettings();
+  const count = clampNumber(limit, settings.searchResults, 1, 8);
   const result = await runYtDlp([
     '--dump-single-json', '--flat-playlist', '--skip-download', '--no-warnings', '--no-progress', '--no-cache-dir', `ytsearch${count}:${cleanQuery}`
   ], { timeoutMs: DEFAULT_TIMEOUT_MS });
@@ -210,9 +220,10 @@ export async function searchYouTube(query, limit = SEARCH_RESULTS) {
 }
 
 function validateDuration(info) {
+  const { maxDurationSeconds } = youtubeSettings();
   const duration = Number(info?.duration);
-  if (Number.isFinite(duration) && duration > MAX_DURATION_SECONDS) {
-    throw new Error(`Video terlalu panjang. Batas bot saat ini ${Math.floor(MAX_DURATION_SECONDS / 60)} menit.`);
+  if (Number.isFinite(duration) && duration > maxDurationSeconds) {
+    throw new Error(`Video terlalu panjang. Batas bot saat ini ${Math.floor(maxDurationSeconds / 60)} menit.`);
   }
 }
 
@@ -245,12 +256,14 @@ async function locateOutput(directory, extension) {
 async function readBoundedOutput(directory, extension) {
   const output = await locateOutput(directory, extension);
   if (!output) throw new Error(`File ${extension.toUpperCase()} tidak dihasilkan. Periksa ketersediaan FFmpeg/ffprobe dan dukungan format sumber.`);
-  const maxBytes = MAX_DOWNLOAD_MB * 1024 * 1024;
-  if (output.size > maxBytes) throw new Error(`Ukuran file melebihi batas ${MAX_DOWNLOAD_MB} MB. Pilih resolusi lebih rendah.`);
+  const { maxDownloadMb } = youtubeSettings();
+  const maxBytes = maxDownloadMb * 1024 * 1024;
+  if (output.size > maxBytes) throw new Error(`Ukuran file melebihi batas ${maxDownloadMb} MB. Pilih resolusi lebih rendah.`);
   return fs.readFile(output.path);
 }
 
 export async function downloadYouTubeMp3(inputUrl) {
+  const settings = youtubeSettings();
   const url = normalizeYouTubeUrl(inputUrl);
   const info = await getVideoInfo(url);
   validateDuration(info);
@@ -258,8 +271,8 @@ export async function downloadYouTubeMp3(inputUrl) {
   try {
     await runYtDlp([
       '--no-warnings', '--no-progress', '--no-part', '--no-mtime', '--no-cache-dir', '--no-playlist',
-      '--max-filesize', `${MAX_DOWNLOAD_MB}M`, '--match-filter', `duration <= ${MAX_DURATION_SECONDS}`,
-      ...(FFMPEG_LOCATION ? ['--ffmpeg-location', FFMPEG_LOCATION] : []),
+      '--max-filesize', `${settings.maxDownloadMb}M`, '--match-filter', `duration <= ${settings.maxDurationSeconds}`,
+      ...(settings.ffmpegLocation ? ['--ffmpeg-location', settings.ffmpegLocation] : []),
       '--extract-audio', '--audio-format', 'mp3', '--audio-quality', '192K',
       '--output', 'audio.%(ext)s', url
     ], { cwd: directory, timeoutMs: DOWNLOAD_TIMEOUT_MS, maxOutputBytes: 2 * 1024 * 1024 });
@@ -279,6 +292,7 @@ export async function downloadYouTubeMp3(inputUrl) {
 }
 
 export async function downloadYouTubeMp4(inputUrl, resolution = 'best') {
+  const settings = youtubeSettings();
   const url = normalizeYouTubeUrl(inputUrl);
   const quality = String(resolution || 'best').toLowerCase();
   if (quality !== 'best' && !/^\d{2,4}$/.test(quality)) throw new Error('Resolusi harus berupa angka seperti 360, 720, 1080 atau best.');
@@ -304,8 +318,8 @@ export async function downloadYouTubeMp4(inputUrl, resolution = 'best') {
   try {
     await runYtDlp([
       '--no-warnings', '--no-progress', '--no-part', '--no-mtime', '--no-cache-dir', '--no-playlist',
-      '--max-filesize', `${MAX_DOWNLOAD_MB}M`, '--match-filter', `duration <= ${MAX_DURATION_SECONDS}`,
-      ...(FFMPEG_LOCATION ? ['--ffmpeg-location', FFMPEG_LOCATION] : []),
+      '--max-filesize', `${settings.maxDownloadMb}M`, '--match-filter', `duration <= ${settings.maxDurationSeconds}`,
+      ...(settings.ffmpegLocation ? ['--ffmpeg-location', settings.ffmpegLocation] : []),
       '--format', format, '--merge-output-format', 'mp4', '--output', 'video.%(ext)s', url
     ], { cwd: directory, timeoutMs: DOWNLOAD_TIMEOUT_MS, maxOutputBytes: 2 * 1024 * 1024 });
     const buffer = await readBoundedOutput(directory, '.mp4');
@@ -365,4 +379,8 @@ export function formatViewCount(value) {
     : '—';
 }
 
-export const youtubeLimits = Object.freeze({ maxDownloadMb: MAX_DOWNLOAD_MB, maxDurationSeconds: MAX_DURATION_SECONDS, searchResults: SEARCH_RESULTS });
+export const youtubeLimits = Object.freeze({
+  get maxDownloadMb() { return youtubeSettings().maxDownloadMb; },
+  get maxDurationSeconds() { return youtubeSettings().maxDurationSeconds; },
+  get searchResults() { return youtubeSettings().searchResults; }
+});

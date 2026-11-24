@@ -1,4 +1,4 @@
-# Ocha Identity Kernel and Private User Vault — v1.10.25
+# Ocha Identity Kernel and Private User Vault — maintained for v1.10.33
 
 ## Scope: operational identity, not consciousness
 
@@ -38,7 +38,15 @@ data/roo/
 
 Private vault events use AES-256-GCM with a per-user key derived through HKDF-SHA256 from the root master key. Each journal row is sequenced and SHA-256 hash-chained. Search indexes are encrypted and rebuildable from authenticated journal data. Files use restrictive permissions (directories 0700, files 0600 where supported). The `projects` directory shares the exact normalized identity hash with the conversation vault.
 
-`OCHA_ROO_ROOT` changes the root directory. `OCHA_ROO_MASTER_KEY` may provide a 32-byte key as 64 hexadecimal characters; otherwise the application creates `.master-key` on first use. Back up the root and its master key together, store backups securely, and restrict access to the VPS account. Losing the key makes encrypted data unrecoverable. Exposing it compromises every vault encrypted under that key.
+`OCHA_ROO_ROOT` changes the root directory. `OCHA_ROO_MASTER_KEY` is an optional secret override, not a key obtained from GitHub, WhatsApp, or an AI provider. When it is unset/empty, the application creates a cryptographically random 32-byte key at `<OCHA_ROO_ROOT>/.master-key` (default `data/roo/.master-key`) on the first private-vault operation, with owner-only file permissions. This generated file is the master key; it should be backed up together with the entire `data/roo/` directory and kept out of Git, public archives, and shared chat.
+
+For the normal installation, leave `OCHA_ROO_MASTER_KEY=` empty in `.env`. No manual setup is required. If a deployment deliberately wants to inject the key from a secret manager instead of relying on the local file, generate 32 random bytes as 64 hex characters:
+
+```bash
+node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"
+```
+
+Copy that value into the private `.env` as `OCHA_ROO_MASTER_KEY=<64-hex-characters>` before the vault creates any encrypted records. Do not place it in `src/config.js` or the JSONL application config. Do not replace or rotate it after encrypted data exists unless you perform a separately designed, verified re-encryption migration: changing the key makes existing vault records unreadable. Losing the key makes encrypted data unrecoverable; exposing it compromises every vault encrypted under it.
 
 ## Complete archive versus model context
 

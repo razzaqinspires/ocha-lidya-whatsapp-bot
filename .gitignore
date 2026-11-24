@@ -54,6 +54,9 @@ data/roo/
 # NADI operational consciousness runtime state (never commit live state)
 data/consciousness/
 **/data/consciousness/
+# Public kernel telemetry and bearer-path dashboard token (runtime state)
+data/kernel/
+**/data/kernel/
 __pycache__/
 **/__pycache__/
 *.py[cod]

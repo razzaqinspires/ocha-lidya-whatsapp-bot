@@ -29,23 +29,41 @@ If you require real-time music inside a WhatsApp voice call, that is a separate 
 ## Server requirements
 
 - Node.js 20.18+ (already required by Ocha Lidya).
-- `yt-dlp` installed and available in `PATH`, or set `YT_DLP_BIN` to its executable path.
-- FFmpeg and ffprobe installed and available in `PATH`; set `FFMPEG_LOCATION` if they are installed in a non-standard directory.
+- `yt-dlp` installed and available in `PATH`, or set `youtube.ytDlpBin` in application configuration.
+- FFmpeg and ffprobe installed and available in `PATH`; set `youtube.ffmpegLocation` if they are installed in a non-standard directory.
 - Network access to YouTube and its media CDN.
 
 Install yt-dlp using its official installation instructions: <https://github.com/yt-dlp/yt-dlp#installation>. FFmpeg installation guidance is available at <https://ffmpeg.org/download.html>. A typical Python installation is `python3 -m pip install -U "yt-dlp[default]"`; install FFmpeg through the operating system package manager or the official FFmpeg download page.
 
-The command responds with an explicit missing-executable error when `yt-dlp` cannot be started. Installing Node dependencies alone does not install yt-dlp or FFmpeg.
+The command responds with an explicit missing-executable error when `yt-dlp` cannot be started. Installing Node dependencies alone does not install yt-dlp or FFmpeg. `.ytconfig` changes executable paths and safety limits only; it does not install those operating-system tools.
 
-## Resource limits and environment overrides
+## Application configuration and resource limits
 
-| Variable | Default | Purpose |
-|---|---:|---|
-| `YT_DLP_BIN` | `yt-dlp` | Executable path/name. |
-| `FFMPEG_LOCATION` | empty | Optional FFmpeg binary/directory location. |
-| `YOUTUBE_MAX_DOWNLOAD_MB` | `48` | Maximum accepted output file size (8–128 MB range). |
-| `YOUTUBE_MAX_DURATION_SECONDS` | `1800` | Maximum video duration for download/metadata selection (30–7,200 seconds range). |
-| `YOUTUBE_SEARCH_RESULTS` | `5` | Default search result count (2–8 range). |
+These non-secret values are stored under `youtube` by the application configuration facade, not in `.env`:
+
+```js
+youtube: {
+  ytDlpBin: 'yt-dlp',
+  ffmpegLocation: '',
+  maxDownloadMb: 48,
+  maxDurationSeconds: 1800,
+  searchResults: 5
+}
+```
+
+Owners can inspect and change the live persisted settings through WhatsApp:
+
+| Command | Purpose |
+|---|---|
+| `.ytconfig` | Show current settings and available options. |
+| `.ytconfig binary <path>` | Set the yt-dlp executable path. |
+| `.ytconfig ffmpeg <path\|clear>` | Set or clear the FFmpeg location override. |
+| `.ytconfig maxsize <8-128>` | Maximum accepted output size in MB. |
+| `.ytconfig maxduration <30-7200>` | Maximum video duration in seconds. |
+| `.ytconfig results <2-8>` | Default number of search results. |
+| `.ytconfig reset` | Restore the shipped defaults. |
+
+The same settings are initialized from `DEFAULTS.youtube` in `src/config.js` and persisted in the JSONL configuration database. Editing `.env` no longer changes these settings.
 
 Each search is bounded by a 90-second metadata timeout. Download jobs have a 180-second process timeout. Each individual download runs in its own temporary directory and is cleaned up after success/failure.
 
