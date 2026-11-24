@@ -34,3 +34,22 @@ The AI review is advisory and can be wrong. Confirmation is an accident-preventi
 Workload yang terdeteksi mencurigakan selalu membutuhkan konfirmasi eksplisit, termasuk ketika AI assessor memberi rekomendasi ALLOW. Jika provider utama Groq gagal atau limit habis, Ocha tidak berpindah provider. Ocha menggunakan pemeriksaan heuristik lokal sebagai informasi sementara dan tetap meminta owner membalas pesan peringatan dengan `CONFIRM <kode>` atau `CANCEL` dalam 120 detik. Konfirmasi terikat pada chat, pengirim, pesan peringatan, runtime, hash kode, dan hanya dapat dipakai sekali. Jalur ini tidak membuka hard-block untuk perintah destruktif tingkat OS/disk. Konfirmasi eksekusi berisiko hanya tersedia di chat pribadi.
 
 Penting: pemeriksaan lokal bukan pengganti analisis AI penuh. JavaScript eval berjalan dalam proses bot dengan kapabilitas runtime yang tersedia; konfirmasi hanya mengizinkan eksekusi kode yang dipahami owner, bukan menjadikannya sandbox aman.
+
+
+## v1.10.29 — owner-controlled workload warning and CTA Copy
+
+The owner can control workload warning delivery and AI semantic assessment independently:
+
+- `.master warning status` — inspect the warning mode.
+- `.master warning on` / `.master warning true` — enable compact warning cards with CTA Copy and action buttons.
+- `.master warning compact` — show a concise risk summary.
+- `.master warning detailed` — show impact and safer-alternative details.
+- `.master warning off` / `.master warning false` — suppress all non-critical workload warning messages. Suspicious workloads are still blocked silently and recorded; this is not an execution bypass.
+- `.master review status|on|off|true|false` — toggle the AI semantic assessor independently. Turning it off does not disable local heuristics, mandatory confirmation for flagged work, or critical hard-blocks.
+- `.master eval off` — disables the JavaScript runner itself.
+
+There is no static “eval template” switch. The warning text is generated at runtime. `.master review off` disables the AI assessment request; `.master warning off` suppresses its notification. Neither setting grants implicit execution approval.
+
+Warnings in compact and detailed modes are sent using a native-flow `cta_copy` button that copies the exact one-time `CONFIRM CODE` phrase, plus quick-reply buttons for explicit confirmation or cancellation. If native-flow sending fails, a text fallback is used. Confirmation stays bound to the owner sender, chat, code hash, warning message and 120-second TTL.
+
+The workload classifier no longer treats every `sock.relayMessage()` or `sock.sendMessage()` call as inherently suspicious. A send call explicitly scoped to `m.chat` in the verified owner's private chat is considered a bounded current-chat action. Arbitrary recipients and group-context sends remain flagged. Other suspicious APIs, destructive patterns, and host-wide hard-blocks are not relaxed.

@@ -50,3 +50,10 @@ instances/
 # Encrypted per-user memory vault and its master key
 data/roo/
 **/data/roo/
+
+# NADI operational consciousness runtime state (never commit live state)
+data/consciousness/
+**/data/consciousness/
+__pycache__/
+**/__pycache__/
+*.py[cod]

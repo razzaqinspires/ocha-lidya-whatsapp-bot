@@ -38,11 +38,11 @@ const SUSPICIOUS = [
   /\b(base64\s+-d|openssl\s+enc)\b/i,
   /\b(appendRecord|updateConfig|replaceConfig|logout|end)\s*\(/i,
   /\b(process\.env|process\.getBuiltinModule|process\.memoryUsage|authState|creds\.me)\b/i,
-  /\bsock\.(?:relayMessage|sendMessage|end|logout)\s*\(/i,
+  /\bsock\.(?:end|logout)\s*\(/i,
   /\brequire\s*\(/i
 ];
 
-export function inspectWorkload(runtime, source) {
+export function inspectWorkload(runtime, source, context = {}) {
   const code = String(source || '').slice(0, MAX_SOURCE_CHARS);
   if (HARD_BLOCK.some(pattern => pattern.test(code))) {
     return { level: 'critical', score: 100, suspicious: true, hardBlock: true, reasons: ['Pola perintah berpotensi merusak sistem operasi, disk, atau menghentikan host secara luas.'] };
@@ -51,6 +51,12 @@ export function inspectWorkload(runtime, source) {
   const destructive = HIGH_RISK.some(pattern => pattern.test(code));
   if (destructive) reasons.push('Operasi penghapusan, reset, overwrite, atau perubahan data berskala besar terdeteksi.');
   if (SUSPICIOUS.some(pattern => pattern.test(code))) reasons.push('Akses proses, filesystem, konfigurasi, atau eksekusi dinamis terdeteksi.');
+  const usesWhatsAppSendApi = /\bsock\.(?:relayMessage|sendMessage)\s*\(/i.test(code);
+  const scopedToCurrentPrivateChat = Boolean(context.privateChat)
+    && /\bsock\.(?:relayMessage|sendMessage)\s*\(\s*m\.chat\s*,/i.test(code);
+  if (usesWhatsAppSendApi && !scopedToCurrentPrivateChat) {
+    reasons.push('Pengiriman pesan melalui socket tidak dibatasi secara statis ke DM owner yang sedang aktif.');
+  }
   if (runtime === '$' && /[;&|`\n]/.test(code) && /(rm|mv|cp|find|curl|wget|chmod|chown|git|docker|kill|dd|mkfs)/i.test(code)) {
     reasons.push('Rangkaian shell menggabungkan beberapa operasi atau utilitas sistem.');
   }

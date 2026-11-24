@@ -8,6 +8,8 @@ const runners = {
 };
 
 function statusText(security) {
+  const warningMode = security.masterWorkloadWarningMode || 'compact';
+  const reviewEnabled = security.masterWorkloadReviewEnabled !== false;
   const lines = [
     '╭─ OCHA MASTER CONSOLE ─────────────────',
     '│ CONTROL PANEL · OWNER ONLY',
@@ -18,14 +20,23 @@ function statusText(security) {
     lines.push(`│ ${runner.label.padEnd(17)} ${state.padEnd(5)}  ${runner.token}`);
   }
   lines.push(
+    '├─ WORKLOAD GUARD',
+    `│ Warning          : ${warningMode.toUpperCase()}`,
+    `│ AI semantic review: ${reviewEnabled ? 'ON' : 'OFF · local heuristic only'}`,
+    '│ Hard-block        : ALWAYS ON',
+    '│ Owner confirmation: mandatory for flagged work',
     '├─ COMMANDS',
     '│ .master status',
     '│ .master eval on/off',
     '│ .master cli on/off',
     '│ .master python on/off',
     '│ .master golang on/off',
+    '│ .master warning on/off/true/false/compact/detailed/status',
+    '│ .master review on/off/true/false/status',
     '├─ NOTES',
-    '│ Each runner is independent. No global exec switch.',
+    '│ warning off = suppress notices and silently block flagged code.',
+    '│ review off = disable AI assessment, keep local guard + confirmation.',
+    '│ eval off = disable the JavaScript runner itself.',
     '│ Legacy .master exec on/off is an alias for CLI.',
     '╰──────────────────────────────────────'
   );
@@ -33,16 +44,41 @@ function statusText(security) {
 }
 
 export default {
-  name: 'master', aliases: ['masterconfig'], category: 'owner', ownerOnly: true, privateOnly: true, usage: '[status|cli|python|golang] [on|off]',
-  description: 'Manage independent owner-only developer runners',
+  name: 'master', aliases: ['masterconfig'], category: 'owner', ownerOnly: true, privateOnly: true,
+  usage: '[status|eval|cli|python|golang|warning|review] [on|off|true|false|compact|detailed|status]',
+  description: 'Manage owner-only developer runners and workload review policy',
   async execute({ m, args }) {
-    const [requestedFeature, value] = args;
+    const [requestedFeature, requestedValue] = args;
     const feature = String(requestedFeature || 'status').toLowerCase();
-    const canonicalFeature = feature === 'exec' ? 'cli' : feature;
-    if (feature === 'status' || feature === 'help') return m.reply(statusText(getConfig().security));
+    const rawValue = String(requestedValue || '').toLowerCase();
+    const value = rawValue === 'true' ? 'on' : rawValue === 'false' ? 'off' : rawValue;
+    const canonicalFeature = feature === 'exec' ? 'cli' : feature === 'reminder' ? 'warning' : ['assessor', 'assessment'].includes(feature) ? 'review' : feature;
+    const security = getConfig().security;
+    if (feature === 'status' || feature === 'help') return m.reply(statusText(security));
+
+    if (canonicalFeature === 'warning') {
+      if (!['status', 'on', 'off', 'compact', 'detailed'].includes(value)) {
+        return m.reply('Gunakan .master warning status|on|off|compact|detailed. Mode off menyembunyikan notifikasi dan memblokir workload berisiko secara diam-diam.');
+      }
+      if (value === 'status') return m.reply(`Workload warning: ${(security.masterWorkloadWarningMode || 'compact').toUpperCase()}\nPilihan: on/true, off/false, compact, detailed.`);
+      const mode = value === 'on' ? 'compact' : value;
+      await updateConfig(config => { config.security.masterWorkloadWarningMode = mode; }, { actor: m.sender, reason: `master workload warning ${mode}` });
+      const description = mode === 'off'
+        ? 'Notifikasi peringatan dimatikan. Workload mencurigakan tidak akan dijalankan dan akan diblokir tanpa balasan.'
+        : `Peringatan workload aktif dalam mode ${mode}. CTA Copy dan tombol tindakan tersedia untuk konfirmasi owner.`;
+      return m.reply(description);
+    }
+
+    if (canonicalFeature === 'review') {
+      if (!['status', 'on', 'off'].includes(value)) return m.reply('Gunakan .master review status|on|off|true|false. Mode off mematikan AI semantic review, bukan pemeriksaan lokal.');
+      if (value === 'status') return m.reply(`AI semantic review: ${security.masterWorkloadReviewEnabled === false ? 'OFF' : 'ON'}\nLocal heuristic dan hard-block: ALWAYS ON.`);
+      const enabled = value === 'on';
+      await updateConfig(config => { config.security.masterWorkloadReviewEnabled = enabled; }, { actor: m.sender, reason: `master workload AI review ${value}` });
+      return m.reply(`AI semantic review: ${enabled ? 'ON' : 'OFF'}. ${enabled ? 'Pemeriksaan AI dan lokal aktif.' : 'AI tidak dipanggil; pemeriksaan lokal dan konfirmasi untuk kode berisiko tetap aktif.'}`);
+    }
 
     const runner = runners[canonicalFeature];
-    if (!runner || !['on', 'off'].includes(String(value || '').toLowerCase())) {
+    if (!runner || !['on', 'off'].includes(value)) {
       return m.reply([
         'Perintah tidak valid.',
         'Gunakan:',
@@ -51,15 +87,16 @@ export default {
         '.master cli on/off',
         '.master python on/off',
         '.master golang on/off',
+        '.master warning on/off/true/false/compact/detailed/status',
+        '.master review on/off/true/false/status',
         '',
-        'Catatan: exec adalah alias lama untuk cli.'
+        'Catatan: eval off mematikan runner JavaScript. review off hanya mematikan AI assessor. exec adalah alias lama untuk cli.'
       ].join('\n'));
     }
 
-    const enabled = String(value).toLowerCase() === 'on';
+    const enabled = value === 'on';
     await updateConfig(config => {
       config.security[runner.key] = enabled;
-      // The old global exec gate is intentionally removed in schema v11.
       delete config.security.masterExecEnabled;
     }, { actor: m.sender, reason: `master ${canonicalFeature} ${value}` });
 

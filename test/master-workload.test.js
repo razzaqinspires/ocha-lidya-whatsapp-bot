@@ -56,3 +56,46 @@ test('Ocha only auto-approves explicit low/medium ALLOW assessments', () => {
   assert.equal(shouldAutoApproveAssessment({ severity: 'low', recommendation: 'REVIEW' }), false);
 });
 
+
+
+test('owner private-chat relayMessage to m.chat is not misclassified as a generic workload risk', () => {
+  const source = 'await sock.relayMessage(m.chat, { interactiveMessage: payload }, { additionalNodes: nodes });';
+  const result = inspectWorkload('=>', source, { privateChat: true });
+  assert.equal(result.suspicious, false);
+  assert.equal(result.requiresConfirmation, false);
+  assert.equal(result.hardBlock, false);
+});
+
+test('message sending to an arbitrary target still requires review', () => {
+  const source = 'await sock.relayMessage(targetJid, payload, {});';
+  const result = inspectWorkload('=>', source, { privateChat: true });
+  assert.equal(result.suspicious, true);
+  assert.equal(result.requiresConfirmation, true);
+});
+
+test('message sending from a group context is not covered by the private-chat exception', () => {
+  const source = 'await sock.sendMessage(m.chat, payload);';
+  const result = inspectWorkload('=>', source, { privateChat: false });
+  assert.equal(result.suspicious, true);
+  assert.equal(result.requiresConfirmation, true);
+});
+
+test('owner private-chat native-flow commerce relay payload is treated as a scoped send action', () => {
+  const source = `await sock.relayMessage(m.chat, {
+    messageContextInfo: { deviceListMetadata: {}, deviceListMetadataVersion: 2 },
+    interactiveMessage: {
+      header: { title: "Commerce & Checkout", hasMediaAttachment: false },
+      body: { text: "Multi-Product Message, Review & Pay, dan Order Details." },
+      footer: { text: "Ocha Lidya AI" },
+      nativeFlowMessage: { buttons: [
+        { name: "mpm", buttonParamsJson: JSON.stringify({ product_list_info: { title: "Katalog Lumora", product_sections: [{ title: "Aromatherapy", products: [{ product_retailer_id: "LUM-01" }] }], business_owner_jid: "6283193905842@s.whatsapp.net" } }) },
+        { name: "review_and_pay", buttonParamsJson: JSON.stringify({ currency: "IDR", total_amount: { value: 7500000, offset: 100 }, reference_id: "INV-2026-01", type: "physical-goods", order: { status: "pending", items: [{ retailer_id: "LUM-01", name: "Lumora Candle", amount: { value: 7500000, offset: 100 }, quantity: 1 }], subtotal: { value: 7500000, offset: 100 } } }) },
+        { name: "order_details", buttonParamsJson: JSON.stringify({ reference_id: "ORD-2026-01", type: "physical-goods", payment_type: "upi", payment_configuration: "merchant_config", currency: "IDR", total_amount: { value: 7500000, offset: 100 }, order: { status: "pending", items: [{ retailer_id: "LUM-01", name: "Lumora Candle", amount: { value: 7500000, offset: 100 }, quantity: 1 }], subtotal: { value: 7500000, offset: 100 } } }) }
+      ], messageParamsJson: "{}" }
+    }
+  }, { additionalNodes: [{ tag: "biz", attrs: {}, content: [{ tag: "interactive", attrs: { type: "native_flow", v: "1" }, content: [{ tag: "native_flow", attrs: { v: "9", name: "mixed" } }] }] }] })`;
+  const result = inspectWorkload('=>', source, { privateChat: true });
+  assert.equal(result.hardBlock, false);
+  assert.equal(result.suspicious, false);
+  assert.equal(result.requiresConfirmation, false);
+});

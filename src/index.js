@@ -33,6 +33,7 @@ import { stopNexoraBootstrapScheduler, runNexoraBootstrap } from './runtime/boot
 import { startRentalScheduler, stopRentalScheduler } from './rental/runtime.js';
 import { handleGroupWelcome } from './core/group-tools.js';
 import { getTenantStatus } from './rental/service.js';
+import { startConsciousnessRuntime, stopConsciousnessRuntime } from './runtime/consciousness-runtime.js';
 
 setOutgoingMessageObserver(observeOutgoingMessage);
 
@@ -63,6 +64,12 @@ applyHostPreflightResult(hostPreflightResult || {});
 await initializeContacts();
 await initializeGroupMetadata();
 await initializeProviderKeys();
+try {
+  const consciousness = await startConsciousnessRuntime({ logger });
+  logger.info({ ready: consciousness.ready, heartbeatMs: consciousness.heartbeatMs }, 'Ocha operational self-state / NADI runtime initialized');
+} catch (error) {
+  logger.warn({ err: error }, 'Ocha NADI unavailable; standard Nexora AI service will continue');
+}
 try {
   const catalog = await startModelCatalogScheduler({ refreshAtStartup: true });
   logger.info({ active: catalog.active, mode: catalog.mode, checkedAt: catalog.checkedAt, nextRunAt: catalog.nextRunAt, intervalHours: catalog.intervalHours }, 'In-process autonomous AI model catalog scheduler active');
@@ -214,6 +221,10 @@ async function requestControlledRestart(batch = {}) {
       await once(child, 'spawn');
       const handoff = await prepareCodeLabHandoff(child.pid);
       await closeSocketForHandoff();
+      // NADI persists and owns a single global operational ledger. Stop the
+      // old sidecar before releasing the runtime lock so the replacement can
+      // never write the same ledger concurrently.
+      await stopConsciousnessRuntime();
       await runtimeLock.release();
       logger.warn({ oldPid: process.pid, replacementPid: child.pid, files, tunnelPreserved: Boolean(handoff.preserved), tunnelPid: handoff.tunnelPid || null }, 'Runtime handoff committed; old process releases its lock before replacement connects');
       child.unref();
@@ -234,6 +245,8 @@ async function requestControlledRestart(batch = {}) {
       await cancelCodeLabHandoff().catch(rollbackError => {
         logger.error({ err: rollbackError }, 'Code Lab handoff rollback requires attention');
       });
+      try { await startConsciousnessRuntime({ logger }); }
+      catch (restartError) { logger.warn({ err: restartError }, 'NADI recovery after failed source handoff did not complete'); }
       restarting = false;
       restartBatchInFlight = false;
       logger.error({ err: error, files }, 'Controlled source update handoff failed; previous runtime ownership was restored where verifiable');
@@ -513,6 +526,8 @@ async function shutdownRuntime(signal, exitCode = 0) {
   stopModelCatalogScheduler();
   stopRentalScheduler();
   stopNexoraBootstrapScheduler();
+  try { await stopConsciousnessRuntime(); }
+  catch (error) { logger.warn({ message: error.message }, 'NADI shutdown cleanup failed'); }
   try { await sourceWatcher.close(); } catch {}
   try { await autoGitSync.close(); } catch {}
   try { await stopCodeLab(); }

@@ -6,7 +6,7 @@
 import { initializeDatabase, appendRecord, getRecords, getLatestConfigRecord, configureDatabase } from './core/database.js';
 
 const DEFAULTS = Object.freeze({
-  schemaVersion: 34,
+  schemaVersion: 35,
   bot: { name: 'Ocha Lidya', aliases: ['Ocha', 'Lidya'], owner: '6283193905842', ownerName: 'Arifi Razzaq', creatorName: 'Arifi Razzaq', organization: 'Razzaq Ventures', publicCreatorDisclosure: true, expectedNumber: '6282177461231' },
   whatsapp: { authMode: 'pairing', pairingNumber: '6282177461231', browserName: 'Chrome', sessionDir: 'sessions/ocha-lidya', recoverInvalidSession: true, connectTimeoutMs: 60000, queryTimeoutMs: 60000, keepAliveIntervalMs: 25000 },
   logging: { level: 'info', color: 'auto', timeZone: 'Asia/Jakarta' },
@@ -26,7 +26,9 @@ const DEFAULTS = Object.freeze({
     masterEvalEnabled: false,
     masterCliEnabled: false,
     masterPythonEnabled: false,
-    masterGolangEnabled: false
+    masterGolangEnabled: false,
+    masterWorkloadWarningMode: 'compact',
+    masterWorkloadReviewEnabled: true
   },
   limits: { messageMaxChars: 12000, pluginTimeoutMs: 15000, masterTimeoutMs: 8000, masterMaxOutput: 12000 },
   database: {
@@ -424,10 +426,29 @@ export async function loadConfig() {
       reason: 'v1.10.25 expanded adaptive conversation and memory retrieval context'
     });
   }
+  // v1.10.29 schema v35: controllable owner workload-warning UX and AI assessment.
+  // Turning notifications off never disables static hard-blocks or the local risk gate.
+  if (activeConfig.schemaVersion < 35) {
+    activeConfig.schemaVersion = 35;
+    activeConfig.security = { ...DEFAULTS.security, ...(activeConfig.security || {}) };
+    if (!['compact', 'detailed', 'off'].includes(activeConfig.security.masterWorkloadWarningMode)) {
+      activeConfig.security.masterWorkloadWarningMode = DEFAULTS.security.masterWorkloadWarningMode;
+    }
+    if (typeof activeConfig.security.masterWorkloadReviewEnabled !== 'boolean') {
+      activeConfig.security.masterWorkloadReviewEnabled = DEFAULTS.security.masterWorkloadReviewEnabled;
+    }
+    await appendRecord('config.replace', {
+      config: activeConfig,
+      changedBy: 'system:migration',
+      reason: 'v1.10.29 owner workload warning controls and AI review switch'
+    });
+  }
   activeConfig.menu = merge(DEFAULTS.menu, activeConfig.menu || {});
   activeConfig.commandGuard = merge(DEFAULTS.commandGuard, activeConfig.commandGuard || {});
   activeConfig.security = { ...DEFAULTS.security, ...(activeConfig.security || {}) };
   delete activeConfig.security.masterExecEnabled;
+  if (!['compact', 'detailed', 'off'].includes(activeConfig.security.masterWorkloadWarningMode)) activeConfig.security.masterWorkloadWarningMode = DEFAULTS.security.masterWorkloadWarningMode;
+  if (typeof activeConfig.security.masterWorkloadReviewEnabled !== 'boolean') activeConfig.security.masterWorkloadReviewEnabled = DEFAULTS.security.masterWorkloadReviewEnabled;
   activeConfig.features = { ...DEFAULTS.features, ...(activeConfig.features || {}) };
   activeConfig.groupMetadata = { ...DEFAULTS.groupMetadata, ...(activeConfig.groupMetadata || {}) };
   activeConfig.codeLab = { ...DEFAULTS.codeLab, ...(activeConfig.codeLab || {}) };
@@ -467,6 +488,8 @@ export async function replaceConfig(next, metadata = {}) {
 
 function validateConfig(c) {
   if (!['public', 'self'].includes(c.mode)) throw new Error('mode harus public atau self');
+  if (!['compact', 'detailed', 'off'].includes(c.security?.masterWorkloadWarningMode)) throw new Error('security.masterWorkloadWarningMode harus compact, detailed, atau off');
+  if (typeof c.security?.masterWorkloadReviewEnabled !== 'boolean') throw new Error('security.masterWorkloadReviewEnabled harus boolean');
   if (typeof c.ui?.buttonsEnabled !== 'boolean') throw new Error('ui.buttonsEnabled harus boolean');
   if (typeof c.ui?.fullButton?.enabled !== 'boolean') throw new Error('ui.fullButton.enabled harus boolean');
   if (c.ui?.fullButton?.strategy !== 'adaptive') throw new Error('ui.fullButton.strategy harus adaptive');

@@ -1,6 +1,10 @@
 # Ocha Lidya WhatsApp Bot
 
-Ocha Lidya is a modular WhatsApp automation framework built with native Node.js ESM and `@whiskeysockets/baileys`. The project separates WhatsApp transport, message serialization, command dispatch, plugin execution, persistent configuration, and durable JSONL storage.
+## NADI external operational-state component (v1.10.31)
+
+Ocha Lidya and AC-Kernel NADI are now separate repositories. The bot keeps only the Node.js HTTP integration and a secure GitHub component loader; NADI's Python source is downloaded to an external cache (`~/.ocha/components/nadi/`) and is not bundled under the Ocha source tree. The connection uses Node's built-in `fetch` and a loopback HTTP sidecar. NADI owns its managed heartbeat; the bot reads operational telemetry and adds it to the existing Nexora prompt without creating a second LLM provider chain or duplicating API-key handling.
+
+After the NADI repository is uploaded, set `OCHA_NADI_REPO_URL` and `OCHA_NADI_REF`. Prefer a stable Git tag or commit. Optional `OCHA_NADI_SHA256` pins the archive checksum. `OCHA_NADI_UPDATE=1` refreshes an installed ref. See `docs/NADI_RUNTIME.md` for the component loader, lifecycle, API boundary, and persistent-state rules. Until the repository URL is configured, the rest of Ocha remains fully operational with NADI reported as unavailable.
 
 ## Adaptive conversation intelligence, stateful games, and feature-request workflow (v1.10.28)
 
@@ -95,9 +99,10 @@ For an existing installation, v1.5.0 through v1.7.1 perform one-time configurati
 
 - Node.js 20.18 or later.
 - npm.
+- Python 3.10+ for the external NADI component only (optional for the main WhatsApp bot).
 - A dedicated WhatsApp account for the bot.
 - Writable persistent storage for `data/` and `sessions/`.
-- Node.js 20.18+ and npm are the only runtime prerequisites for invoking `npm start`.
+- Node.js 20.18+ and npm run the main bot; Python 3.10+ runs the separately downloaded NADI sidecar. If NADI or Python is unavailable, the WhatsApp bot remains available without NADI.
 - On supported Linux systems, `npm start` automatically checks/provisions Bash, Git, Python 3, Go, Docker/Podman, runtime images, and Cloudflared when a supported package manager and required non-interactive privileges are available.
 - A host that blocks container namespaces, cgroups, netlink, or storage drivers cannot be made container-capable by application code. Code Lab reports that exact host limitation and keeps Python/Node container execution fail-closed; WhatsApp and AI continue.
 
@@ -742,3 +747,8 @@ See `docs/RENTAL_100_FEATURE_CATALOG.md` for the distinction between implemented
 ## Tic-Tac-Toe game
 
 Private chat: `.ttt mulai [x|o]`, then send a position `1`–`9`, or use `.ttt status`, `.ttt menyerah`, and `.ttt ulang`. Natural invitations such as `main tictactoe yuk` are routed to the same persisted game session. Game state is stored in the player's encrypted User Vault; group play is not enabled.
+
+
+## v1.10.29 — Master Console controls
+
+Owner-only `.master warning` controls compact/detailed/off warning delivery, `.master review` toggles AI semantic assessment independently, and workload warnings use native-flow CTA Copy plus confirm/cancel actions. A private `sock.relayMessage(m.chat, ...)` or `sock.sendMessage(m.chat, ...)` operation is no longer blanket-flagged; arbitrary targets and group contexts remain reviewed.

@@ -109,7 +109,8 @@ async function runJs(sock, m, source, returnMode) {
   const require = createRequire(import.meta.url);
   const ctx = { sock, m, message: m, config, logger, db: database, fs, path, os, crypto, childProcess, process, Buffer, require, importModule: specifier => import(specifier) };
   const context = vm.createContext({ ...ctx, ctx, console: safeConsole, Buffer, process, require, setTimeout, clearTimeout, setInterval, clearInterval, queueMicrotask, fetch, URL, URLSearchParams, AbortController, TextEncoder, TextDecoder, structuredClone });
-  const body = returnMode && !/\breturn\b/.test(source) ? `return (${source});` : source;
+  const expressionSource = String(source).trim().replace(/;\s*$/, '');
+  const body = returnMode && !/\breturn\b/.test(source) ? `return (${expressionSource});` : source;
   const wrapped = `(async()=>{ ${body} })()`;
   try {
     const script = new vm.Script(wrapped, { filename: 'ocha-owner-eval.js' });
@@ -161,21 +162,67 @@ const pendingWarnings = new Map();
 const WARNING_TTL_MS = 120_000;
 const MAX_PENDING_WARNINGS = 100;
 
-function formatAssessment(runtime, heuristic, assessment, code, { localFallback = false } = {}) {
-  const impacts = assessment?.impacts?.length ? assessment.impacts.map((item, index) => `${index + 1}. ${item}`).join('\n') : heuristic.reasons.join('\n');
+function formatAssessment(runtime, heuristic, assessment, code, { localFallback = false, mode = 'compact' } = {}) {
+  const impacts = assessment?.impacts?.length
+    ? assessment.impacts.map((item, index) => `${index + 1}. ${item}`).join('\n')
+    : heuristic.reasons.join('\n');
+  if (mode !== 'detailed') {
+    return [
+      'OCHA MASTER · WORKLOAD REVIEW',
+      `Runtime: ${runtime} · Risiko: ${(assessment?.severity || heuristic.level).toUpperCase()}`,
+      `Review: ${localFallback ? 'lokal' : assessment ? `${assessment.provider} · ${assessment.latencyMs} ms` : 'tidak tersedia'}`,
+      assessment?.summary || 'Pola berisiko terdeteksi. Periksa target sebelum melanjutkan.',
+      'Konfirmasi hanya berlaku untuk kode ini, pengirim ini, dan 120 detik.',
+      'Salin konfirmasi atau pilih tombol yang tersedia.'
+    ].join('\n');
+  }
   return [
     '╭─ OCHA WORKLOAD WARNING ─────────────────',
     `│ Runtime   : ${runtime}`,
     `│ Risk      : ${(assessment?.severity || heuristic.level).toUpperCase()}`,
-    `│ AI review : ${localFallback ? 'Tidak tersedia · pemeriksaan lokal' : assessment ? `${assessment.provider} · ${assessment.latencyMs} ms` : 'Tidak tersedia'}`, 
+    `│ AI review : ${localFallback ? 'Lokal · AI review nonaktif/tidak tersedia' : assessment ? `${assessment.provider} · ${assessment.latencyMs} ms` : 'Tidak tersedia'}`,
     '├─ PENILAIAN OCHA', assessment?.summary || 'Pola berisiko terdeteksi oleh WorkloadTracker.',
     '├─ POTENSI DAMPAK', impacts || 'Periksa kode dan target sebelum melanjutkan.',
     '├─ SARAN LEBIH AMAN', assessment?.saferAlternative || 'Periksa target, lakukan backup, dan uji pada salinan data.',
-    '├─ KONFIRMASI OWNER', `Balas pesan peringatan ini dengan: CONFIRM ${code}`,
-    'Atau balas: CANCEL', 'Konfirmasi berlaku 120 detik, satu kali, hanya untuk pengirim dan kode ini.',
-    'PERINGATAN: JavaScript eval berjalan di proses bot dan dapat menggunakan kapabilitas runtime yang tersedia. Jangan konfirmasi kode yang tidak kamu pahami.',
+    '├─ KONFIRMASI OWNER', `Tombol salin menyalin: CONFIRM ${code}`,
+    'Tersedia juga tombol konfirmasi dan pembatalan.',
+    'Konfirmasi berlaku 120 detik, satu kali, dan hanya untuk pengirim ini.',
+    'PERINGATAN: JavaScript eval berjalan dalam proses bot dengan kapabilitas runtime yang tersedia. vm bukan sandbox keamanan.',
     '╰────────────────────────────────────────'
   ].join('\n');
+}
+
+function warningButtons(code) {
+  return [
+    {
+      name: 'cta_copy',
+      buttonParamsJson: JSON.stringify({ display_text: 'Salin Konfirmasi', copy_code: `CONFIRM ${code}` })
+    },
+    {
+      name: 'quick_reply',
+      buttonParamsJson: JSON.stringify({ display_text: 'Konfirmasi & Jalankan', id: `CONFIRM ${code}` })
+    },
+    {
+      name: 'quick_reply',
+      buttonParamsJson: JSON.stringify({ display_text: 'Batalkan', id: 'CANCEL' })
+    }
+  ];
+}
+
+async function sendWorkloadWarning(sock, m, text, code) {
+  if (typeof sock?.sendInteractive === 'function') {
+    try {
+      return await sock.sendInteractive(m.chat, {
+        title: 'OCHA MASTER · SECURITY REVIEW',
+        body: text,
+        footer: 'Owner-only · satu kali · berlaku 120 detik',
+        buttons: warningButtons(code)
+      }, m);
+    } catch (error) {
+      logger.warn({ err: error }, 'Native-flow workload warning failed; using text fallback');
+    }
+  }
+  return m.reply(`${text}\n\nCONFIRM ${code}\nCANCEL`);
 }
 
 async function requestRiskConfirmation(sock, m, body, token, command, heuristic) {
@@ -185,61 +232,70 @@ async function requestRiskConfirmation(sock, m, body, token, command, heuristic)
       'Perintah yang dapat merusak host/OS secara luas tidak dapat dibuka melalui konfirmasi chat.',
       '╰──────────────────────────────────────'].join('\n'));
   }
+
+  const security = getConfig().security || {};
+  const warningMode = ['compact', 'detailed', 'off'].includes(security.masterWorkloadWarningMode)
+    ? security.masterWorkloadWarningMode
+    : 'compact';
+  const commandHash = crypto.createHash('sha256').update(`${token}\0${command}`).digest('hex');
+
+  // Warning OFF suppresses notifications, not the risk gate. Suspicious work is
+  // recorded and denied silently; it is never converted into implicit approval.
+  if (warningMode === 'off') {
+    logger.warn({ runtime: token, commandHash, sender: m.sender, risk: heuristic.level, warningMode }, 'Suspicious master workload silently blocked because warnings are disabled');
+    await database.appendRecord('master.workload.suppressed', {
+      runtime: token,
+      commandHash,
+      sender: String(m.sender || '').slice(0, 80),
+      risk: heuristic.level,
+      reasons: heuristic.reasons,
+      action: 'blocked-silently',
+      timestamp: new Date().toISOString()
+    }, { source: 'master-workload-guard' });
+    return;
+  }
+
   let assessment;
-  try {
-    assessment = await assessWorkloadWithOcha(token === '$' ? 'CLI SHELL' : token === '>>' ? 'PYTHON' : token === '>>>' ? 'GO' : 'JAVASCRIPT EVAL', command);
-  } catch (error) {
-    // Single-provider policy: never switch vendors. When Groq is exhausted,
-    // use deterministic local heuristics and require an explicit owner reply.
-    // This is NOT an automatic approval and never overrides hard blocks.
-    logger.warn({ err: error, runtime: token, localRisk: heuristic.level, hardBlock: heuristic.hardBlock }, 'Ocha Workload AI assessment unavailable; using local review with mandatory owner confirmation');
+  let localFallback = false;
+  if (security.masterWorkloadReviewEnabled !== false) {
+    try {
+      assessment = await assessWorkloadWithOcha(token === '$' ? 'CLI SHELL' : token === '>>' ? 'PYTHON' : token === '>>>' ? 'GO' : 'JAVASCRIPT EVAL', command);
+    } catch (error) {
+      logger.warn({ err: error, runtime: token, localRisk: heuristic.level, hardBlock: heuristic.hardBlock }, 'Ocha Workload AI assessment unavailable; using local review with mandatory owner confirmation');
+      localFallback = true;
+      assessment = {
+        severity: heuristic.level === 'low' ? 'medium' : heuristic.level,
+        recommendation: 'REVIEW',
+        summary: 'AI review tidak tersedia. Pemeriksaan lokal digunakan; hasil ini bukan audit semantik lengkap.',
+        impacts: heuristic.reasons.length ? heuristic.reasons : ['Kode akan dijalankan dengan kapabilitas runtime Master Console.'],
+        saferAlternative: 'Periksa kode dan target secara manual. Jangan lanjutkan jika ada akses proses, filesystem, jaringan, konfigurasi, kredensial, atau pengiriman pesan yang tidak diperlukan.',
+        provider: 'LOCAL HEURISTIC', latencyMs: 0
+      };
+    }
+  } else {
+    localFallback = true;
     assessment = {
       severity: heuristic.level === 'low' ? 'medium' : heuristic.level,
       recommendation: 'REVIEW',
-      summary: 'Penilaian AI tidak tersedia karena provider utama sedang gagal atau limit habis. Ocha menggunakan pemeriksaan pola lokal; hasil ini bukan audit semantik lengkap.',
-      impacts: heuristic.reasons.length ? heuristic.reasons : ['Kode akan dijalankan dengan kapabilitas runtime yang diaktifkan untuk Master Console.'],
-      saferAlternative: 'Periksa kode dan target secara manual. Batalkan jika ada akses proses, filesystem, jaringan, konfigurasi, kredensial, atau pengiriman pesan yang tidak diperlukan.',
+      summary: 'AI semantic review dinonaktifkan oleh owner. Pemeriksaan pola lokal tetap aktif.',
+      impacts: heuristic.reasons,
+      saferAlternative: 'Gunakan target yang spesifik, periksa kode, dan pertahankan perubahan sekecil mungkin.',
       provider: 'LOCAL HEURISTIC', latencyMs: 0
     };
-    const code = createConfirmationCode();
-    const sent = await m.reply(formatAssessment(token, heuristic, assessment, code, { localFallback: true }));
-    const messageId = sent?.key?.id;
-    if (!messageId) return m.reply('Konfirmasi tidak dapat didaftarkan karena ID pesan WhatsApp tidak tersedia. Perintah tidak dijalankan.');
-    const key = `${m.chat}:${messageId}`;
-    const commandHash = crypto.createHash('sha256').update(`${token}\0${command}`).digest('hex');
-    pendingWarnings.set(key, { createdAt: Date.now(), code, runtime: token, commandHash, sender: m.sender });
-    while (pendingWarnings.size > MAX_PENDING_WARNINGS) pendingWarnings.delete(pendingWarnings.keys().next().value);
-    registerReplySession({
-      chat: m.chat, messageId, sender: m.sender, kind: 'master-risk-confirmation',
-      choices: [
-        { key: `CONFIRM ${code}`, label: 'Konfirmasi dan jalankan', value: 'confirm' },
-        { key: 'CANCEL', label: 'Batalkan', value: 'cancel' }
-      ],
-      ttlMs: WARNING_TTL_MS,
-      helpText: `Balas pesan peringatan ini dengan CONFIRM ${code}, atau CANCEL.`,
-      onSelect: async ({ value }) => {
-        const pending = pendingWarnings.get(key);
-        pendingWarnings.delete(key);
-        if (!pending || Date.now() - pending.createdAt > WARNING_TTL_MS) return m.reply('Konfirmasi kedaluwarsa. Tidak ada kode yang dijalankan.');
-        if (pending.sender !== m.sender || pending.commandHash !== commandHash || pending.code !== code) return m.reply('Validasi konfirmasi tidak cocok. Tidak ada kode yang dijalankan.');
-        if (value === 'cancel') return m.reply('Perintah dibatalkan. Tidak ada kode yang dijalankan.');
-        logger.warn({ runtime: token, sender: m.sender, commandHash, risk: assessment.severity, assessment: 'LOCAL_HEURISTIC' }, 'Owner explicitly confirmed execution while AI provider unavailable');
-        return executeMasterCommand(sock, m, body);
-      },
-      metadata: { runtime: token, risk: assessment.severity, commandHash, assessment: 'LOCAL_HEURISTIC' }
-    });
-    return;
   }
-  if (shouldAutoApproveAssessment(assessment, heuristic)) {
+
+  if (!localFallback && shouldAutoApproveAssessment(assessment, heuristic)) {
     logger.info({ runtime: token, command: command.slice(0, 160), sender: m.sender, risk: assessment.severity, provider: assessment.provider, latencyMs: assessment.latencyMs }, 'Ocha WorkloadTracker approved command without confirmation');
     return executeMasterCommand(sock, m, body);
   }
+
   const code = createConfirmationCode();
-  const sent = await m.reply(formatAssessment(token, heuristic, assessment, code));
+  const warningText = formatAssessment(token === '$' ? 'CLI SHELL' : token === '>>' ? 'PYTHON' : token === '>>>' ? 'GO' : 'JAVASCRIPT EVAL', heuristic, assessment, code, { localFallback, mode: warningMode });
+  const sent = await sendWorkloadWarning(sock, m, warningText, code);
   const messageId = sent?.key?.id;
-  if (!messageId) return m.reply('Gagal mendaftarkan konfirmasi karena WhatsApp tidak mengembalikan ID pesan. Perintah tidak dijalankan.');
+  if (!messageId) return m.reply('Konfirmasi tidak dapat didaftarkan karena ID pesan WhatsApp tidak tersedia. Perintah tidak dijalankan.');
   const key = `${m.chat}:${messageId}`;
-  pendingWarnings.set(key, { createdAt: Date.now(), code, runtime: token });
+  pendingWarnings.set(key, { createdAt: Date.now(), code, runtime: token, commandHash, sender: m.sender });
   while (pendingWarnings.size > MAX_PENDING_WARNINGS) pendingWarnings.delete(pendingWarnings.keys().next().value);
   registerReplySession({
     chat: m.chat, messageId, sender: m.sender, kind: 'master-risk-confirmation',
@@ -248,16 +304,17 @@ async function requestRiskConfirmation(sock, m, body, token, command, heuristic)
       { key: 'CANCEL', label: 'Batalkan', value: 'cancel' }
     ],
     ttlMs: WARNING_TTL_MS,
-    helpText: `Balas dengan CONFIRM ${code} untuk menjalankan, atau CANCEL untuk membatalkan.`,
+    helpText: `Gunakan tombol Konfirmasi & Jalankan, tombol Batalkan, atau balas pesan ini dengan CONFIRM ${code}.`,
     onSelect: async ({ value }) => {
       const pending = pendingWarnings.get(key);
       pendingWarnings.delete(key);
-      if (!pending || Date.now() - pending.createdAt > WARNING_TTL_MS) return m.reply('Konfirmasi sudah kedaluwarsa. Jalankan ulang perintah jika masih diperlukan.');
+      if (!pending || Date.now() - pending.createdAt > WARNING_TTL_MS) return m.reply('Konfirmasi kedaluwarsa. Tidak ada kode yang dijalankan.');
+      if (pending.sender !== m.sender || pending.commandHash !== commandHash || pending.code !== code) return m.reply('Validasi konfirmasi tidak cocok. Tidak ada kode yang dijalankan.');
       if (value === 'cancel') return m.reply('Perintah dibatalkan. Tidak ada kode yang dijalankan.');
-      logger.warn({ runtime: token, command: command.slice(0, 200), sender: m.sender, risk: assessment.severity }, 'Owner explicitly confirmed risky master command');
+      logger.warn({ runtime: token, sender: m.sender, commandHash, risk: assessment.severity, assessment: localFallback ? 'LOCAL_HEURISTIC' : assessment.provider }, 'Owner explicitly confirmed risky master command');
       return executeMasterCommand(sock, m, body);
     },
-    metadata: { runtime: token, risk: assessment.severity, commandHash: crypto.createHash('sha256').update(command).digest('hex') }
+    metadata: { runtime: token, risk: assessment.severity, commandHash, assessment: localFallback ? 'LOCAL_HEURISTIC' : assessment.provider }
   });
 }
 
@@ -266,7 +323,7 @@ export async function runMasterCommand(sock, m, body, options = {}) {
   if (!token) return;
   const command = body.slice(token.length).trim();
   if (!options.confirmed) {
-    const heuristic = inspectWorkload(token, command);
+    const heuristic = inspectWorkload(token, command, { privateChat: !m.isGroup });
     if (heuristic.hardBlock || heuristic.suspicious) {
       logger.warn({ runtime: token, level: heuristic.level, hardBlock: heuristic.hardBlock, reasons: heuristic.reasons, sender: m.sender }, 'Master workload flagged for safety review');
       return requestRiskConfirmation(sock, m, body, token, command, heuristic);

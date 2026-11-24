@@ -1,3 +1,28 @@
+## v1.10.31 — External NADI component separation
+
+### Added
+- Added an external NADI component manager using Node.js native `fetch`, bounded GitHub archive downloads, SHA-256 verification, safe ZIP extraction, component-layout validation, and atomic installation outside the Ocha source tree.
+- Added configurable GitHub repository/ref support, optional immutable archive checksum pinning, a manual external source directory, and optional remote HTTP service mode.
+- Added an HTTP client for NADI v2.1 with readiness checks, status polling, managed heartbeat controls, explicit ticks, sleep consolidation, integrity verification, and shutdown checkpointing.
+
+### Changed
+- Removed the embedded Python NADI package from `src/consciousness/`; NADI is now a separately versioned repository/component.
+- NADI owns its drift-corrected heartbeat; Ocha polls telemetry instead of sending one tick per interval, avoiding duplicate heartbeat loops.
+- Updated `.nadi` commands and runtime documentation for external component/version/source visibility.
+- Preserved existing NADI state under `data/consciousness/` by default and preserved the entire Ocha feature tree, AI provider chain, plugin set, and database behavior.
+
+### Security and fallback
+- ZIP extraction rejects traversal, absolute paths, symbolic links, oversized archives, and excessive entries.
+- NADI stays loopback-only by default; repository credentials remain in environment secrets.
+- If the NADI repository is not yet configured, NADI is marked unavailable and normal WhatsApp/AI functions continue.
+
+### Validation
+- NADI Python base suite: 4/4 passed; extended suite: 8/8 passed.
+- Ocha syntax check: 196 JavaScript files passed; focused NADI/runtime suite: 6/6 passed.
+- Direct Ocha-to-external-NADI HTTP integration passed: startup, heartbeat, prompt telemetry, manual tick, chain verification, heartbeat pause/resume, and clean shutdown.
+- Full Ocha suite: 250 passed, 2 skipped, 6 blocked by the missing local `chokidar` installation. `chokidar` remains declared in `package.json`; install declared dependencies before rerunning the full suite.
+- GitHub archive download was not exercised because the standalone repository URL has not yet been supplied.
+
 # Changelog
 
 ## [1.10.28] - 2026-11-24
@@ -836,3 +861,38 @@ All notable changes to Ocha Lidya are recorded here. The newest release is liste
 - Added private-chat natural-language routing for game invitations and numeric moves; group game sessions remain disabled to avoid shared-state ambiguity.
 - Added fail-closed behavior when User Vault integrity/authentication checks fail.
 - Added regression tests including exhaustive legal human move sequences against Minimax.
+
+
+## v1.10.29 — Master workload warning controls
+- Added owner-only `.master warning status|on|off|compact|detailed` and `.master review status|on|off`.
+- Added native-flow CTA Copy for one-time `CONFIRM CODE`, plus explicit confirm/cancel quick replies.
+- Warning-off suppresses notification only; suspicious code is silently blocked and audit-logged.
+- Review-off disables AI semantic assessment while retaining local heuristics, confirmations, and hard-blocks.
+- Scoped private-chat `sock.relayMessage(m.chat, ...)`/`sock.sendMessage(m.chat, ...)` no longer triggers a blanket warning; arbitrary recipients and group sends remain flagged.
+
+
+## v1.10.30 — NADI operational self-state heartbeat
+
+### Added
+- Integrated the uploaded AC-Kernel NADI v2 component under `src/consciousness/ac/` and started it as a private Python child process from the main Node.js runtime.
+- Added a JSON-lines stdio protocol; no additional HTTP listener or API key duplication is required.
+- Added a one-second heartbeat, periodic snapshot persistence, clean shutdown, and supervised restart after unexpected sidecar exit.
+- Injected NADI runtime telemetry into the existing Nexora system prompt so the current Groq/Gemini/DeepSeek/OpenAI provider chain remains the only chat-generation service.
+- Added owner-only `.nadi status|on|off|pulse|sleep|verify` controls.
+- Added consent-first social autonomy policy helpers: member opt-in and group-admin approval are required for any future proactive introduction; ignored recipients are not pursued.
+
+### Safety and privacy
+- NADI does not receive raw WhatsApp messages, JIDs, or private account memories. The global kernel stores operational telemetry only; private conversations remain in each user's encrypted vault.
+- Heartbeat does not initiate outgoing WhatsApp messages, call the provider chain every second, or grant command permissions.
+- Angry, guilt-based, random-member, and repeated no-response messaging is explicitly prohibited.
+- NADI is documented as an operational self-state architecture, not subjective consciousness or sentience.
+
+### Fixed
+- Calibrated homeostatic rates for a 1 Hz wall-clock heartbeat; disabled per-tick sleep consolidation to avoid excessive cycles and disk writes.
+- Snapshot writes are batched every 60 pulses and flushed on clean shutdown.
+
+### Validation
+- Python component self-test: 5/5.
+- One-hour simulated heartbeat: 3,600 ticks; energy and thermal load remained inside calibrated ranges; no user events were written to the global ledger.
+- JavaScript syntax: 195 files checked.
+- NADI sidecar integration test: start, heartbeat advance, hash-chain verification, and clean shutdown passed.
