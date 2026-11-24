@@ -38,7 +38,14 @@ export function identifyRuntime(language, files = []) {
 }
 
 export function detectModuleSystem(files, snippets = []) {
-  const names = new Set(files.map(file => path.basename(file).toLowerCase()));
+  const normalizedFiles = files.map(file => String(file).toLowerCase());
+  const names = new Set(normalizedFiles.map(file => path.basename(file)));
+  // Node's .mjs/.cjs extensions are authoritative even without package.json.
+  const hasMjs = normalizedFiles.some(file => file.endsWith('.mjs'));
+  const hasCjs = normalizedFiles.some(file => file.endsWith('.cjs'));
+  if (hasMjs && hasCjs) return 'mixed';
+  if (hasMjs) return 'esm';
+  if (hasCjs) return 'commonjs';
   const text = snippets.join('\n');
   if (names.has('package.json')) {
     try {

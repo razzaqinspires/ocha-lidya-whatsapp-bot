@@ -162,6 +162,8 @@ export async function analyzeContribution(originalDirectory, limits = {}) {
   const environmentVariables = new Set();
   const externalServices = new Set();
   const platformIdentifiers = new Set();
+  const capabilitySignals = [];
+  const externalAssetReferences = [];
   const snippets = [];
   const analysisCoverage = { scannedFiles: 0, skippedFiles: 0, scannedBytes: 0, skipped: { oversized: 0, budget: 0, notText: 0, invalidUtf8OrBinary: 0 }, complete: true };
   let moduleSystem = 'not-applicable-or-unknown';
@@ -211,7 +213,40 @@ export async function analyzeContribution(originalDirectory, limits = {}) {
       for (const platform of ['pinterest', 'tiktok', 'instagram', 'youtube', 'facebook', 'twitter', 'reddit', 'telegram', 'spotify', 'soundcloud']) {
         if (new RegExp(`\\b${platform}\\b`, 'i').test(text)) platformIdentifiers.add(platform);
       }
-      for (const match of text.matchAll(/\b(?:api\.telegram\.org|graph\.facebook\.com|api\.tiktok\.com|youtube\.com|pinterest\.[a-z.]+|instagram\.com|discord\.com\/api)\b/gi)) externalServices.add(match[0].toLowerCase());
+      for (const match of text.matchAll(/\b(?:api\.telegram\.org|graph\.facebook\.com|api\.tiktok\.com|youtube\.com|pinterest\.[a-z.]+|instagram\.com|discord\.com\/api|raw\.githubusercontent\.com)\b/gi)) externalServices.add(match[0].toLowerCase());
+      for (const match of text.matchAll(/https?:\/\/[^\s'\"`<>]+/g)) {
+        const url = match[0].replace(/[),;]+$/, '');
+        if (externalAssetReferences.length < 250 && !externalAssetReferences.some(item => item.url === url)) {
+          externalAssetReferences.push({ file: relative, url, status: 'external-reference-unverified' });
+        }
+      }
+      if (['javascript', 'typescript'].includes(language)) {
+        const dynamicModules = discoverImports(language, text, relative).filter(item => item.module.startsWith('@') || (!item.module.startsWith('.') && !item.module.startsWith('/') && !item.module.startsWith('node:')));
+        for (const item of dynamicModules) {
+          if (!dependencies.some(dep => dep.manager === 'npm' && dep.name === item.module)) {
+            pushBounded(dependencies, { name: item.module, version: 'UNSPECIFIED', manager: 'npm', source: 'code-import-discovery', declaredInManifest: false });
+          }
+        }
+        const canvasSignals = {
+          createCanvas: /\bcreateCanvas\s*\(/.test(text),
+          loadImage: /\bloadImage\s*\(/.test(text),
+          textDrawing: /\b(?:fillText|strokeText)\s*\(/.test(text),
+          jpegEncoding: /\.encode\s*\(\s*['"`]jpe?g['"`]/i.test(text)
+        };
+        if (Object.values(canvasSignals).every(Boolean)) {
+          const fixedText = /\b(?:const|let|var)\s+content\s*=\s*(['"`])/.test(text);
+          const sendsThroughWhatsApp = /\bconn\.sendMessage\s*\(\s*m\.chat/.test(text);
+          const signal = {
+            id: 'image-canvas.render.text', file: relative, status: 'discovered-unverified',
+            evidence: Object.keys(canvasSignals).filter(key => canvasSignals[key]),
+            outputMimeType: 'image/jpeg',
+            integration: sendsThroughWhatsApp ? 'legacy-whatsapp-inline' : 'standalone-canvas',
+            inputContract: fixedText ? 'fixed-content-in-source' : 'unverified',
+            dynamicTextInput: false
+          };
+          if (!capabilitySignals.some(item => item.id === signal.id && item.file === relative)) capabilitySignals.push(signal);
+        }
+      }
       if (isCodeFile) for (const pattern of RISK_PATTERNS) {
         pattern.pattern.lastIndex = 0;
         for (const match of text.matchAll(pattern.pattern)) pushBounded(risks, { id: pattern.id, severity: pattern.severity, file: relative, line: lineNumber(text, match.index) }, MAX_SECURITY_FINDINGS);
@@ -245,7 +280,7 @@ export async function analyzeContribution(originalDirectory, limits = {}) {
     returnShapeCandidates: returnShapeCandidates.slice(0, 300), errorHandling: errorHandling.slice(0, 1000),
     exportCandidates: exportCandidates.slice(0, 300), dependencies: uniqueDependencies,
     environmentVariables: [...environmentVariables].sort(), externalServices: [...externalServices].sort(),
-    platformIdentifiers: [...platformIdentifiers].sort(),
+    platformIdentifiers: [...platformIdentifiers].sort(), capabilitySignals, externalAssetReferences,
     security: {
       findings: risks, critical: risks.filter(item => item.severity === 'critical').length,
       high: risks.filter(item => item.severity === 'high').length, medium: risks.filter(item => item.severity === 'medium').length,

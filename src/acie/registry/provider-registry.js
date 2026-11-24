@@ -33,7 +33,10 @@ export async function registerContribution({ manifest, analysis, capabilities = 
       governance: { licenseReviewed: false, attributionConfirmed: false, license: manifest.license, attribution: manifest.attribution },
       security: { critical: Number(analysis?.security?.critical || 0), high: Number(analysis?.security?.high || 0), findings: Number(analysis?.security?.findings?.length || 0) },
       capabilities: capabilities.map(item => item.id),
-      validation: { staticAnalysis: Boolean(analysis), adapterTested: false, outputContractVerified: false },
+      dependencies: analysis?.dependencies || [],
+      assetReferences: analysis?.externalAssetReferences || [],
+      entryPointCandidates: manifest.entryPointCandidates || [],
+      validation: { staticAnalysis: Boolean(analysis), adapterReviewed: false, adapterTested: false, protocolTested: false, outputContractVerified: false, assetsAvailable: false },
       health: { status: 'not-tested', lastCheckAt: null, successCount: 0, failureCount: 0, consecutiveFailures: 0 },
       circuitBreaker: { state: 'closed', failures: 0, openedAt: null },
       createdAt: new Date().toISOString()

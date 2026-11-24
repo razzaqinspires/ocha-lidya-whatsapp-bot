@@ -1,11 +1,12 @@
-const PLATFORMS = ['pinterest', 'tiktok', 'instagram', 'youtube', 'facebook', 'twitter', 'x', 'reddit', 'telegram', 'spotify', 'soundcloud'];
+const PLATFORMS = ['image-canvas', 'pinterest', 'tiktok', 'instagram', 'youtube', 'facebook', 'twitter', 'x', 'reddit', 'telegram', 'spotify', 'soundcloud'];
 const ACTIONS = [
   ['metadata', /(?:metadata|meta|info|details?|inspect)/i],
   ['search', /(?:search|find|query)/i],
   ['download.video', /(?:download|fetch|save|extract).*(?:video|mp4)|(?:video|mp4).*(?:download|fetch|save|extract)/i],
   ['download.audio', /(?:download|fetch|save|extract).*(?:audio|music|mp3)|(?:audio|music|mp3).*(?:download|fetch|save|extract)/i],
   ['download.image', /(?:download|fetch|save|extract).*(?:image|photo|picture)|(?:image|photo|picture).*(?:download|fetch|save|extract)/i],
-  ['download', /(?:download|fetch|save|extract)/i]
+  ['download', /(?:download|fetch|save|extract)/i],
+  ['render.text', /(?:render|draw|paint|canvas|textimage)/i]
 ];
 
 export function discoverCapabilities(analysis, textEvidence = '') {
@@ -25,6 +26,18 @@ export function discoverCapabilities(analysis, textEvidence = '') {
     if (!hasSpecificDownload) {
       const generic = names.filter(name => /(?:download|fetch|save|extract)/i.test(name));
       if (generic.length) found.push({ id: `${platform}.download`, platform, action: 'download', evidence: generic.slice(0, 20), confidence: 'candidate', status: 'unverified', requiresHumanReview: true });
+    }
+  }
+  for (const signal of analysis.capabilitySignals || []) {
+    if (signal.id === 'image-canvas.render.text') {
+      found.push({
+        id: 'image-canvas.render.text', platform: 'image-canvas', action: 'render.text',
+        evidence: [signal.file, ...(signal.evidence || [])], confidence: 'source-indicator', status: 'unverified',
+        requiresHumanReview: true, outputMimeType: signal.outputMimeType || 'image/jpeg',
+        inputContract: signal.inputContract || 'unverified', dynamicTextInput: signal.dynamicTextInput === true,
+        integration: signal.integration || 'unknown',
+        adapterProtocol: signal.integration === 'legacy-whatsapp-inline' ? 'legacy-whatsapp-inline-bridge-draft-v1' : 'acie-json-stdio-v1'
+      });
     }
   }
   return [...new Map(found.map(item => [item.id, item])).values()];

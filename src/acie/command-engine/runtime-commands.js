@@ -74,7 +74,7 @@ export function createGeneratedCommandPlugin(command, provider) {
     async execute({ m, args = [], text = '' }) {
       const limit = checkGeneratedRateLimit(command, m);
       if (!limit.allowed) return m.reply(`Batas penggunaan command tercapai. Coba lagi dalam ${Math.ceil(limit.retryAfterMs / 1000)} detik.`);
-      const input = buildInput(text || args.join(' '));
+      const input = command.inputMode === 'none' ? {} : buildInput(text || args.join(' '));
       if (!input) return m.reply(`Format: ${command.syntax || `.${command.command} <input>`}`);
       const outcome = await executeWithFallback({ capability: command.capability, input, idempotent });
       if (!outcome.ok) {

@@ -1,3 +1,16 @@
+## v1.10.46 — ACIE intake: Rizkyrohan text-canvas contribution
+
+### Added / Changed
+- Detect JavaScript dynamic imports as dependency candidates so runtime packages such as `@napi-rs/canvas` are not omitted from dependency intelligence.
+- Detect text-image Canvas signals from the combination of `createCanvas`, `loadImage`, `fillText`/`strokeText`, and JPEG encoding; mark the capability `image-canvas.render.text` as `unverified` until an adapter protocol test passes.
+- Generate a no-argument `.textimage` command draft (alias `.timg`) for the current fixed-content contribution. Draft remains hidden and cannot execute while the provider is quarantined.
+- Record external asset references and a separate contributor compatibility adapter plan without patching or importing the preserved original source.
+- Record the repeated receipt as a duplicate of the earlier byte-identical contribution; retain both intake records and both original snapshots.
+
+### Validation
+- `npm run check`: 264 JavaScript files passed syntax validation. `npm test`: 351 total, 349 passed, 0 failed, 2 skipped. The new Rizkyrohan intake regression suite passed 7/7. Original source remains static-only and is not executed.
+- Font/background asset binaries were not vendored: their GitHub repositories report no license metadata, so asset rights remain pending. Production rendering remains blocked until asset permissions, dependency isolation, and an approved adapter are available.
+
 ## v1.10.45 — ACIE Part 3: autonomous command engineering & live registry integration
 
 ### Added / Changed

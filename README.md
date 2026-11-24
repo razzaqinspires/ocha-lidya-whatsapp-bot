@@ -1,12 +1,16 @@
 # Ocha Lidya WhatsApp Bot
 
-## ACIE — Autonomous Contribution Integration & Orchestration Engine (v1.10.45 · Part 3/3)
+## ACIE — Autonomous Contribution Integration & Orchestration Engine (v1.10.46 · Rizkyrohan intake review)
 
 ACIE is an internal Ocha subsystem for immutable third-party contribution intake, bounded multi-language static discovery, governance, isolated provider execution, routing/fallback and command engineering. Original source bytes remain in a private versioned vault and are never imported into the bot process. Adapter code and generated commands live outside the original source.
 
 Parts 1–3 include SHA-256/provenance preservation, archive/path safety, static capability candidates, JSON-stdio adapter descriptors, a fail-closed Docker/Podman runner, digest-pinned/no-network execution policy, provider health and circuit breaker, owner approval stages, automatic command drafts and collision namespacing, and virtual generated plugin descriptors integrated with the existing Ocha plugin loader, dispatcher, `.menu` and command catalog. Only owner-approved commands backed by an active provider and all successful policy gates become visible.
 
 **Default execution remains DENY.** The target VPS must have a configured absolute Docker/Podman engine path, reviewed digest-pinned images and a successful `.acie runtime probe`. The current sandbox denies network egress, so public-service downloaders cannot fetch remote content yet. TypeScript/Rust require dedicated build adapters, dependencies are not installed into original source, and generated command responses currently return sanitized text/HTTPS links rather than upload arbitrary local media. Vault encryption-at-rest is host-managed. Review [`docs/ACIE_README.md`](docs/ACIE_README.md), [`docs/ACIE_PART1_AUDIT.md`](docs/ACIE_PART1_AUDIT.md), [`docs/ACIE_PART2_RUNTIME_ISOLATION.md`](docs/ACIE_PART2_RUNTIME_ISOLATION.md), and [`docs/ACIE_PART3_COMMAND_INTEGRATION.md`](docs/ACIE_PART3_COMMAND_INTEGRATION.md).
+
+## ACIE contribution review — Rizkyrohan Text Canvas (v1.10.46)
+
+ACIE now recognizes dynamic JavaScript imports and `.mjs` module type correctly. The byte-identical Rizkyrohan source is preserved as a canonical contribution plus a retained duplicate receipt; the static analyzer discovers `image-canvas.render.text`, `@napi-rs/canvas`, the fixed in-source text, and external asset references. A no-argument `.textimage` / `.timg` command draft is generated but remains quarantined and hidden from the user menu. The source is a legacy WhatsApp inline script using `conn` and `m`, with no callable exports; no source is imported or executed. Font/background asset licenses and local binary snapshots remain pending, as do the isolated dependency pin, external bridge, protocol test, sandbox validation and owner approval. See [`docs/contributions/RIZKYROHAN_TEXT_CANVAS.md`](docs/contributions/RIZKYROHAN_TEXT_CANVAS.md).
 
 ## Native Button Menu, Kernel Response Reliability & Redesigned Profile Canvas (v1.10.37)
 

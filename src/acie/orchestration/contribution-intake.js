@@ -6,6 +6,7 @@ import { discoverCapabilities } from '../intelligence/capability-discovery.js';
 import { registerContribution } from '../registry/provider-registry.js';
 import { buildCommandDrafts, persistCommandDrafts, scanExistingPluginCommands } from '../command-engine/command-generation.js';
 import { createExternalAdapterDescriptor } from '../adapters/universal-adapter.js';
+import { buildLegacyWhatsAppBridgeDraft } from '../adapters/legacy-whatsapp-bridge.js';
 import { writeJsonAtomic, ensurePrivateDir, readJson } from '../core/fs-safe.js';
 import { getACIEPaths } from '../core/paths.js';
 import { appendACIEAudit } from '../telemetry/audit-log.js';
@@ -61,7 +62,10 @@ export async function runContributionIntake(input, { root = process.cwd(), exist
   const paths = getACIEPaths(root);
   await Promise.all([ensurePrivateDir(paths.adapters), ensurePrivateDir(paths.dependencyLocks), ensurePrivateDir(paths.executionProfiles), ensurePrivateDir(paths.compatibility)]);
   const adapterResult = await runWorker('adapter-intelligence', { providerId }, async () => {
-    const adapter = createExternalAdapterDescriptor({ providerId, contributionId: manifest.contributionId, capabilities, entryPoint: analysis.entryPointCandidates?.[0] || null, language: analysis.primaryLanguage });
+    const legacyCapability = capabilities.find(item => item.integration === 'legacy-whatsapp-inline');
+    const adapter = legacyCapability
+      ? buildLegacyWhatsAppBridgeDraft({ providerId, contributionId: manifest.contributionId, analysis, capability: legacyCapability })
+      : createExternalAdapterDescriptor({ providerId, contributionId: manifest.contributionId, capabilities, entryPoint: analysis.entryPointCandidates?.[0] || null, language: analysis.primaryLanguage });
     await writeJsonAtomic(path.join(paths.adapters, `${providerId}.adapter.json`), adapter);
     return adapter;
   });

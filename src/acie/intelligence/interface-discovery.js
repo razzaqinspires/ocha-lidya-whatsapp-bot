@@ -33,8 +33,8 @@ export function discoverFunctionSignatures(language, text, file) {
 
 export function discoverImports(language, text, file) {
   const patternMap = {
-    javascript: [/\bimport\s+(?:.+?\s+from\s+)?['"]([^'"]+)['"]/g, /\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)/g],
-    typescript: [/\bimport\s+(?:.+?\s+from\s+)?['"]([^'"]+)['"]/g, /\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)/g],
+    javascript: [/\bimport\s+(?:.+?\s+from\s+)?['"]([^'"]+)['"]/g, /\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g, /\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)/g],
+    typescript: [/\bimport\s+(?:.+?\s+from\s+)?['"]([^'"]+)['"]/g, /\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g, /\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)/g],
     python: [/^\s*import\s+([A-Za-z0-9_.]+)/gm, /^\s*from\s+([A-Za-z0-9_.]+)\s+import\s+/gm],
     go: [/\bimport\s+(?:\w+\s+)?"([^"]+)"/g],
     php: [/\b(?:require|require_once|include|include_once)\s*\(?\s*['"]([^'"]+)['"]/g],

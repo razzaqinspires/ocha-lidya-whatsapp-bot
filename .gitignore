@@ -67,3 +67,6 @@ adapters/
 generated-commands/
 runtime-workspaces/
 config/acie.runtime.json
+
+# Unreviewed contribution drop-zone; intake from an external path only
+incoming/

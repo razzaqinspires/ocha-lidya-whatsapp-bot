@@ -1,6 +1,6 @@
 # ACIE — Autonomous Contribution Integration & Orchestration Engine
 
-**Release:** Ocha Lidya v1.10.45 · ACIE Part 3/3  
+**Release:** Ocha Lidya v1.10.46 · ACIE contribution intake review  
 **Execution policy:** deny by default; original contribution source is immutable.
 
 ACIE is an internal Ocha Lidya subsystem for receiving external contributions, preserving source bytes, analyzing languages and capabilities, validating external adapters, running eligible providers in isolated containers, routing among providers, and generating command descriptors. It does not replace the Ocha plugin loader or dispatcher.
@@ -70,6 +70,10 @@ To retire an item use `.acie commands revoke <command-id>` and/or `.acie provide
 ## Limitations
 
 The generic bridge supports CLI-style JSON-stdio entrypoints for Node.js, Python, Go, PHP, Java source launch and Bash. TypeScript and Rust remain static-discovery-only until dedicated build adapters are provided. Dependencies are not installed into original source; runtime images must be reviewed and prebuilt. The sandbox currently denies network egress, so remote downloader integrations cannot fetch public services. Generated commands currently return sanitized text and HTTPS links; arbitrary local media upload through WhatsApp needs a separate reviewed media-delivery bridge. Capability and security discovery are heuristic, not proof. License/attribution decisions require human review. Vault encryption-at-rest must be provided by an encrypted host volume and encrypted backups. Target VPS container execution and WhatsApp behavior must be verified before production activation.
+
+## Reviewed contribution example — Rizkyrohan Text Canvas
+
+ACIE statically identifies one unverified capability, `image-canvas.render.text`, from a legacy `.mjs` WhatsApp inline script. The original has no callable exports, uses ambient `conn`/`m`, hardcodes its text, and dynamically imports `@napi-rs/canvas` without a pinned version. The candidate `.textimage` (alias `.timg`) is therefore a no-argument command draft, not an active user command. Font and background files are referenced from two public GitHub repositories, but no license metadata or `LICENSE` file was found at the inspected references; neither binary was copied into the vault or redistributed. See [the full Rizkyrohan contribution review](contributions/RIZKYROHAN_TEXT_CANVAS.md).
 
 ## Documentation
 

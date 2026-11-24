@@ -5,7 +5,7 @@ import { getACIEPaths } from '../core/paths.js';
 import { writeJsonAtomic, readJson, acquireExclusiveFileLock } from '../core/fs-safe.js';
 import { writeGeneratedCommandCatalog } from './command-catalog.js';
 
-const SHORT = Object.freeze({ pinterest: 'pin', tiktok: 'tt', instagram: 'ig', youtube: 'yt', facebook: 'fb', twitter: 'x', reddit: 'rd', soundcloud: 'sc' });
+const SHORT = Object.freeze({ 'image-canvas': 'timg', pinterest: 'pin', tiktok: 'tt', instagram: 'ig', youtube: 'yt', facebook: 'fb', twitter: 'x', reddit: 'rd', soundcloud: 'sc' });
 
 function commandForCapability(capability) {
   const platform = String(capability?.platform || '').toLowerCase();
@@ -13,6 +13,7 @@ function commandForCapability(capability) {
   if (!/^[a-z0-9][a-z0-9-]{1,30}$/.test(platform)) return null;
   const short = SHORT[platform] || platform;
   const specs = {
+    'render.text': ['textimage', `${short}`, 'Membuat gambar teks menggunakan template Canvas kontribusi yang telah disetujui.'],
     metadata: ['info', `${short}info`, 'Ambil metadata dari URL yang didukung.'],
     search: ['search', `${short}search`, 'Cari konten melalui provider yang mendukung pencarian.'],
     'download.video': ['video', `${short}video`, 'Proses pengambilan video melalui provider yang disetujui.'],
@@ -22,7 +23,8 @@ function commandForCapability(capability) {
   };
   const spec = specs[action];
   if (!spec) return null;
-  return { preferredName: `${platform}-${spec[0]}`, preferredAliases: [spec[1]], description: spec[2], category: 'downloader' };
+  const fixedCanvas = platform === 'image-canvas' && action === 'render.text';
+  return { preferredName: fixedCanvas ? 'textimage' : `${platform}-${spec[0]}`, preferredAliases: fixedCanvas ? ['timg'] : [spec[1]], description: spec[2], category: fixedCanvas ? 'image' : 'downloader', inputMode: fixedCanvas ? 'none' : 'text' };
 }
 
 function reserveUniqueName(preferredName, preferredAliases, occupied) {
@@ -101,12 +103,12 @@ export function buildCommandDrafts({ contributionId, providerId, capabilities = 
       command: reserved.command, preferredCommand: generated.preferredName, aliases: reserved.aliases,
       category: generated.category, description: generated.description,
       help: `${generated.description} Capability: ${capability.id}.`,
-      syntax: `.${reserved.command} <input>`,
-      parameters: [{ name: 'input', required: true, description: 'Input yang diterima oleh kontrak adapter; format final harus diuji.' }],
-      examples: [`.${reserved.command} <URL yang didukung provider>`], permission: 'pending-review', cooldownMs: 15000,
+      syntax: generated.inputMode === 'none' ? `.${reserved.command}` : `.${reserved.command} <input>`,
+      parameters: generated.inputMode === 'none' ? [] : [{ name: 'input', required: true, description: 'Input yang diterima oleh kontrak adapter; format final harus diuji.' }],
+      examples: [generated.inputMode === 'none' ? `.${reserved.command}` : `.${reserved.command} <URL yang didukung provider>`], inputMode: generated.inputMode || 'text', permission: 'pending-review', cooldownMs: 15000,
       rateLimit: { max: 5, windowMs: 60000 }, providerMapping: providerId,
       capability: capability.id, expectedOutput: 'unverified',
-      outputContract: 'acie-json-stdio-v1',
+      outputContract: capability.adapterProtocol || 'acie-json-stdio-v1',
       errorResponse: 'normalized-by-ACIE-after-contract-validation',
       collision,
       status: reserved.resolved ? 'draft-pending-validation' : 'blocked-collision',
