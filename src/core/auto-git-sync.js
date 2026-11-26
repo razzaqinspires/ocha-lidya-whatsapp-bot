@@ -8,12 +8,18 @@ import dotenv from 'dotenv';
 import { logger } from './logger.js';
 import { createAutomaticCommitMessage, parseGitIgnore, parsePorcelainZ } from './git-utils.js';
 import { isRuntimeWatchIgnored } from './watch-policy.js';
+import {
+  auditPublicationPaths,
+  hasPrivateSourceFingerprint,
+  isPrivatePublicationPath,
+  scanSecrets,
+} from './publication-policy.js';
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const REPOSITORY = 'razzaqinspires/ocha-lidya-whatsapp-bot';
 const BRANCH = 'main';
-const QUIET_WINDOW_MS = 1800;
-
+const QUIET_WINDOW_MS = 2200;
+const PRETTIER_COMMAND = process.env.OCHA_PRETTIER_BIN || 'npx';
 
 function run(command, args, options = {}) {
   return new Promise((resolve, reject) => {
@@ -21,12 +27,16 @@ function run(command, args, options = {}) {
       cwd: options.cwd || PROJECT_ROOT,
       env: options.env || process.env,
       stdio: ['pipe', 'pipe', 'pipe'],
-      windowsHide: true
+      windowsHide: true,
     });
     let stdout = '';
     let stderr = '';
-    child.stdout.setEncoding('utf8').on('data', chunk => { stdout += chunk; });
-    child.stderr.setEncoding('utf8').on('data', chunk => { stderr += chunk; });
+    child.stdout.setEncoding('utf8').on('data', chunk => {
+      stdout += chunk;
+    });
+    child.stderr.setEncoding('utf8').on('data', chunk => {
+      stderr += chunk;
+    });
     child.on('error', reject);
     if (options.input) child.stdin.end(options.input);
     else child.stdin.end();
@@ -39,7 +49,10 @@ function run(command, args, options = {}) {
 }
 
 function normalizeGitHubRemote(remote) {
-  return String(remote || '').trim().replace(/\.git$/i, '').replace(/\/$/, '');
+  return String(remote || '')
+    .trim()
+    .replace(/\.git$/i, '')
+    .replace(/\/$/, '');
 }
 
 function isHardIgnored(relativePath) {
@@ -65,10 +78,12 @@ async function assertSafeStaging() {
   const staged = await getStagedPaths();
   const blocked = [];
   for (const filePath of staged) {
-    if (isHardIgnored(filePath) || await isIgnoredByGit(filePath)) blocked.push(filePath);
+    if (isHardIgnored(filePath) || (await isIgnoredByGit(filePath))) blocked.push(filePath);
   }
   if (blocked.length) {
-    throw new Error(`Commit diblokir: ada file ter-stage yang dikecualikan .gitignore/aturan keamanan: ${blocked.join(', ')}`);
+    throw new Error(
+      `Commit diblokir: ada file ter-stage yang dikecualikan .gitignore/aturan keamanan: ${blocked.join(', ')}`,
+    );
   }
 }
 
@@ -79,11 +94,15 @@ async function assertRepository() {
   }
   const branch = await run('git', ['branch', '--show-current']);
   if (branch.stdout.trim() !== BRANCH) {
-    throw new Error(`Auto-push hanya berjalan di branch ${BRANCH}; branch aktif: ${branch.stdout.trim() || '(detached HEAD)'}`);
+    throw new Error(
+      `Auto-push hanya berjalan di branch ${BRANCH}; branch aktif: ${branch.stdout.trim() || '(detached HEAD)'}`,
+    );
   }
   const remote = await run('git', ['remote', 'get-url', 'origin']);
   if (normalizeGitHubRemote(remote.stdout) !== `https://github.com/${REPOSITORY}`) {
-    throw new Error(`Remote origin harus menggunakan HTTPS dan mengarah ke https://github.com/${REPOSITORY}. Remote saat ini: ${remote.stdout.trim()}`);
+    throw new Error(
+      `Remote origin harus menggunakan HTTPS dan mengarah ke https://github.com/${REPOSITORY}. Remote saat ini: ${remote.stdout.trim()}`,
+    );
   }
 }
 
@@ -96,30 +115,119 @@ async function prepareAskPass(token) {
     '  *Password*) printf "%s\\n" "$GITHUB_PAT" ;;',
     '  *) exit 1 ;;',
     'esac',
-    ''
+    '',
   ].join('\n');
   await fs.writeFile(file, script, { mode: 0o700 });
   await fs.chmod(file, 0o700);
   return {
     file,
-    env: { ...process.env, GITHUB_PAT: token, GIT_ASKPASS: file, GIT_TERMINAL_PROMPT: '0' }
+    env: { ...process.env, GITHUB_PAT: token, GIT_ASKPASS: file, GIT_TERMINAL_PROMPT: '0' },
   };
+}
+
+async function readTrackedOrWorkingFile(filePath) {
+  try {
+    return await fs.readFile(path.join(PROJECT_ROOT, filePath), 'utf8');
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  }
+}
+
+function isScannableTextPath(filePath) {
+  return /\.(?:[cm]?[jt]sx?|json|md|ya?ml|css|scss|html|xml|toml|ini|cfg|conf|sh|py|go|php|java|rs|sql)$/i.test(
+    filePath,
+  );
+}
+
+async function assertNoPrivateSourceBytes(filePaths) {
+  const failures = [];
+  for (const filePath of filePaths) {
+    const content = await readTrackedOrWorkingFile(filePath);
+    if (content === null) continue;
+    if (hasPrivateSourceFingerprint(Buffer.from(content, 'utf8'))) failures.push(filePath);
+  }
+  if (failures.length) {
+    throw new Error(
+      `Publikasi dibatalkan: byte identik dengan source privat terdeteksi pada ${failures.join(', ')}. Nilai source tidak dicetak.`,
+    );
+  }
+}
+
+async function assertNoSecrets(filePaths) {
+  const failures = [];
+  for (const filePath of filePaths) {
+    if (isPrivatePublicationPath(filePath) || !isScannableTextPath(filePath)) continue;
+    const content = await readTrackedOrWorkingFile(filePath);
+    if (content === null) continue; // deletion is safe; no content to publish
+    for (const finding of scanSecrets(content)) {
+      failures.push(`${filePath}:${finding.line} [${finding.rule}]`);
+    }
+  }
+  if (failures.length) {
+    throw new Error(
+      `Publikasi dibatalkan: kemungkinan credential terdeteksi. Nilai rahasia tidak dicetak. Periksa ${failures.join(', ')}`,
+    );
+  }
+}
+
+async function formatEligibleFiles(filePaths) {
+  const formatTargets = [];
+  for (const filePath of filePaths) {
+    if (!/\.(?:[cm]?js|jsx|ts|tsx|json|md|yml|yaml|css|scss|html)$/i.test(filePath)) continue;
+    try {
+      await fs.access(path.join(PROJECT_ROOT, filePath));
+      formatTargets.push(filePath);
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    }
+  }
+  if (!formatTargets.length) return;
+  const prettierCheck = await run(PRETTIER_COMMAND, ['--no-install', 'prettier', '--version'], { allowFailure: true });
+  if (prettierCheck.code !== 0) {
+    throw new Error(
+      'Prettier belum tersedia. Instal dengan `npm install --save-dev prettier`, lalu ulangi sinkronisasi. Auto-push fail-closed; file tidak di-stage.',
+    );
+  }
+  // Format only eligible public files. Protected files never reach this command.
+  await run(PRETTIER_COMMAND, ['--no-install', 'prettier', '--write', '--ignore-unknown', ...formatTargets]);
+}
+
+async function assertNoProtectedStagedFiles() {
+  const staged = await getStagedPaths();
+  const protectedPaths = staged.filter(filePath => isPrivatePublicationPath(filePath));
+  if (protectedPaths.length) {
+    throw new Error(
+      `Commit diblokir: file privat/aturan khusus ter-stage. Keluarkan dari index secara manual: ${protectedPaths.join(', ')}`,
+    );
+  }
+  await assertNoPrivateSourceBytes(staged);
+  await assertNoSecrets(staged);
 }
 
 async function stageEligibleChanges() {
   const changedPaths = await getChangedPaths();
+  const audit = auditPublicationPaths(changedPaths);
   const eligible = [];
-  const ignored = [];
-  for (const filePath of changedPaths) {
-    if (isHardIgnored(filePath) || await isIgnoredByGit(filePath)) ignored.push(filePath);
+  const ignored = [...audit.privatePaths];
+  for (const filePath of audit.eligiblePaths) {
+    if (isHardIgnored(filePath) || (await isIgnoredByGit(filePath))) ignored.push(filePath);
     else eligible.push(filePath);
   }
-  if (ignored.length) logger.debug({ count: ignored.length }, 'Perubahan yang dikecualikan .gitignore dilewati');
+  if (ignored.length) logger.info({ count: ignored.length }, 'File privat/runtime dikecualikan dari publikasi');
+
+  await assertNoPrivateSourceBytes(eligible);
+  await assertNoSecrets(eligible);
+  await formatEligibleFiles(eligible);
+  // Re-scan after formatting because formatters can rewrite source text.
+  await assertNoPrivateSourceBytes(eligible);
+  await assertNoSecrets(eligible);
 
   for (const filePath of eligible) {
     await run('git', ['add', '-A', '--', filePath]);
   }
   await assertSafeStaging();
+  await assertNoProtectedStagedFiles();
 
   const staged = await getStagedPaths();
   if (!staged.length) return { staged: 0, ignored: ignored.length };
@@ -129,18 +237,29 @@ async function stageEligibleChanges() {
 }
 
 async function reconcileRemote(authEnv) {
-  const remoteHead = await run('git', ['-c', 'credential.helper=', 'ls-remote', '--heads', 'origin', BRANCH], { allowFailure: true, env: authEnv });
+  const remoteHead = await run('git', ['-c', 'credential.helper=', 'ls-remote', '--heads', 'origin', BRANCH], {
+    allowFailure: true,
+    env: authEnv,
+  });
   if (remoteHead.code !== 0) throw new Error(remoteHead.stderr.trim() || 'Tidak dapat membaca branch remote.');
   if (!remoteHead.stdout.trim()) return; // New, empty remote branch: push will create it.
 
   await run('git', ['-c', 'credential.helper=', 'fetch', 'origin', BRANCH], { env: authEnv });
-  const remoteIsAncestor = await run('git', ['merge-base', '--is-ancestor', `origin/${BRANCH}`, 'HEAD'], { allowFailure: true });
+  const remoteIsAncestor = await run('git', ['merge-base', '--is-ancestor', `origin/${BRANCH}`, 'HEAD'], {
+    allowFailure: true,
+  });
   if (remoteIsAncestor.code === 0) return;
-  const localIsAncestor = await run('git', ['merge-base', '--is-ancestor', 'HEAD', `origin/${BRANCH}`], { allowFailure: true });
+  const localIsAncestor = await run('git', ['merge-base', '--is-ancestor', 'HEAD', `origin/${BRANCH}`], {
+    allowFailure: true,
+  });
   if (localIsAncestor.code === 0) {
-    throw new Error(`origin/${BRANCH} lebih maju dari HEAD lokal. Auto Git Sync hanya boleh mendorong perubahan lokal; rebase otomatis dinonaktifkan karena dapat mengganti src/*.js ketika bot sedang berjalan dan memicu controlled process restart. Hentikan bot, lalu lakukan git pull --rebase origin ${BRANCH} secara manual.`);
+    throw new Error(
+      `origin/${BRANCH} lebih maju dari HEAD lokal. Auto Git Sync hanya boleh mendorong perubahan lokal; rebase otomatis dinonaktifkan karena dapat mengganti src/*.js ketika bot sedang berjalan dan memicu controlled process restart. Hentikan bot, lalu lakukan git pull --rebase origin ${BRANCH} secara manual.`,
+    );
   }
-  throw new Error('Branch lokal dan origin/main bercabang. Auto-push dihentikan agar tidak menimpa riwayat GitHub. Selesaikan merge/rebase secara manual.');
+  throw new Error(
+    'Branch lokal dan origin/main bercabang. Auto-push dihentikan agar tidak menimpa riwayat GitHub. Selesaikan merge/rebase secara manual.',
+  );
 }
 
 async function syncOnce() {
@@ -154,6 +273,7 @@ async function syncOnce() {
   logger.debug({ patterns: ignoreRules.length }, '.gitignore dibaca sebelum proses staging');
 
   await assertRepository();
+  await assertNoProtectedStagedFiles();
   const result = await stageEligibleChanges();
   const head = await run('git', ['rev-parse', '--verify', 'HEAD'], { allowFailure: true });
   if (head.code !== 0) {
@@ -178,14 +298,18 @@ async function syncOnce() {
 }
 
 export async function startAutoGitSync({ root = PROJECT_ROOT } = {}) {
-  if (path.resolve(root) !== PROJECT_ROOT) throw new Error('Auto Git Sync hanya boleh dijalankan dari root proyek Ocha Lidya.');
+  if (path.resolve(root) !== PROJECT_ROOT)
+    throw new Error('Auto Git Sync hanya boleh dijalankan dari root proyek Ocha Lidya.');
 
   // ZIP/source deployments do not contain .git. Disable sync cleanly rather
   // than launching a watcher that repeatedly logs fatal git errors.
   try {
     await assertRepository();
   } catch (error) {
-    logger.warn({ reason: error.message, root: PROJECT_ROOT }, 'Auto Git Sync nonaktif: folder ini belum siap sebagai clone Git yang valid. Jalankan npm run git:setup setelah konfigurasi Git tersedia.');
+    logger.warn(
+      { reason: error.message, root: PROJECT_ROOT },
+      'Auto Git Sync nonaktif: folder ini belum siap sebagai clone Git yang valid. Jalankan npm run git:setup setelah konfigurasi Git tersedia.',
+    );
     return { enabled: false, pause() {}, resume() {}, async close() {} };
   }
   let timer;
@@ -203,7 +327,10 @@ export async function startAutoGitSync({ root = PROJECT_ROOT } = {}) {
   };
 
   const runSync = async reason => {
-    if (syncing) { queued = true; return; }
+    if (syncing) {
+      queued = true;
+      return;
+    }
     syncing = true;
     try {
       logger.debug({ reason }, 'Memeriksa perubahan proyek untuk auto-push');
@@ -228,12 +355,12 @@ export async function startAutoGitSync({ root = PROJECT_ROOT } = {}) {
       const relative = path.relative(PROJECT_ROOT, candidate);
       return relative && isHardIgnored(relative);
     },
-    ignorePermissionErrors: true
+    ignorePermissionErrors: true,
   });
 
   watcher.on('all', async (event, absolutePath) => {
     const relative = path.relative(PROJECT_ROOT, absolutePath);
-    if (!relative || isHardIgnored(relative)) return;
+    if (!relative || isHardIgnored(relative) || isPrivatePublicationPath(relative)) return;
 
     // .env is deliberately ignored by Git, but changing it may add/update the PAT.
     if (relative === '.env') {
@@ -270,7 +397,10 @@ export async function startAutoGitSync({ root = PROJECT_ROOT } = {}) {
     if (watcherFailureHandled) return;
     watcherFailureHandled = true;
     if (error?.code === 'ENOSPC') {
-      logger.error({ code: error.code, syscall: error.syscall, path: error.path }, 'Filesystem watcher kehabisan kuota; Auto Git Sync watcher dihentikan agar tidak membebani runtime. Kecualikan direktori sesi/runtime dan naikkan fs.inotify.max_user_watches bila memang diperlukan.');
+      logger.error(
+        { code: error.code, syscall: error.syscall, path: error.path },
+        'Filesystem watcher kehabisan kuota; Auto Git Sync watcher dihentikan agar tidak membebani runtime. Kecualikan direktori sesi/runtime dan naikkan fs.inotify.max_user_watches bila memang diperlukan.',
+      );
       void watcher.close().catch(() => {});
       return;
     }
@@ -303,6 +433,6 @@ export async function startAutoGitSync({ root = PROJECT_ROOT } = {}) {
       stopped = true;
       clearTimeout(timer);
       await watcher.close();
-    }
+    },
   };
 }

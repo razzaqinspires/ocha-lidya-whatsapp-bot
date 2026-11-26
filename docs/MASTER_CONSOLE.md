@@ -4,15 +4,15 @@
 
 The runner switches are independent. There is no global `exec` gate in schema v11.
 
-| Prefix | Runtime | Control | Meaning |
-|---|---|---|---|
-| `>` | JavaScript eval | `.master eval on/off` | Evaluate JavaScript |
-| `=>` | JavaScript return | `.master eval on/off` | Return an expression value |
-| `$` | CLI shell | `.master cli on/off` | Run a shell command |
-| `>>` | Python | `.master python on/off` | Run Python |
-| `>>>` | Go | `.master golang on/off` | Run Go |
+| Prefix | Runtime           | Control                 | Meaning                    |
+| ------ | ----------------- | ----------------------- | -------------------------- |
+| `>`    | JavaScript eval   | `.master eval on/off`   | Evaluate JavaScript        |
+| `=>`   | JavaScript return | `.master eval on/off`   | Return an expression value |
+| `$`    | CLI shell         | `.master cli on/off`    | Run a shell command        |
+| `>>`   | Python            | `.master python on/off` | Run Python                 |
+| `>>>`  | Go                | `.master golang on/off` | Run Go                     |
 
-`.master status` displays the canonical control panel. `.master exec on/off` remains as a temporary compatibility alias for `.master cli on/off`; it no longer enables a separate global switch. New installations and documentation must use `cli` only.
+`.master status` displays the canonical control panel. `.master template on|off|status` controls only the JavaScript eval frame `╭─ OCHA MASTER CONSOLE · JAVASCRIPT ───────`; hiding it does not alter output content. The default is visible. Eval output is no longer sliced to `masterMaxOutput`: output longer than 30,000 characters is sent as a UTF-8 `.txt` document quoted to the invoking message, preserving the complete text. Outputs at or below the threshold remain inline. The CLI/Python/Go process collectors retain their separate configured output limit. `.master exec on/off` remains as a temporary compatibility alias for `.master cli on/off`; it no longer enables a separate global switch. New installations and documentation must use `cli` only.
 
 Every runner is owner-only. By default all runner syntax and the `.master` console are blocked in groups; the verified owner may enable the group gate from a private chat using `.master group on`, inspect it with `.master group status`, and turn it off with `.master group off`. Only the verified owner can use it after the group gate is enabled. Each runner has independent timeout/output limits. The JavaScript `vm` context is a convenience context, not a security boundary; eval remains disabled by default and must only be enabled for trusted owner operation.
 
@@ -28,7 +28,6 @@ Every runner is owner-only. By default all runner syntax and the `.master` conso
 
 Each process invocation is reported with runtime name, command, exit code, success/failure, stdout, and stderr. Local application logs include start/completion records with chat type. The terminal output is deliberately separate from WhatsApp message content and does not use interactive-message payloads.
 
-
 ## v1.7.2 — Runtime context and workload confirmation
 
 JavaScript eval (`>` / `=>`) receives live `sock`, `m` / `message`, `config`, `logger`, `db`, `fs`, `path`, `os`, `crypto`, `childProcess`, `process`, `Buffer`, `require`, and `importModule`. These are real host objects and APIs. Eval is owner-only but is not a sandbox; it can modify bot state and host files.
@@ -43,7 +42,6 @@ Riwayat perilaku sebelum v1.10.47: workload mencurigakan selalu meminta konfirma
 
 Penting: pemeriksaan lokal bukan pengganti analisis AI penuh. JavaScript eval berjalan dalam proses bot dengan kapabilitas runtime yang tersedia; konfirmasi hanya mengizinkan eksekusi kode yang dipahami owner, bukan menjadikannya sandbox aman.
 
-
 ## v1.10.29 — owner-controlled workload warning and CTA Copy
 
 The owner can control warning presentation independently from AI semantic assessment. `.master warning off` skips confirmation prompts for non-hard-blocked work and records an audit event. Hard-blocks remain non-bypassable. `.master review off` disables only AI semantic assessment. The current behavior is documented in **Group access and warning controls** above.
@@ -51,3 +49,11 @@ The owner can control warning presentation independently from AI semantic assess
 Warnings in compact and detailed modes are sent using a native-flow `cta_copy` button that copies the exact one-time `CONFIRM CODE` phrase, plus quick-reply buttons for explicit confirmation or cancellation. If native-flow sending fails, a text fallback is used. Confirmation stays bound to the owner sender, chat, code hash, warning message and 120-second TTL.
 
 The workload classifier no longer treats every `sock.relayMessage()` or `sock.sendMessage()` call as inherently suspicious. A send call explicitly scoped to `m.chat` in the verified owner's private chat is considered a bounded current-chat action. Arbitrary recipients and group-context sends remain flagged. Other suspicious APIs, destructive patterns, and host-wide hard-blocks are not relaxed.
+
+## JavaScript eval output delivery
+
+- `.master template status` reports whether the decorative console frame is visible.
+- `.master template off` sends the raw eval output without the frame.
+- `.master template on` restores the frame.
+- Output over 30,000 characters is delivered as `ocha-eval-output-<timestamp>.txt`; no `masterMaxOutput` slicing is applied to JavaScript eval results.
+- The 30,000-character threshold is measured on the rendered UTF-8 text as JavaScript string characters; WhatsApp document delivery uses `text/plain`.

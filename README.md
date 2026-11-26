@@ -1,8 +1,70 @@
 # Ocha Lidya WhatsApp Bot
 
+> Project structure: see [`docs/architecture/PROJECT_STRUCTURE.md`](docs/architecture/PROJECT_STRUCTURE.md). Release history index: [`docs/releases/CHANGELOG.md`](docs/releases/CHANGELOG.md); detailed history: [`docs/CHANGE_LOG.md`](docs/CHANGE_LOG.md). Local-only project intelligence and operator release metadata are stored under `.private/` and `.release/`; these directories are excluded from public Git publication.
+
+## Repository map and verified snapshot status
+
+The supplied source archive identified itself as **v1.10.51**; this paired operator release advances it to **v1.10.53**. It was inspected against the actual implementation; it is not a Git checkout, so commit ancestry is unverified. The separately inspected public `main` branch was at commit `9e5791778f35838531d937df20a11dee53d25ef2` / package `1.10.48` on 2026-11-26. Reconcile those trees through a reviewed Git diff before publishing or replacing files.
+
+```mermaid
+flowchart TD
+  WA[WhatsApp events / Baileys] --> SER[Serializer]
+  SER --> DIS[Core dispatcher]
+  DIS --> PL[Plugin registry + policy gates]
+  DIS --> AI[Nexora AI engine]
+  AI --> VAULT[Per-user context and encrypted vault]
+  AI --> LLM[Groq / Gemini / DeepSeek / OpenAI]
+  PL --> ACIE[ACIE virtual command integration]
+  ACIE --> INTAKE[Immutable intake + static analysis]
+  INTAKE --> GOV[Governance and approval gates]
+  GOV --> SANDBOX[Isolated provider runner]
+  DB[JSONL database and archives] <--> AI
+  DB <--> ACIE
+  BOOT[Node lifecycle] --> NADI[External NADI Python sidecar]
+  NADI --> STATE[Loopback /v1 API and heartbeat]
+  TEL[Aggregate kernel telemetry] --> WEB[Public read-only kernel dashboard]
+```
+
+The two provider systems are intentionally separate: Nexora owns chat generation; ACIE routes independently approved contribution capabilities. NADI is a separate repository/component and supplies operational telemetry, not a second production chat model.
+
+## Public / private runtime extraction (v1.10.53)
+
+The four owner-designated private modules are preserved byte-identically under the ignored local path `.private/ocha-private-runtime/`. Public source paths contain only compatibility facades (`src/lib/helpers.js`, `src/lib/freply.js`, `src/lib/serializ_simple.js`); the private `.test` Message Test Lab is inserted into the existing plugin registry only after owner/private policy checks and command/alias collision validation.
+
+The complete Ocha operator ZIP includes `.private/ocha-private-runtime/` so the local deployment has all four modules in one base folder. This archive is confidential operator distribution, not a public GitHub release; never upload it to a public release page or attach it to a public workflow artifact. `.gitignore`, publication policy, Auto Git Sync, the source watcher and Prettier ignore rules keep that directory out of future public Git staging. A clean public Git clone does not include `.private` and therefore continues in text-first compatibility mode. Set `OCHA_PRIVATE_RUNTIME_REQUIRED=1` on an operator VPS to fail closed if local private source is absent or fails integrity verification. Check it with `npm run private-runtime:verify` and `npm run private-runtime:status`.
+
+The private package manifest retains the four SHA-256 values and `original-source/` receipts. The formatter target list and `.prettierignore` exclude the private source. See [`docs/PRIVATE_RUNTIME_EXTRACTION.md`](docs/PRIVATE_RUNTIME_EXTRACTION.md).
+
+## Two independent base projects and one release command
+
+Every release is delivered as two compatible source bases: `ocha-lidya-bot` (Node.js) and `artificial-consciousness-component` (Python). The AC source remains in its own repository and is connected through the pinned NADI HTTP API v1 commit `16c2fa6e1b500745f260bcf091284a6e18726883` (version 2.1.0). Ocha contains no copy of the NADI Python package. See [`docs/TWO_BASE_RELEASE.md`](docs/TWO_BASE_RELEASE.md).
+
+From the Ocha root, run the unified pipeline with `npm run maintain:two-bases -- --ac-root ../artificial-consciousness-component --out ../two-base-release`. It runs both bases’ automated regression/security/documentation checks, the ACIE local audit, NADI HTTP integration, then emits two separate ZIPs plus QA and checksum manifests. Use `npm run release:two-bases` for packaging only. The Ocha output is a complete local operator bundle and must not be published; the AC package remains a separate base.
+
+## ACIE operational audit
+
+Run `npm run ops:audit-runtime` on the VPS to inspect persisted dynamic provider/command registries, activation gates, health freshness, consecutive failures, circuit breakers, loader registration and sandbox availability. This audit is read-only and does not ping external provider APIs. Run `npm run test:nadi-integration` to start the pinned sibling AC component and exercise Ocha HTTP API v1 locally without connecting WhatsApp. For an approved provider protocol test, use `.acie provider test <provider-id> [capability-id]` from the owner private chat. See [`docs/ACIE_VPS_RUNTIME_AUDIT.md`](docs/ACIE_VPS_RUNTIME_AUDIT.md). The companion AC component base carries its own Artificial Consciousness Maintenance Report.
+
+```mermaid
+flowchart LR
+  CORE[Public Ocha core] --> FACADE[Public compatibility facades]
+  FACADE --> LOADER[Optional private runtime loader]
+  LOADER -->|Absent| FALLBACK[Text-first public mode]
+  LOADER -->|Validated| PRIVATE[Private runtime package]
+  PRIVATE --> BRIDGE[Allowlisted host bridge]
+  PRIVATE --> CHECK[Owner/private + collision gates]
+  CHECK --> REGISTRY[Existing plugin registry and dispatcher]
+```
+
+**Release and verification:** [Paired release report](docs/RELEASE_REPORT_1.10.52.md) · **Audit and registries:** [Repository audit](docs/REPOSITORY_AUDIT_1.10.51.md) · [Source/function index](docs/SOURCE_COMPONENT_INDEX_1.10.52.md) · [Command registry audit](docs/COMMAND_REGISTRY_AUDIT_1.10.51.md) · [Provider registry audit](docs/PROVIDER_REGISTRY_AUDIT_1.10.51.md) · [NADI maintenance report](docs/NADI_MAINTENANCE_REPORT_2.1.0.md) · [Canonical changelog](docs/CHANGE_LOG.md).
+
+## Contribution preservation update (v1.10.49)
+
+The full Rizkyrohan Text Canvas v1 source is preserved byte-for-byte under `acie-fixtures/contributions/rizkyrohan-text-canvas-v1/`. Its ACIE test reads the exact source and verifies the recorded 3,460-byte SHA-256 fingerprint. The `.textimage` / `.timg` command remains a hidden draft pending license, asset, bridge, sandbox, and owner-authorization review. See [`docs/contributions/RIZKYROHAN_TEXT_CANVAS.md`](docs/contributions/RIZKYROHAN_TEXT_CANVAS.md).
+
 ## AI Response Quality Guard (v1.10.48)
 
-Substantive questions and tasks are now protected from short generic invitations. A detected non-answer receives one bounded correction attempt; if it remains generic, Ocha returns a truthful, topic-preserving fallback. Current-event claims require a real retrieved source; no live news source is added by this change. See [`docs/AI_RESPONSE_QUALITY.md`](docs/AI_RESPONSE_QUALITY.md).
+Substantive questions and tasks are protected from short generic invitations. A detected non-answer receives one bounded correction attempt; if it remains generic, Ocha returns a truthful, topic-preserving fallback. Current-event claims require a real retrieved source; no live news source is added by this change. See [`docs/AI_RESPONSE_QUALITY.md`](docs/AI_RESPONSE_QUALITY.md).
 
 ## ACIE — Autonomous Contribution Integration & Orchestration Engine (v1.10.46 · Rizkyrohan intake review)
 
@@ -52,7 +114,7 @@ Global menu preferences are owner-controlled with `.setmenu descriptions on|off`
 
 ## Live command directory and expanded profiles (v1.10.16)
 
-`.menu` reads the active plugin registry instead of a hard-coded command list. It lists every loaded canonical plugin command, displays optional argument usage, follows the configured prefix, and includes a branded banner from `assets/menu-banner.jpg`. Owner commands such as `.test` and `.apikey` are included automatically. `.profile` now displays current/best daily streaks, daily XP remaining, achievements, aggregate interaction statistics, level progression, and an upgraded branded card. Streaks use Asia/Jakarta calendar days. See `docs/MENU_AND_COMMAND_REGISTRY.md` and `docs/USER_PROFILES.md`.
+`.menu` reads the active plugin registry instead of a hard-coded command list. It lists every loaded canonical plugin command, displays optional argument usage, follows the configured prefix, and includes a branded banner from `assets/menu-banner.jpg`. Owner commands such as `.test` (only when the external private runtime is installed) and `.apikey` are included automatically. `.profile` now displays current/best daily streaks, daily XP remaining, achievements, aggregate interaction statistics, level progression, and an upgraded branded card. Streaks use Asia/Jakarta calendar days. See `docs/MENU_AND_COMMAND_REGISTRY.md` and `docs/USER_PROFILES.md`.
 
 ## Owner group management and in-group mute activation (v1.10.15)
 
@@ -74,17 +136,17 @@ Schema v34 ships with a 100 ms coalescing window, 96 recent history turns, a 96,
 
 ## 1. Project identity
 
-| Property | Value |
-|---|---|
-| Bot name | Ocha Lidya |
-| Aliases | Ocha, Lidya |
-| Owner | `6283193905842` |
-| Expected bot number | `6282177461231` |
-| Runtime | Node.js 20.18+ (Node.js 22 LTS recommended) |
-| Module system | ESM |
-| WhatsApp transport | `@whiskeysockets/baileys` |
-| Persistence | Append-only JSONL event database |
-| Plugin system | Dynamic ESM modules with hot reload |
+| Property            | Value                                       |
+| ------------------- | ------------------------------------------- |
+| Bot name            | Ocha Lidya                                  |
+| Aliases             | Ocha, Lidya                                 |
+| Owner               | `6283193905842`                             |
+| Expected bot number | `6282177461231`                             |
+| Runtime             | Node.js 20.18+ (Node.js 22 LTS recommended) |
+| Module system       | ESM                                         |
+| WhatsApp transport  | `@whiskeysockets/baileys`                   |
+| Persistence         | Append-only JSONL event database            |
+| Plugin system       | Dynamic ESM modules with hot reload         |
 
 The expected bot number is a validation setting. The connection supports both QR login and phone-number pairing code login. The actual connected account is checked after authentication.
 
@@ -171,12 +233,15 @@ import { loadConfig, getConfig, updateConfig } from './src/config.js';
 
 await loadConfig();
 
-await updateConfig(config => {
-  config.mode = 'self';
-}, {
-  actor: 'owner',
-  reason: 'maintenance window'
-});
+await updateConfig(
+  config => {
+    config.mode = 'self';
+  },
+  {
+    actor: 'owner',
+    reason: 'maintenance window',
+  },
+);
 
 console.log(getConfig().mode);
 ```
@@ -260,9 +325,9 @@ Retention is bounded. When the configured maximum is exceeded, the oldest archiv
 
 ### Database health and archive commands
 
-| Command | Description |
-|---|---|
-| `.dbstatus` | Primary/replica integrity and archive count |
+| Command               | Description                                          |
+| --------------------- | ---------------------------------------------------- |
+| `.dbstatus`           | Primary/replica integrity and archive count          |
 | `.dbsearch <keyword>` | Search retained ZIP archives without full extraction |
 
 ## AI API key management (v1.6.0)
@@ -283,44 +348,44 @@ Managed keys are stored in `data/secrets/provider-keys.json` with restrictive lo
 
 Default settings are declared in `src/config.js`; runtime changes are persisted in the JSONL database.
 
-| Setting | Default | Description |
-|---|---|---|
-| `bot.name` | `Ocha Lidya` | Display name used by bot messages |
-| `bot.aliases` | `Ocha`, `Lidya` | Alternate names |
-| `bot.owner` | `6283193905842` | Owner number |
-| `bot.expectedNumber` | `6282177461231` | Expected paired WhatsApp account |
-| `whatsapp.recoverInvalidSession` | `true` | Preserve rejected registered sessions as timestamped backups and make one fresh pairing attempt after 401 |
-| `logging.level` | `info` | Application log threshold |
-| `logging.color` | `auto` | Enable terminal colors when attached to a TTY |
-| `logging.timeZone` | `Asia/Jakarta` | Timestamp timezone for application logs |
-| `mode` | `public` | `public` or `self` |
-| `ui.buttonsEnabled` | `true` | Legacy state mirrored by `.buttons on/off`; the adaptive adapter reads `ui.fullButton.enabled` |
-| `ui.fullButton.enabled` | `false` | Opt-in adaptive command UI; owner enables it with `.buttons full all` |
-| `groupMetadata.initialSync` | `true` | Perform a single initial batch load of participating group metadata |
-| `groupMetadata.fetchCooldownMs` | 600,000 ms | Cooldown for a one-time lazy fetch of a group missing from cache |
-| `ai.timeoutMs` | 60,000 ms | Per-provider request timeout in the standard profile; speed profiles may override it |
-| `ai.totalBudgetMs` | 180,000 ms | Shared absolute budget for one AI job, including output continuation |
-| `ai.maxOutputTokens` | 32,768 | Requested output budget; upstream model ceilings still apply |
-| `ai.historyMessages` | 96 | Recent turns supplied to the model; long-term archive remains searchable |
-| `ai.maxInputChars` | 96,000 | Application input envelope; provider context limits still apply |
-| `ai.coalesceMs` | 100 ms | Merge rapid adjacent messages from one sender into a single AI turn |
-| `prefix.mode` | `multi` | `single`, `multi`, or `none` |
-| `prefix.single` | `.` | Single prefix |
-| `prefix.list` | `. ! / #` | Multi-prefix list |
-| `security.masterEvalEnabled` | `false` | JavaScript evaluator switch |
-| `security.masterCliEnabled` | `false` | CLI shell (`$`) switch; independent of other runners |
-| `security.masterPythonEnabled` | `false` | Python runner (`>>`) switch |
-| `security.masterGolangEnabled` | `false` | Go runner (`>>>`) switch |
-| `features.groupsMuted` | `true` | Global default for group command/AI mute; metadata/contact ingestion stays active |
-| `features.groupMuteOverrides` | `{}` | Per-group interaction state keyed by WhatsApp Group JID |
-| `features.lastJoinedGroupId` | `''` | Retained compatibility field; no longer used to guess a target for `.mute` |
-| `database.segmentMaxBytes` | 8 MiB | Journal archive threshold |
-| `database.archiveMaxCount` | 120 | Maximum retained ZIP archives |
-| `database.mirrorEnabled` | `true` | Maintain local replica |
-| `database.fsync` | `true` | Flush writes before acknowledging |
-| `limits.pluginTimeoutMs` | 15,000 | Plugin timeout policy |
-| `limits.masterTimeoutMs` | 8,000 | Developer runner timeout |
-| `limits.masterMaxOutput` | 12,000 | Developer runner output cap |
+| Setting                          | Default         | Description                                                                                               |
+| -------------------------------- | --------------- | --------------------------------------------------------------------------------------------------------- |
+| `bot.name`                       | `Ocha Lidya`    | Display name used by bot messages                                                                         |
+| `bot.aliases`                    | `Ocha`, `Lidya` | Alternate names                                                                                           |
+| `bot.owner`                      | `6283193905842` | Owner number                                                                                              |
+| `bot.expectedNumber`             | `6282177461231` | Expected paired WhatsApp account                                                                          |
+| `whatsapp.recoverInvalidSession` | `true`          | Preserve rejected registered sessions as timestamped backups and make one fresh pairing attempt after 401 |
+| `logging.level`                  | `info`          | Application log threshold                                                                                 |
+| `logging.color`                  | `auto`          | Enable terminal colors when attached to a TTY                                                             |
+| `logging.timeZone`               | `Asia/Jakarta`  | Timestamp timezone for application logs                                                                   |
+| `mode`                           | `public`        | `public` or `self`                                                                                        |
+| `ui.buttonsEnabled`              | `true`          | Legacy state mirrored by `.buttons on/off`; the adaptive adapter reads `ui.fullButton.enabled`            |
+| `ui.fullButton.enabled`          | `false`         | Opt-in adaptive command UI; owner enables it with `.buttons full all`                                     |
+| `groupMetadata.initialSync`      | `true`          | Perform a single initial batch load of participating group metadata                                       |
+| `groupMetadata.fetchCooldownMs`  | 600,000 ms      | Cooldown for a one-time lazy fetch of a group missing from cache                                          |
+| `ai.timeoutMs`                   | 60,000 ms       | Per-provider request timeout in the standard profile; speed profiles may override it                      |
+| `ai.totalBudgetMs`               | 180,000 ms      | Shared absolute budget for one AI job, including output continuation                                      |
+| `ai.maxOutputTokens`             | 32,768          | Requested output budget; upstream model ceilings still apply                                              |
+| `ai.historyMessages`             | 96              | Recent turns supplied to the model; long-term archive remains searchable                                  |
+| `ai.maxInputChars`               | 96,000          | Application input envelope; provider context limits still apply                                           |
+| `ai.coalesceMs`                  | 100 ms          | Merge rapid adjacent messages from one sender into a single AI turn                                       |
+| `prefix.mode`                    | `multi`         | `single`, `multi`, or `none`                                                                              |
+| `prefix.single`                  | `.`             | Single prefix                                                                                             |
+| `prefix.list`                    | `. ! / #`       | Multi-prefix list                                                                                         |
+| `security.masterEvalEnabled`     | `false`         | JavaScript evaluator switch                                                                               |
+| `security.masterCliEnabled`      | `false`         | CLI shell (`$`) switch; independent of other runners                                                      |
+| `security.masterPythonEnabled`   | `false`         | Python runner (`>>`) switch                                                                               |
+| `security.masterGolangEnabled`   | `false`         | Go runner (`>>>`) switch                                                                                  |
+| `features.groupsMuted`           | `true`          | Global default for group command/AI mute; metadata/contact ingestion stays active                         |
+| `features.groupMuteOverrides`    | `{}`            | Per-group interaction state keyed by WhatsApp Group JID                                                   |
+| `features.lastJoinedGroupId`     | `''`            | Retained compatibility field; no longer used to guess a target for `.mute`                                |
+| `database.segmentMaxBytes`       | 8 MiB           | Journal archive threshold                                                                                 |
+| `database.archiveMaxCount`       | 120             | Maximum retained ZIP archives                                                                             |
+| `database.mirrorEnabled`         | `true`          | Maintain local replica                                                                                    |
+| `database.fsync`                 | `true`          | Flush writes before acknowledging                                                                         |
+| `limits.pluginTimeoutMs`         | 15,000          | Plugin timeout policy                                                                                     |
+| `limits.masterTimeoutMs`         | 8,000           | Developer runner timeout                                                                                  |
+| `limits.masterMaxOutput`         | 12,000          | Developer runner output cap                                                                               |
 
 Use owner commands or the `src/config.js` API for changes. Do not manually edit active JSONL journal files.
 
@@ -330,64 +395,64 @@ Default multi-prefix values are `.`, `!`, `/`, and `#`.
 
 ### General
 
-| Command | Alias | Description |
-|---|---|---|
-| `.menu` | `.help`, `.commands` | Display command menu |
-| `.ping` | `.speed`, `.latency` | Basic response latency |
-| `.owner` | `.creator` | Send the owner WhatsApp contact card |
-| `.about` | `.botinfo` | Bot identity, creator, and organization information |
-| `.profile` | `.me`, `.level`, `.xp` | Personal XP, level, rank, relationship role, and progress card |
-| `.runtime` | `.system`, `.sysinfo` | Node runtime, memory, host and process details |
-| `.kernel` | `.kernelstatus`, `.nadiweb` | Public read-only WebView for live AC-Kernel NADI circuits, WhatsApp activity, total bot outputs, AI response totals, latency, and mathematical telemetry |
-| `.groupinfo` | `.gcinfo`, `.grouplist` | Owner-only private group list with active/mute statuses; in groups, show that group's cached metadata |
-| `.run python <code>` | `.execute`, `.previewcode` | Execute Python/Node.js or display HTML in an isolated temporary web preview |
-| Natural-language `coba jalankan` | — | Run the most recent assistant code block and return a session URL |
-| `.nexora status` | `.capability`, `.aitools` | Owner-only AI capability and Code Lab worker controls |
+| Command                          | Alias                       | Description                                                                                                                                              |
+| -------------------------------- | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `.menu`                          | `.help`, `.commands`        | Display command menu                                                                                                                                     |
+| `.ping`                          | `.speed`, `.latency`        | Basic response latency                                                                                                                                   |
+| `.owner`                         | `.creator`                  | Send the owner WhatsApp contact card                                                                                                                     |
+| `.about`                         | `.botinfo`                  | Bot identity, creator, and organization information                                                                                                      |
+| `.profile`                       | `.me`, `.level`, `.xp`      | Personal XP, level, rank, relationship role, and progress card                                                                                           |
+| `.runtime`                       | `.system`, `.sysinfo`       | Node runtime, memory, host and process details                                                                                                           |
+| `.kernel`                        | `.kernelstatus`, `.nadiweb` | Public read-only WebView for live AC-Kernel NADI circuits, WhatsApp activity, total bot outputs, AI response totals, latency, and mathematical telemetry |
+| `.groupinfo`                     | `.gcinfo`, `.grouplist`     | Owner-only private group list with active/mute statuses; in groups, show that group's cached metadata                                                    |
+| `.run python <code>`             | `.execute`, `.previewcode`  | Execute Python/Node.js or display HTML in an isolated temporary web preview                                                                              |
+| Natural-language `coba jalankan` | —                           | Run the most recent assistant code block and return a session URL                                                                                        |
+| `.nexora status`                 | `.capability`, `.aitools`   | Owner-only AI capability and Code Lab worker controls                                                                                                    |
 
 ### Owner and developer
 
-| Command | Alias | Description |
-|---|---|---|
-| `.setmode public` | `.mode public` | Allow public command usage |
-| `.setmode self` | `.mode self` | Restrict command usage to owner |
-| `.setprefix single !` | `.prefix` | Set single-prefix mode |
-| `.setprefix multi` | `.prefix` | Enable multi-prefix mode |
-| `.setprefix multi add #` | `.prefix` | Add a multi-prefix |
-| `.setprefix multi del #` | `.prefix` | Remove a multi-prefix |
-| `.setprefix none` | `.prefix` | Disable prefix requirement |
-| `.setprefix show` | `.prefix` | Display prefix configuration |
-| `.setbotname Ocha Lidya` | `.botname` | Change internal display name |
-| `.plugins` | `.pluginlist` | List loaded plugins |
-| `.reload` | `.reloadplugins` | Reload plugin registry |
-| `.jid` | `.jidinfo`, `.liddebug` | Inspect current PN/LID fields |
-| `.dbstatus` | `.database`, `.dbhealth` | Database health |
-| `.dbsearch keyword` | `.archivefind` | Search ZIP archives |
-| `.aistatus` | `.aihealth` | Show AI provider readiness, creator identity policy, relationship profiles, key rotation, counters, timeout, and speed profile |
-| `.nexora status` | `.capability`, `.aitools` | Show Nexora capability switches, Code Lab status, queue, workers, and tunnel |
-| `.nexora code on/off` | — | Enable or disable the isolated Code Lab service |
-| `.nexora auto-run on/off` | — | Enable or disable natural-language code execution |
-| `.nexora tunnel on/off` | — | Enable or disable temporary public TryCloudflare links |
-| `.nexora all on/off` | — | Turn all Nexora AI and Code Lab capabilities on/off globally |
-| `.nexora workers 1-4` | — | Set simultaneous worker count (not session count) |
-| `.nexora runtime docker/podman` | — | Select the container runtime |
-| `.aiset on/off` | `.aiconfig` | Enable or disable AI |
-| `.aiset speed boost/fast/balanced/deep` | — | Switch between low-latency, balanced, and extended reasoning profiles |
-| `.aiset order <providers>` | — | Set provider fallback order |
-| `.aiset model <provider> <model>` | — | Override one provider's model ID |
-| `.aiset identity on/off` | — | Control public disclosure of creator and organization identity |
-| `.buttons full all/off/status/audit` | `.button`, `.fullbutton`, `.commandbutton` | Owner control for the adaptive UI engine and per-command audit |
-| `.master status` | `.masterconfig` | Show master runner switches |
-| `.master eval on/off` | — | Enable/disable JavaScript evaluation |
-| `.master cli on/off` | — | Enable/disable shell CLI directly; no global `exec` prerequisite |
-| `.master python on/off` | — | Enable/disable Python runner |
-| `.master golang on/off` | — | Enable/disable Go runner |
-| `.joingc <url>` | `.joingroup` | Owner-only private command; joins a group using an official WhatsApp invite link and starts it muted |
-| `.mute on/off/status` | `.groupmute` | Owner-only in-group control for the current group; private `.mute on all` is an emergency global mute |
-| `.test <type> <options>` | `.testmsg`, `.messagetest` | Owner-only Baileys message lab: native-flow, hydrated template, event/date, poll, PTV, view-once, AI rich, and carousel |
-| `.yts <query>` | `.ytsearch` | YouTube text-only carousel (five results per page), MP3/MP4 choices, and a next-page quick reply |
-| `.ytmp3 <url>` | — | Download audio as MP3 |
-| `.ytmp4 <url> [resolution]` | — | Show available MP4 resolutions, or download a selected quality |
-| `.ytm <song title>` | `.ytmusic`, `.ytplay` | Search and send audio only using an isolated temporary job directory |
+| Command                                 | Alias                                      | Description                                                                                                                    |
+| --------------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| `.setmode public`                       | `.mode public`                             | Allow public command usage                                                                                                     |
+| `.setmode self`                         | `.mode self`                               | Restrict command usage to owner                                                                                                |
+| `.setprefix single !`                   | `.prefix`                                  | Set single-prefix mode                                                                                                         |
+| `.setprefix multi`                      | `.prefix`                                  | Enable multi-prefix mode                                                                                                       |
+| `.setprefix multi add #`                | `.prefix`                                  | Add a multi-prefix                                                                                                             |
+| `.setprefix multi del #`                | `.prefix`                                  | Remove a multi-prefix                                                                                                          |
+| `.setprefix none`                       | `.prefix`                                  | Disable prefix requirement                                                                                                     |
+| `.setprefix show`                       | `.prefix`                                  | Display prefix configuration                                                                                                   |
+| `.setbotname Ocha Lidya`                | `.botname`                                 | Change internal display name                                                                                                   |
+| `.plugins`                              | `.pluginlist`                              | List loaded plugins                                                                                                            |
+| `.reload`                               | `.reloadplugins`                           | Reload plugin registry                                                                                                         |
+| `.jid`                                  | `.jidinfo`, `.liddebug`                    | Inspect current PN/LID fields                                                                                                  |
+| `.dbstatus`                             | `.database`, `.dbhealth`                   | Database health                                                                                                                |
+| `.dbsearch keyword`                     | `.archivefind`                             | Search ZIP archives                                                                                                            |
+| `.aistatus`                             | `.aihealth`                                | Show AI provider readiness, creator identity policy, relationship profiles, key rotation, counters, timeout, and speed profile |
+| `.nexora status`                        | `.capability`, `.aitools`                  | Show Nexora capability switches, Code Lab status, queue, workers, and tunnel                                                   |
+| `.nexora code on/off`                   | —                                          | Enable or disable the isolated Code Lab service                                                                                |
+| `.nexora auto-run on/off`               | —                                          | Enable or disable natural-language code execution                                                                              |
+| `.nexora tunnel on/off`                 | —                                          | Enable or disable temporary public TryCloudflare links                                                                         |
+| `.nexora all on/off`                    | —                                          | Turn all Nexora AI and Code Lab capabilities on/off globally                                                                   |
+| `.nexora workers 1-4`                   | —                                          | Set simultaneous worker count (not session count)                                                                              |
+| `.nexora runtime docker/podman`         | —                                          | Select the container runtime                                                                                                   |
+| `.aiset on/off`                         | `.aiconfig`                                | Enable or disable AI                                                                                                           |
+| `.aiset speed boost/fast/balanced/deep` | —                                          | Switch between low-latency, balanced, and extended reasoning profiles                                                          |
+| `.aiset order <providers>`              | —                                          | Set provider fallback order                                                                                                    |
+| `.aiset model <provider> <model>`       | —                                          | Override one provider's model ID                                                                                               |
+| `.aiset identity on/off`                | —                                          | Control public disclosure of creator and organization identity                                                                 |
+| `.buttons full all/off/status/audit`    | `.button`, `.fullbutton`, `.commandbutton` | Owner control for the adaptive UI engine and per-command audit                                                                 |
+| `.master status`                        | `.masterconfig`                            | Show master runner switches                                                                                                    |
+| `.master eval on/off`                   | —                                          | Enable/disable JavaScript evaluation                                                                                           |
+| `.master cli on/off`                    | —                                          | Enable/disable shell CLI directly; no global `exec` prerequisite                                                               |
+| `.master python on/off`                 | —                                          | Enable/disable Python runner                                                                                                   |
+| `.master golang on/off`                 | —                                          | Enable/disable Go runner                                                                                                       |
+| `.joingc <url>`                         | `.joingroup`                               | Owner-only private command; joins a group using an official WhatsApp invite link and starts it muted                           |
+| `.mute on/off/status`                   | `.groupmute`                               | Owner-only in-group control for the current group; private `.mute on all` is an emergency global mute                          |
+| `.test <type> <options>`                | `.testmsg`, `.messagetest`                 | Optional private-runtime-only owner/private Baileys message lab; absent in public-compatible mode                              |
+| `.yts <query>`                          | `.ytsearch`                                | YouTube text-only carousel (five results per page), MP3/MP4 choices, and a next-page quick reply                               |
+| `.ytmp3 <url>`                          | —                                          | Download audio as MP3                                                                                                          |
+| `.ytmp4 <url> [resolution]`             | —                                          | Show available MP4 resolutions, or download a selected quality                                                                 |
+| `.ytm <song title>`                     | `.ytmusic`, `.ytplay`                      | Search and send audio only using an isolated temporary job directory                                                           |
 
 All owner plugins use `ownerOnly: true`. The private group inventory from `.groupinfo` is limited to the verified owner; users in a group can still inspect that current group's cached metadata. `.joingc` is private-chat-only and accepts only a direct HTTPS invitation link hosted at `chat.whatsapp.com`; it verifies invite metadata when the Baileys socket supports it before joining. Newly joined groups start muted. To activate a group, the verified owner must send `.mute off` inside that group; `.mute on` mutes it again. Non-owner mute messages are silently ignored. Private owner chat supports `.mute on all` as an emergency mute; `.mute off all` and bulk activation are disabled. `.groupinfo` lists the local participating-group inventory, refreshed on connection startup and throttled to one full sync per five minutes.
 
@@ -417,13 +482,13 @@ In `none` mode, the first word is parsed as the command name. This can cause ord
 
 Master syntax is reserved outside the normal prefix parser and is owner-only:
 
-| Syntax | Runtime |
-|---|---|
-| `> <JavaScript>` | Async JavaScript |
+| Syntax            | Runtime                       |
+| ----------------- | ----------------------------- |
+| `> <JavaScript>`  | Async JavaScript              |
 | `=> <JavaScript>` | Async return-style JavaScript |
-| `$ <command>` | Shell CLI |
-| `>> <Python>` | Python |
-| `>>> <Go>` | Go |
+| `$ <command>`     | Shell CLI                     |
+| `>> <Python>`     | Python                        |
+| `>>> <Go>`        | Go                            |
 
 All developer runners are disabled by default. Each runner is independent: `.master eval on` enables `>`/`=>`, `.master cli on` immediately enables `$`, `.master python on` enables `>>`, and `.master golang on` enables `>>>`. `.master exec on/off` remains only as a temporary legacy alias for `.master cli on/off`; it is not a separate global gate. Group interaction is muted by default. After `.joingc <url>`, the owner must send `.mute off` inside the target group; `.mute on` there mutes it again. Non-owner mute commands are ignored. `.mute on all` in private owner chat is an emergency mute; bulk activation is disabled. Group settings are persistent database settings, not environment variables.
 
@@ -442,11 +507,12 @@ export default {
 
   async execute({ sock, m, args, text, command, config, isOwner }) {
     await m.reply(`Hello ${m.pushName || 'there'}`);
-  }
+  },
 };
 ```
 
 Place plugins in:
+
 - `src/plugins/general/` for public/general features.
 - `src/plugins/owner/` for owner-only features.
 
@@ -454,21 +520,22 @@ The loader watches plugin files and hot-reloads changes. If a replacement fails 
 
 ### Plugin context
 
-| Property | Meaning |
-|---|---|
-| `sock` | Active Baileys socket |
-| `m` | Serialized incoming message |
-| `args` | Parsed command arguments |
-| `text` | Joined argument text |
-| `command` | Normalized command name |
-| `config` | Configuration snapshot for this dispatch |
-| `isOwner` | Owner authorization result |
+| Property  | Meaning                                  |
+| --------- | ---------------------------------------- |
+| `sock`    | Active Baileys socket                    |
+| `m`       | Serialized incoming message              |
+| `args`    | Parsed command arguments                 |
+| `text`    | Joined argument text                     |
+| `command` | Normalized command name                  |
+| `config`  | Configuration snapshot for this dispatch |
+| `isOwner` | Owner authorization result               |
 
 A plugin must declare a unique `name`, an `execute` function, and optional aliases/permission metadata.
 
 ## 11. JID and LID handling
 
 WhatsApp may provide:
+
 - PN JID: `628...@s.whatsapp.net`
 - LID: opaque identifier ending in `@lid`
 
@@ -476,21 +543,11 @@ Do not manufacture a phone JID by replacing `@lid` or treating the LID numeric p
 
 For ordinary replies, use the actual incoming chat JID. PN-only workflows must require a verified mapping.
 
-## 12. Converted source modules
-### Serializer ESM compatibility
+## 12. Serializer and private-module adapters
 
-The serializer module currently exposes its API through a default export object. The application entry point imports that object and destructures `serialize`, `extendSocket`, and `trackSentMessageId`; do not convert this import back to named imports unless matching named exports are explicitly added to `src/lib/serializ_simple.js`.
+The public entry point imports `src/lib/serializ_simple.js` through a stable facade that selects either the full external private serializer or the bounded public compatibility serializer. The same pattern is used by `src/lib/helpers.js` and `src/lib/freply.js`. Do not replace these facades with private source files in a public checkout.
 
-
-User-supplied modules are retained under `src/lib/`:
-
-- `freply.js`
-- `serializ_simple.js`
-- `helpers.js`
-
-The original function bodies, classes, constants, and export aliases are preserved as far as the ESM conversion allows. Conversion history, hashes, import changes, and compatibility notes are documented in [`docs/SOURCE_CONVERSION.md`](docs/SOURCE_CONVERSION.md).
-
-
+The private package retains the original `helpers.js`, `freply.js`, and `serializ_simple.js` byte-for-byte and keeps `message-lab.js` outside the public plugin directory. Private runtime installation, contract validation, host bridge and rollback are documented in [`docs/PRIVATE_RUNTIME_EXTRACTION.md`](docs/PRIVATE_RUNTIME_EXTRACTION.md). The old `docs/SOURCE_CONVERSION.md` records the historical conversion context; it does not authorize copying private originals back into public paths.
 
 ACIE release status, preservation policy, runtime boundaries, and command activation workflow are documented in [`docs/ACIE_README.md`](docs/ACIE_README.md) and [`docs/ACIE_PART3_COMMAND_INTEGRATION.md`](docs/ACIE_PART3_COMMAND_INTEGRATION.md).
 
@@ -501,6 +558,8 @@ Every feature change must update:
 1. `README.md` — current commands, aliases, APIs, configuration, behavior, architecture, setup, and limitations.
 2. `docs/CHANGE_LOG.md` — dated change summary, additions, changes, fixes, and known limitations.
 3. Relevant detailed documentation under `docs/`.
+
+Use `npm run format:execution` for the explicit public adapter, release tooling, integration test and documentation target set and `npm run format:check` to verify it. The private package has separate `format` and `format:check` scripts; its four immutable source modules and `original-source/**` receipts are never targets. Run `npm run docs:check` and `npm run security:publication` before staging. Auto Git Sync fails closed if Prettier is unavailable.
 
 A new command is not complete until it is listed in the README and the menu. A new persistent setting must be documented in the configuration reference. A new public function must include its purpose, parameters, return behavior, and source/provenance where applicable.
 
@@ -601,7 +660,6 @@ Current package version: **1.10.21** (configuration schema v28).
 
 See [`docs/CHANGE_LOG.md`](docs/CHANGE_LOG.md) for release history and [`docs/DATABASE_DESIGN.md`](docs/DATABASE_DESIGN.md) for persistence internals.
 
-
 ## 19. Multi-provider AI assistant
 
 AI only responds to non-command messages. In private chats, normal text can invoke AI. In groups, the bot responds **only** when the message explicitly mentions the bot's actual WhatsApp JID or replies to a message authored by the bot. Other group messages are ignored. Unknown prefixed commands never fall through to AI.
@@ -621,7 +679,6 @@ Owner commands: `.aistatus`, `.aiset on`, `.aiset off`, `.aiset speed boost`, `.
 
 See [docs/AI_ENGINE.md](docs/AI_ENGINE.md) for provider model defaults, API details, recovery semantics, and operational guidance. Free tiers are not unlimited and depend on provider account, region, and quota; OpenAI and DeepSeek API usage should be treated as paid unless the account explicitly shows credits.
 
-
 ## 20. Permanent contacts, group metadata cache, and interactive commands
 
 At startup Ocha Lidya creates `data/contact.jsonl` and `data/group-metadata.jsonl` if they do not exist. `contact.jsonl` stores one JSON object per line (JSONL), with the exact fields `{"number":"628...","name":"","gender":""}`. The file is a JSONL stream, not one bracketed JSON array. Only an explicit PN JID or a PN returned by Baileys' verified LID mapping is accepted. A number is stored without `@s.whatsapp.net`; duplicates are skipped both on startup and during append. Existing duplicate/invalid rows are compacted once, with the original file copied into `data/quarantine/` first.
@@ -632,7 +689,6 @@ The first connection performs one `groupFetchAllParticipating()` batch and persi
 
 Command responses remain text-first by default. The owner can opt into the adaptive full-button engine with `.buttons full all`, inspect its per-command decisions using `.buttons full audit`, and manage exceptions using `.buttons full exclude add/remove <command|alias>`. The engine inherits a plugin's policy for every alias, chooses Quick Reply for 1–3 safe actions and Single Select for 4–8, and keeps long/code/progress/diagnostic replies in text. Commands that already own a carousel, Native Flow, image/contact card, checkout, menu pagination, or reply-session are excluded. The adapter is scoped to one plugin execution and restores the serializer reply function after completion. Taps re-enter the normal dispatcher and do not bypass authorization. See [`docs/COMMAND_BUTTON_ENGINE.md`](docs/COMMAND_BUTTON_ENGINE.md). A successful relay/ACK still does not guarantee identical Native Flow rendering on every WhatsApp client.
 
-
 ## 21. Ocha Master Console, group mute, and message-flow telemetry
 
 Master runners are independent in schema v11. `$` is controlled directly by `.master cli on/off`; JavaScript eval (`>` and `=>`), Python (`>>`), and Go (`>>>`) each have their own independent switches. `.master warning off` skips the confirmation prompt for suspicious workloads that are not statically hard-blocked; this executes without an interactive checkpoint and is audit-logged. Hard-block patterns remain enforced. `.master group on/off/status` controls whether the verified owner may use Master runners and console inside groups; the default is OFF and must be changed from the owner's private chat. There is no longer a global `exec` gate. `.master exec on/off` is only a temporary compatibility alias for `.master cli on/off`; use `cli` in new commands and documentation. `.master status` displays the owner-only console control panel. See [`docs/MASTER_CONSOLE.md`](docs/MASTER_CONSOLE.md).
@@ -641,7 +697,6 @@ Group interaction defaults to mute through `features.groupsMuted: true`, with pe
 
 The message-flow monitor labels private/group destinations and consumes Baileys `messages.update` and `message-receipt.update` events. Its local terminal legend is `✓ SENT`, `✓✓ DELIVERED`, `✓✓ READ`, `✓✓ PLAYED`, and a separately colored `BOT REPLIED` marker. It does not modify WhatsApp's own tick UI or create a third WhatsApp checkmark. The monitor stores only bounded metadata, not message bodies.
 
-
 ### Master Console: full eval context and workload guard (v1.7.2)
 
 JavaScript eval (`>` and `=>`) now receives live `sock`, serialized `m`/`message`, `config`, `logger`, `db`, `fs`, `path`, `os`, `crypto`, `childProcess`, `process`, `Buffer`, `require`, and `importModule` references. These are real host capabilities, not mocks. This is intentionally owner-only and is not a security sandbox: eval can affect the running bot and host account.
@@ -649,8 +704,6 @@ JavaScript eval (`>` and `=>`) now receives live `sock`, serialized `m`/`message
 All master runtimes (`$`, `>`, `=>`, `>>`, `>>>`) pass through WorkloadTracker. Low-risk commands continue immediately. Suspicious operations are sent to Ocha's small workload-assessment request, then Ocha may auto-approve only an explicit `ALLOW` with low/medium severity. Otherwise the owner receives a quoted warning with impact, safer alternative, and a one-time `CONFIRM CODE` / `CANCEL` reply session (120-second expiry). If AI assessment is unavailable, the command fails closed. Static critical host-wide patterns (for example deleting the filesystem root, disk formatting/wiping, fork bombs, and host shutdown) are blocked without a chat override. Scoped destructive actions such as `rm -rf ./*/` require AI review and explicit owner confirmation.
 
 The AI review is an advisory impact estimate, not a proof of safety. The confirmation mechanism reduces accidental execution but does not make arbitrary code safe. Run master commands only on a controlled host and keep backups.
-
-
 
 ## 22. Nexora Code Lab: isolated execution and temporary preview
 
@@ -664,7 +717,6 @@ The automatic host manager prepares Docker or Podman and the required Python/Nod
 
 Users can ask Ocha to create and iteratively improve static websites in natural language. Source projects persist in a per-user Project Library across bot restarts; temporary preview sessions remain separate and may expire. Website projects do not start a process, tunnel, or container per user. The Builder uses bounded global/per-user queues, project task memory, local Git commits where available, retained version snapshots, and incremental file updates. `.project export ask` is the default; `.project export always` enables automatic ZIP delivery after every successful update; `.project export off` disables automatic delivery while preserving manual exports. ZIPs contain only the selected repository and are never built from the `/root` or library parent directory. Project commands and private source operations are restricted to direct chats. The builder currently supports static frontend prototypes, not production backend services or permanent hosting. Owner controls: `.nexora builder on/off` and `.nexora builder-workers 1-4`. See `docs/PROJECT_LIBRARY.md` and `docs/NEXORA_WEBSITE_BUILDER.md`.
 
-
 ## AI provider routing and autonomous model discovery (v1.10.11)
 
 Ocha uses an ordered provider chain (Groq → Gemini → DeepSeek → OpenAI by default). Provider-wide network failures, model/request errors, billing balance errors, and quota/rate-limit responses stop same-provider key fan-out and advance to the next provider; authentication errors remain key-specific and can rotate to another key. The owner can inspect the exact provider state with `.aistatus`.
@@ -677,7 +729,7 @@ Owner controls: `.aimodels status`, `.aimodels refresh`, `.aiset free-only on/of
 
 ## Live command directory and user profile
 
-The `.menu` command is generated from the active plugin registry. It includes all loaded plugin commands (including owner-only tools such as `.test` and `.apikey`) and uses optional `usage` metadata to display arguments without lengthy descriptions. The menu banner is bundled at `assets/menu-banner.jpg`; if image delivery is unavailable, the command directory falls back to text.
+The `.menu` command is generated from the active plugin registry. It includes all loaded plugin commands (including `.test` only when the external private runtime is installed, and `.apikey`) and uses optional `usage` metadata to display arguments without lengthy descriptions. The menu banner is bundled at `assets/menu-banner.jpg`; if image delivery is unavailable, the command directory falls back to text.
 
 `.profile` now includes rank/level progress, daily XP allowance, current and best activity streaks, aggregate interaction statistics, communication-style summary, and achievement milestones. Streak dates use the Asia/Jakarta calendar. Profile records keep aggregate statistics and bounded deduplication IDs only; raw conversation text is not added to profile storage.
 
@@ -714,16 +766,15 @@ See `docs/MENU_AND_COMMAND_REGISTRY.md` and `docs/USER_PROFILES.md` for plugin m
 
 Configuration schema: v27. Existing installations migrate to menu descriptions OFF, pagination OFF, cooldown OFF, and anti-spam OFF. These controls are global, not per-user preferences.
 
-
 ## Rental subscriptions and private checkout (v1.10.19)
 
 Ocha supports optional rental subscriptions for one WhatsApp group per tenant. The initial package settings are:
 
-| Plan | Price / 30 days | Maximum members | Shared quota / rolling 24h |
-|---|---:|---:|---:|
-| Mini | Rp5.000 | 50 | 120 weighted units |
-| Standard | Rp10.000 | 200 | 350 weighted units |
-| Pro | Rp20.000 | 1,000 | 1,000 weighted units |
+| Plan     | Price / 30 days | Maximum members | Shared quota / rolling 24h |
+| -------- | --------------: | --------------: | -------------------------: |
+| Mini     |         Rp5.000 |              50 |         120 weighted units |
+| Standard |        Rp10.000 |             200 |         350 weighted units |
+| Pro      |        Rp20.000 |           1,000 |       1,000 weighted units |
 
 These are configurable starting values. All group members may use the bot features available to group participants while the subscription is active. Members share one tenant quota. The current workload weights are routine 1, AI/media 3, web/search/download/project 5, and code execution/build/deploy 12. Selected billing and status commands are quota-exempt. The 24-hour usage window is anchored to activation and reset by the rental scheduler.
 
@@ -762,7 +813,7 @@ Payment uses static QRIS and configured e-wallet/bank instructions. Payment is m
 
 See [`docs/RENTAL_USER_GUIDE.md`](docs/RENTAL_USER_GUIDE.md) for the full customer guide and [`docs/RENTAL_100_FEATURE_CATALOG.md`](docs/RENTAL_100_FEATURE_CATALOG.md) for implemented capabilities versus roadmap.
 
-The internal native-flow registry supports lossless parameter forwarding for the registered sample button types. It distinguishes stable, observed and experimental payloads; it does not promise that all WhatsApp clients or business accounts render experimental commerce/call flows. The raw low-level `sock.relayMessage()` path is left untouched. `sendInteractive`/`sendNativeFlow` validate registered payloads and retain a text fallback. The owner-only `.test nativeflow all` sends five pages based on the current evaluation fixture; `.test identity` and `.test inspect` expose PN/LID and parsed-response diagnostics. Quick-reply and single-select test IDs route through `.test response ...`; URL, call, copy, and location controls may be handled entirely by the WhatsApp app and are not guaranteed to send a bot callback. See [`docs/NATIVE_FLOW_SERIALIZER.md`](docs/NATIVE_FLOW_SERIALIZER.md).
+The internal native-flow registry supports lossless parameter forwarding for the registered sample button types. It distinguishes stable, observed and experimental payloads; it does not promise that all WhatsApp clients or business accounts render experimental commerce/call flows. The raw low-level `sock.relayMessage()` path is left untouched. `sendInteractive`/`sendNativeFlow` validate registered payloads and retain a text fallback. When the external private runtime is installed, the owner-only `.test nativeflow all` sends five pages based on the current evaluation fixture; `.test identity` and `.test inspect` expose PN/LID and parsed-response diagnostics. Public-compatible mode omits `.test`. When the private runtime is installed, quick-reply and single-select test IDs route through `.test response ...`; URL, call, copy, and location controls may be handled entirely by the WhatsApp app and are not guaranteed to send a bot callback. See [`docs/NATIVE_FLOW_SERIALIZER.md`](docs/NATIVE_FLOW_SERIALIZER.md).
 
 YouTube commands use `yt-dlp` plus FFmpeg/ffprobe installed on the host; these are system tools, not npm dependencies. `.ytconfig` lets the owner adjust their executable paths, maximum file size, maximum duration, and search count without editing `.env`. `.yts` (five text-only results per page with a next-page button), `.ytmp3`, `.ytmp4`, and audio-only `.ytm` are documented in [`docs/YOUTUBE_COMMANDS.md`](docs/YOUTUBE_COMMANDS.md). The executable path and media limits live in the non-secret `youtube` application configuration. Inspect or update them with `.ytconfig`; live retrieval still depends on YouTube availability and format changes.
 
@@ -771,7 +822,6 @@ See `docs/RENTAL_100_FEATURE_CATALOG.md` for the distinction between implemented
 ## Tic-Tac-Toe game
 
 Private chat: `.ttt mulai [x|o]`, then send a position `1`–`9`, or use `.ttt status`, `.ttt menyerah`, and `.ttt ulang`. Natural invitations such as `main tictactoe yuk` are routed to the same persisted game session. Game state is stored in the player's encrypted User Vault; group play is not enabled.
-
 
 ## v1.10.29 — Master Console controls
 
@@ -788,20 +838,19 @@ The local dashboard API binds to `127.0.0.1:8788`. Set `OCHA_RENTAL_API_TUNNEL=1
 `.commandaudit` checks duplicate plugin command names and aliases. It records a report and suggested resolution without deleting or silently rewriting source files. See `docs/RENTAL_DASHBOARD_PART1.md`.
 
 ### Message testing and owner reaction controls (v1.10.40)
-- `.test` opens an interactive message-format catalogue. Fixtures are stored in `assets/message-test/`; no external media URL or manually typed poll/button content is required.
+
+- With the private runtime installed, `.test` opens the owner-only interactive message-format catalogue. In a public-compatible installation without that package, `.test` is not registered. Fixtures remain in `assets/message-test/`.
 - Successful tests send only their actual payload. Result IDs are logged when available; exceptions are logged with the test ID. No verbose relay summary is sent to chat.
 - `.react` opens owner controls for automatic command and AI reactions (`.react on`, `.react off`, `.react status`). The feature is disabled by default.
 - Quoted-message context parsing was hardened; AI turns that contain a quote are prevented from falling back to generic greeting-only responses.
-
 
 ### v1.10.40 — Quoted AI, Message Test Lab, Auto Reaction
 
 - Quoted-message extraction and AI context handling hardened for nested WhatsApp message wrappers.
 - Quoted turns suppress generic greeting-only output; the “Coba lihat sirkuitmu” example receives a truthful software-vs-hardware response.
-- `.test` opens an owner-only interactive catalogue with local fixtures in `assets/message-test/`; successful tests send only the target payload, while failures are written to runtime logs with test IDs.
+- The owner-only `.test` interactive catalogue is supplied by the external private runtime package; it is absent from a public-compatible installation. When installed, it uses local fixtures in `assets/message-test/`; successful tests send only the target payload, while failures are written to runtime logs with test IDs.
 - Result IDs are logged when available; no “relay success” summary is sent to chat.
 - `.react` is an owner-only private manager for command and AI reactions (`⏳` / `💭` → `✅`, failure `❌`). It is disabled by default.
-
 
 ## v1.10.48 — AI Direct-Answer Guard
 
@@ -809,3 +858,41 @@ The local dashboard API binds to `127.0.0.1:8788`. Set `OCHA_RENTAL_API_TUNNEL=1
 - Retry one non-answer once with a bounded, same-provider correction prompt; if it remains generic or cannot be repaired, return a truthful topic-preserving fallback.
 - Explicitly instruct the model to answer the user's concrete request before adding follow-up questions and to disclose missing live sources for current-events requests.
 - Restore the two ACIE adapter modules omitted from the v1.10.47 distribution archive so the ACIE intake/runtime imports and associated tests resolve.
+
+## v1.10.50 — Public publication firewall
+
+- Auto Git Sync now excludes the four owner-designated private source modules from filesystem publication and `.gitignore` staging.
+- Added fail-closed secret scanning before and after formatting; detected credential values are never printed to logs.
+- Added Prettier formatting for eligible public source/documentation files before staging. Auto-push stops if Prettier is unavailable.
+- Added `npm run security:publication` for a local publication audit.
+- Added publication policy tests and documented the limitation that files already present in public Git history are not retroactively made private by `.gitignore`.
+- Private project instructions, local keys, credentials, and staging workspaces are excluded from public publication.
+
+See [`docs/AUTO_GIT_SYNC.md`](docs/AUTO_GIT_SYNC.md) for the publication firewall and migration requirements.
+
+## Technical architecture and continuity
+
+- The private `AI_CONTEXT.md` and `AI_WORKFLOW.md` live under `.private/project/` and are deliberately excluded from public Git publication.
+- [Repository audit and verified continuity](docs/REPOSITORY_AUDIT_1.10.51.md)
+- [Source/function index](docs/SOURCE_COMPONENT_INDEX_1.10.52.md)
+- [Command registry audit](docs/COMMAND_REGISTRY_AUDIT_1.10.51.md)
+- [Provider registry audit](docs/PROVIDER_REGISTRY_AUDIT_1.10.51.md)
+- [NADI maintenance report](docs/NADI_MAINTENANCE_REPORT_2.1.0.md)
+- [Automatic Git Sync and publication firewall](docs/AUTO_GIT_SYNC.md)
+- [ACIE architecture](docs/ACIE_ARCHITECTURE.md)
+- [NADI runtime integration](docs/NADI_RUNTIME.md)
+- [Provider routing and fallback](docs/PROVIDER_ROUTING.md)
+- [Contribution vault and provenance](docs/CONTRIBUTION_VAULT.md)
+
+### Publication firewall architecture
+
+```mermaid
+flowchart LR
+  FS[Project files] --> POLICY[Path policy]
+  POLICY -->|Private| LOCAL[Local-only source]
+  POLICY -->|Public candidate| SCAN[Secret scanner]
+  SCAN --> FORMAT[Prettier]
+  FORMAT --> RESCAN[Secret re-scan]
+  RESCAN --> STAGE[Audited Git index]
+  STAGE --> PUSH[GitHub public repository]
+```

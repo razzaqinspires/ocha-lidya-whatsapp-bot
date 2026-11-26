@@ -15,7 +15,7 @@ import {
   removeProjectArchive,
   getProjectHistory,
   getProjectLibraryStatus,
-  projectUserKey
+  projectUserKey,
 } from '../src/ai/project-library.js';
 
 async function zipEntries(file) {
@@ -37,16 +37,16 @@ test('Project Library isolates user repositories, preserves task memory, version
       files: {
         'index.html': '<!doctype html><html><body><h1>Aruna</h1></body></html>',
         'assets/site.css': 'body{font-family:system-ui}',
-        'assets/site.js': 'window.shopReady=true'
+        'assets/site.js': 'window.shopReady=true',
       },
       projectMemory: {
         summary: 'Toko online statis untuk katalog.',
         architecture: 'HTML + CSS + JavaScript modular.',
         features: ['Product catalog', 'Responsive layout'],
         decisions: ['No external CDN'],
-        nextSteps: ['Add cart interaction']
+        nextSteps: ['Add cart interaction'],
       },
-      task: 'Buat website toko online Aruna'
+      task: 'Buat website toko online Aruna',
     });
 
     assert.equal(first.version, 1);
@@ -79,21 +79,24 @@ test('Project Library isolates user repositories, preserves task memory, version
         'index.html': '<!doctype html><html><body><h1>Aruna Shop</h1></body></html>',
         'assets/site.css': 'body{font-family:system-ui;color:#222}',
         'assets/site.js': 'window.shopReady=true;window.cartReady=true',
-        'assets/cart.js': 'export const cart=[]'
+        'assets/cart.js': 'export const cart=[]',
       },
       projectMemory: {
         summary: 'Toko online dengan katalog dan keranjang demo.',
         features: ['Product catalog', 'Responsive layout', 'Cart demo'],
         decisions: ['No external CDN'],
-        nextSteps: ['Connect a real backend later']
+        nextSteps: ['Connect a real backend later'],
       },
-      task: 'Tambahkan keranjang belanja demo dan pertahankan katalog'
+      task: 'Tambahkan keranjang belanja demo dan pertahankan katalog',
     });
     assert.equal(updated.version, 2);
     assert.equal(updated.projectId, first.projectId);
     assert.equal(updated.files['assets/cart.js'], 'export const cart=[]');
     assert.ok(updated.gitEnabled === true || updated.gitEnabled === false);
-    assert.equal((await getProjectHistory({ ownerId: ownerA, projectId: first.projectId })).some(item => item.version === 1), true);
+    assert.equal(
+      (await getProjectHistory({ ownerId: ownerA, projectId: first.projectId })).some(item => item.version === 1),
+      true,
+    );
 
     assert.equal(await getProjectExportPreference({ ownerId: ownerA }), 'ask');
     await setProjectExportPreference({ ownerId: ownerA, mode: 'always' });
@@ -106,8 +109,17 @@ test('Project Library isolates user repositories, preserves task memory, version
       assert.ok(names.includes('toko-online-aruna/index.html'));
       assert.ok(names.includes('toko-online-aruna/assets/cart.js'));
       assert.ok(names.includes('toko-online-aruna/README.md'));
-      assert.equal(names.some(name => name.includes('.git/') || name.includes('.control') || name.includes('.history') || name.includes('.env')), false);
-      assert.equal(names.some(name => name.startsWith('library/')), false);
+      assert.equal(
+        names.some(
+          name =>
+            name.includes('.git/') || name.includes('.control') || name.includes('.history') || name.includes('.env'),
+        ),
+        false,
+      );
+      assert.equal(
+        names.some(name => name.startsWith('library/')),
+        false,
+      );
     } finally {
       await removeProjectArchive(archive.path);
     }
@@ -123,16 +135,25 @@ test('Project Library rejects traversal and secret material before writing a rep
   const previousRoot = process.env.OCHA_PROJECT_LIBRARY_ROOT;
   process.env.OCHA_PROJECT_LIBRARY_ROOT = root;
   try {
-    await assert.rejects(saveWebsiteProject({
-      ownerId: '6285555555555@s.whatsapp.net',
-      title: 'Unsafe',
-      files: { '../outside.html': '<h1>bad</h1>', 'index.html': '<h1>ok</h1>' }
-    }), /Path repository tidak aman/);
-    await assert.rejects(saveWebsiteProject({
-      ownerId: '6285555555555@s.whatsapp.net',
-      title: 'Secret',
-      files: { 'index.html': '<h1>ok</h1>', 'assets/app.js': 'const x="ghp_abcdefghijklmnopqrstuvwxyz0123456789";' }
-    }), /secret/i);
+    await assert.rejects(
+      saveWebsiteProject({
+        ownerId: '6285555555555@s.whatsapp.net',
+        title: 'Unsafe',
+        files: { '../outside.html': '<h1>bad</h1>', 'index.html': '<h1>ok</h1>' },
+      }),
+      /Path repository tidak aman/,
+    );
+    await assert.rejects(
+      saveWebsiteProject({
+        ownerId: '6285555555555@s.whatsapp.net',
+        title: 'Secret',
+        files: {
+          'index.html': '<h1>ok</h1>',
+          'assets/app.js': `const x="${'ghp_' + 'abcdefghijklmnopqrstuvwxyz0123456789'}";`,
+        },
+      }),
+      /secret/i,
+    );
     assert.equal((await listUserProjects({ ownerId: '6285555555555@s.whatsapp.net' })).length, 0);
   } finally {
     if (previousRoot === undefined) delete process.env.OCHA_PROJECT_LIBRARY_ROOT;
@@ -140,7 +161,6 @@ test('Project Library rejects traversal and secret material before writing a rep
     await fs.rm(root, { recursive: true, force: true });
   }
 });
-
 
 test('Project Library export rechecks edited files and refuses obvious secret leakage', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ocha-project-export-secret-'));
@@ -150,10 +170,17 @@ test('Project Library export rechecks edited files and refuses obvious secret le
     const project = await saveWebsiteProject({
       ownerId: '6283333333333@s.whatsapp.net',
       title: 'Private Catalog',
-      files: { 'index.html': '<h1>Private</h1>' }
+      files: { 'index.html': '<h1>Private</h1>' },
     });
-    await fs.writeFile(path.join(project.path, 'index.html'), '-----BEGIN PRIVATE KEY-----\nsecret\n-----END PRIVATE KEY-----');
-    await assert.rejects(createProjectArchive({ ownerId: '6283333333333@s.whatsapp.net', projectId: project.projectId }), /kredensial terdeteksi/i);
+    const privateKeyMarker = 'PRIVATE ' + 'KEY';
+    await fs.writeFile(
+      path.join(project.path, 'index.html'),
+      `-----BEGIN ${privateKeyMarker}-----\nsecret\n-----END ${privateKeyMarker}-----`,
+    );
+    await assert.rejects(
+      createProjectArchive({ ownerId: '6283333333333@s.whatsapp.net', projectId: project.projectId }),
+      /kredensial terdeteksi/i,
+    );
   } finally {
     if (previousRoot === undefined) delete process.env.OCHA_PROJECT_LIBRARY_ROOT;
     else process.env.OCHA_PROJECT_LIBRARY_ROOT = previousRoot;
@@ -170,17 +197,25 @@ test('default Project Library stores projects inside the matching per-user roo c
     process.env.OCHA_PROJECT_LIBRARY_ROOT = '';
     process.env.OCHA_ROO_ROOT = path.join(root, 'roo');
     const saved = await saveWebsiteProject({
-      ownerId: owner, chatId: 'roo-private-chat', title: 'Roo Isolation Test',
-      files: { 'index.html': '<!doctype html><title>Roo test</title>' }
+      ownerId: owner,
+      chatId: 'roo-private-chat',
+      title: 'Roo Isolation Test',
+      files: { 'index.html': '<!doctype html><title>Roo test</title>' },
     });
-    assert.equal(projectUserKey(`${owner.split('@')[0]}:13@s.whatsapp.net`), projectUserKey(owner), 'device-scoped JIDs must resolve to the same private roo namespace');
+    assert.equal(
+      projectUserKey(`${owner.split('@')[0]}:13@s.whatsapp.net`),
+      projectUserKey(owner),
+      'device-scoped JIDs must resolve to the same private roo namespace',
+    );
     const expected = path.join(process.env.OCHA_ROO_ROOT, projectUserKey(owner), 'projects');
     assert.ok(saved.path.startsWith(expected));
     assert.equal((await listUserProjects({ ownerId: '6284444444444@s.whatsapp.net' })).length, 0);
     assert.equal((await getWebsiteProject({ ownerId: owner, projectId: saved.projectId })).slug, 'roo-isolation-test');
   } finally {
-    if (previousProjectRoot === undefined) delete process.env.OCHA_PROJECT_LIBRARY_ROOT; else process.env.OCHA_PROJECT_LIBRARY_ROOT = previousProjectRoot;
-    if (previousRooRoot === undefined) delete process.env.OCHA_ROO_ROOT; else process.env.OCHA_ROO_ROOT = previousRooRoot;
+    if (previousProjectRoot === undefined) delete process.env.OCHA_PROJECT_LIBRARY_ROOT;
+    else process.env.OCHA_PROJECT_LIBRARY_ROOT = previousProjectRoot;
+    if (previousRooRoot === undefined) delete process.env.OCHA_ROO_ROOT;
+    else process.env.OCHA_ROO_ROOT = previousRooRoot;
     await fs.rm(root, { recursive: true, force: true });
   }
 });

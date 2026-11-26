@@ -70,3 +70,46 @@ config/acie.runtime.json
 
 # Unreviewed contribution drop-zone; intake from an external path only
 incoming/
+
+# Legacy private runtime source paths were replaced by public adapters. Do not re-add private originals.
+/src/plugins/owner/message-lab.js
+# Private project intelligence, operator rules, credentials, and local release staging.
+ADDITIONAL_INSTRUCTIONS.md
+ADDITIONAL_INSTRUCTIONS.txt
+AI_CONTEXT.private.md
+AI_WORKFLOW.private.md
+PROJECT_INTELLIGENCE_PROTOCOL.md
+OCHA-LIDYA-PRIVATE-CORE-KEY.txt
+.private/
+private-core/
+private-vault/
+secret-vault/
+credentials/
+secrets/
+release-staging/
+PRIVATE_SOURCE_HANDLING.md
+
+# Private local project intelligence and operator policies
+.private/
+
+# Local release inventory (do not publish unless explicitly sanitized)
+.release/
+
+# Private runtime package/source must live outside the public bot checkout.
+/private-runtime/
+/private-packages/
+/private-runtime-package/
+.private-runtime/
+*.private-runtime.tgz
+
+# Bundled operator-only private runtime. Kept locally for the full operator ZIP;
+# never stage or publish this directory. A clean public clone runs compatibility adapters.
+.private/ocha-private-runtime/
+.private/
+
+# Two-base workspace and generated release bundles.
+release/
+releases/
+artificial-consciousness-component/
+*.operator.zip
+*.release.zip

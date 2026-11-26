@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import fsPromises from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildMenuText, getMenuStats } from '../src/core/menu-renderer.js';
@@ -31,16 +32,51 @@ function readCommandMetadata(file) {
   return { name, category, usage, aliases };
 }
 
-test('all current source plugins contribute canonical commands, including .test and .apikey', () => {
+test('public source plugins contribute canonical commands while private .test stays outside the public menu', () => {
   const plugins = walk(pluginRoot).map(readCommandMetadata).filter(Boolean);
   const body = buildMenuText({ plugins, config: { mode: 'public', bot: { name: 'Ocha Lidya' } }, prefixes: ['.'] });
   const stats = getMenuStats(plugins);
-  assert.ok(plugins.length >= 25, `expected broad plugin set, found ${plugins.length}`);
-  assert.match(body, /\.test \[pilihan dari daftar\]/);
+  assert.ok(plugins.length >= 25, `expected broad public plugin set, found ${plugins.length}`);
+  assert.ok(
+    !plugins.some(plugin => plugin.name === 'test'),
+    'private message lab must not be part of the public source registry',
+  );
+  assert.doesNotMatch(
+    body,
+    /\.test \[pilihan dari daftar\]/,
+    'private message lab must stay hidden in public compatibility mode',
+  );
   assert.match(body, /\.react \[menu\|on\|off\|status\]/);
   assert.match(body, /\.apikey <add\|delete\|list\|get> <provider> \[value\]/);
   const expectedCommands = plugins.reduce((total, plugin) => total + 1 + (plugin.aliases || []).length, 0);
   assert.equal(stats.commands, expectedCommands);
   assert.match(body, /\.ytmp3/);
-  assert.doesNotMatch(body, /daftar perintah|Kelola API key|laboratorium uji/i, 'menu lists command syntax without descriptions');
+  assert.doesNotMatch(
+    body,
+    /daftar perintah|Kelola API key|laboratorium uji/i,
+    'menu lists command syntax without descriptions',
+  );
+});
+
+test('private message lab source retains ownerOnly and privateOnly descriptor flags', async t => {
+  const privatePlugin = path.join(
+    root,
+    '.private',
+    'ocha-private-runtime',
+    'src',
+    'plugins',
+    'owner',
+    'message-lab.js',
+  );
+  let source;
+  try {
+    source = await fsPromises.readFile(privatePlugin, 'utf8');
+  } catch {
+    t.skip('private runtime source is not included in a public-only checkout');
+    return;
+  }
+  const descriptor = source.slice(source.lastIndexOf('export default {'));
+  assert.match(descriptor, /ownerOnly\s*:\s*true/);
+  assert.match(descriptor, /privateOnly\s*:\s*true/);
+  assert.match(descriptor, /name\s*:\s*['"]test['"]/);
 });

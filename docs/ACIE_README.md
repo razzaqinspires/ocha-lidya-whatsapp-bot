@@ -1,6 +1,6 @@
 # ACIE — Autonomous Contribution Integration & Orchestration Engine
 
-**Release:** Ocha Lidya v1.10.46 · ACIE contribution intake review  
+**Release:** Ocha Lidya v1.10.49 · ACIE contribution intake and immutable-source preservation  
 **Execution policy:** deny by default; original contribution source is immutable.
 
 ACIE is an internal Ocha Lidya subsystem for receiving external contributions, preserving source bytes, analyzing languages and capabilities, validating external adapters, running eligible providers in isolated containers, routing among providers, and generating command descriptors. It does not replace the Ocha plugin loader or dispatcher.
@@ -73,7 +73,7 @@ The generic bridge supports CLI-style JSON-stdio entrypoints for Node.js, Python
 
 ## Reviewed contribution example — Rizkyrohan Text Canvas
 
-ACIE statically identifies one unverified capability, `image-canvas.render.text`, from a legacy `.mjs` WhatsApp inline script. The original has no callable exports, uses ambient `conn`/`m`, hardcodes its text, and dynamically imports `@napi-rs/canvas` without a pinned version. The candidate `.textimage` (alias `.timg`) is therefore a no-argument command draft, not an active user command. Font and background files are referenced from two public GitHub repositories, but no license metadata or `LICENSE` file was found at the inspected references; neither binary was copied into the vault or redistributed. See [the full Rizkyrohan contribution review](contributions/RIZKYROHAN_TEXT_CANVAS.md).
+ACIE statically identifies one unverified capability, `image-canvas.render.text`, from a legacy `.mjs` WhatsApp inline script. The original has no callable exports, uses ambient `conn`/`m`, hardcodes its text, and dynamically imports `@napi-rs/canvas` without a pinned version. The candidate `.textimage` (alias `.timg`) is therefore a no-argument command draft, not an active user command. Font and background files are referenced from two public GitHub repositories, but no license metadata or `LICENSE` file was found at the inspected references; neither binary was copied into the vault or redistributed. The complete original source fixture and byte/hash-verified intake test are included at `acie-fixtures/contributions/rizkyrohan-text-canvas-v1/`. See [the full Rizkyrohan contribution review](contributions/RIZKYROHAN_TEXT_CANVAS.md) for the preserved variable/logic inventory and exact VPS intake command. The production vault path is created only when intake is run successfully; it is not pre-created by this release.
 
 ## Documentation
 

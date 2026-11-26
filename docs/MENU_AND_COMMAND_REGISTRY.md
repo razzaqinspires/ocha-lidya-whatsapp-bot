@@ -15,7 +15,7 @@ export default {
   usage: '<action> [value]',
   async execute({ m, args }) {
     // ...
-  }
+  },
 };
 ```
 
@@ -28,3 +28,9 @@ The master console syntax is not a plugin and is appended as a dedicated section
 ## Menu banner
 
 The branded artwork is stored at `assets/menu-banner.jpg`. The menu sends it before the text command directory. If the asset is unavailable or WhatsApp image transport fails, the plugin falls back to the text menu.
+
+## Optional private command descriptors
+
+The owner-only `.test` Message Test Lab is deliberately not stored in the public `src/plugins/` directory. When `@razzaqventures/ocha-private-runtime` is available, `src/core/plugin-loader.js` asks the package for its plugin descriptors and adds only plugins that declare both `ownerOnly: true` and `privateOnly: true`. The loader checks each canonical command and alias against the existing candidate registry; collisions are skipped and logged without overwriting a public command. The command is absent in public-compatible mode.
+
+Run `npm run private-runtime:status` to inspect package resolution and use `.commandaudit scan` on the actual connected process to confirm the resulting live registry. Static command inventory: 46 public canonical commands / 87 aliases; the optional private `.test` descriptor is excluded from those counts.

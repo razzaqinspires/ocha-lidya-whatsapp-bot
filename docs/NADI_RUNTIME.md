@@ -36,7 +36,7 @@ OCHA_NADI_SHA256=
 
 Only point the loader at a repository you control and trust because the downloaded Python component is executable code. The shipped default uses the immutable commit SHA above, not a moving branch. Keep that SHA pinned until a deliberate NADI release upgrade is reviewed. The bot downloads a GitHub archive over HTTPS, applies size/path/symlink/entry-count limits, validates the package layout and `pyproject.toml`, computes SHA-256, and installs it atomically under the external component cache. If `OCHA_NADI_SHA256` is provided, the archive must match it. If an already installed ref is present, the cache is reused. For a controlled refresh, change `OCHA_NADI_REF` to a reviewed immutable commit SHA (the cache key changes automatically); `OCHA_NADI_UPDATE=1` forces a reinstall of the currently pinned ref. `GITHUB_PAT` may be used for a private GitHub repository and must remain secret.
 
-Manual installation is also supported by setting `OCHA_NADI_SOURCE_DIR` to an existing NADI source checkout outside the Ocha repository.
+Manual/local workspace integration is also supported by setting `OCHA_NADI_SOURCE_DIR=../artificial-consciousness-component` when the two independent base folders are siblings. The Python source still remains in the separate component directory and is never copied into the Ocha source tree.
 
 ## Runtime lifecycle
 
@@ -78,3 +78,7 @@ The general `.kernel` command (aliases `.kernelstatus`, `.nadiweb`) publishes a 
 - `.nadi pulse` — perform one manual tick.
 - `.nadi sleep` — run memory consolidation.
 - `.nadi verify` — verify the SHA-256 chain.
+
+## Two-base compatibility pin
+
+The companion base supplied with Ocha v1.10.52 is `ac-kernel-nadi@2.1.0`, repository `razzaqinspires/artificial-consciousness-component`, commit `16c2fa6e1b500745f260bcf091284a6e18726883`, API contract `v1`. Ocha's default loader is pinned to this commit. Run the independent component checks with `python -m py_compile ac/*.py`, `python selftest.py`, and `python test_prime.py` from the component root.

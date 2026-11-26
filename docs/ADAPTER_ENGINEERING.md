@@ -18,3 +18,7 @@ A failed re-test clears both provider and adapter protocol success markers, prev
 ## Network and output policy
 
 The current sandbox uses `--network=none`. Internet-dependent adapters cannot retrieve remote media through this execution policy. Do not pass Ocha API keys, `.env`, bot sessions, host home folders or writable vault mounts into the container. Output normalization only accepts supported response fields, HTTPS references and sanitized metadata. Local paths are not WhatsApp attachments; this release returns links as text rather than uploading arbitrary files.
+
+## Host-application private runtime extraction
+
+This ACIE adapter document covers contributed capability execution. It is separate from Ocha's owner-designated private source package. The four private bot modules use the external `@razzaqventures/ocha-private-runtime` package and a strict host import allowlist; they are not ACIE contribution providers and are not loaded through the ACIE sandbox. See [`PRIVATE_RUNTIME_EXTRACTION.md`](PRIVATE_RUNTIME_EXTRACTION.md) for the public/private deployment boundary.

@@ -8,6 +8,7 @@ import { logger } from './logger.js';
 import { isRuntimeWatchIgnored } from './watch-policy.js';
 import { canCommitSourceBatch, classifySourceBatch, DEPENDENCY_MANIFESTS, validateJsonFile } from './source-batch.js';
 import { loadGeneratedCommandPlugins } from '../acie/command-engine/runtime-commands.js';
+import { isPrivateRuntimeRequired, loadPrivateRuntime } from '../private-runtime/loader.js';
 
 const registry = new Map();
 const PROJECT_ROOT = path.resolve('.');
@@ -23,6 +24,7 @@ const sleep = milliseconds => new Promise(resolve => setTimeout(resolve, millise
 async function importPlugin(file) {
   const url = `${pathToFileURL(file).href}?hot=${Date.now()}-${process.hrtime.bigint()}`;
   const mod = await import(url);
+  if (mod.__OCHA_PLUGIN_HELPER__ === true) return null;
   const plugin = mod.default || mod.plugin;
   if (!plugin || typeof plugin.execute !== 'function' || !plugin.name) {
     throw new Error(`Plugin invalid: ${file}; required exports: default/plugin with name and execute()`);
@@ -32,8 +34,12 @@ async function importPlugin(file) {
 
 async function walkJavaScript(directory, files = []) {
   let entries;
-  try { entries = await fs.readdir(directory, { withFileTypes: true }); }
-  catch (error) { if (error.code === 'ENOENT') return files; throw error; }
+  try {
+    entries = await fs.readdir(directory, { withFileTypes: true });
+  } catch (error) {
+    if (error.code === 'ENOENT') return files;
+    throw error;
+  }
   for (const entry of entries) {
     if (entry.name === 'node_modules' || entry.name === '.git') continue;
     const full = path.join(directory, entry.name);
@@ -41,6 +47,57 @@ async function walkJavaScript(directory, files = []) {
     else if (entry.isFile() && entry.name.endsWith('.js')) files.push(full);
   }
   return files.sort();
+}
+
+async function mergePrivateRuntimePlugins(target) {
+  const runtime = await loadPrivateRuntime({ hostRoot: PROJECT_ROOT });
+  if (!runtime) return { loaded: 0, skipped: [], mode: 'public-compatibility' };
+
+  const occupied = new Map();
+  for (const entry of target.values()) {
+    for (const identifier of [entry.plugin.name, ...(entry.plugin.aliases || [])]) {
+      const key = String(identifier || '')
+        .trim()
+        .toLowerCase();
+      if (key) occupied.set(key, entry.plugin.name);
+    }
+  }
+
+  const skipped = [];
+  let loaded = 0;
+  for (const plugin of runtime.plugins || []) {
+    if (!plugin || typeof plugin.execute !== 'function' || !plugin.name) {
+      skipped.push({ name: plugin?.name || null, reason: 'invalid_plugin_contract' });
+      continue;
+    }
+    if (plugin.ownerOnly !== true || plugin.privateOnly !== true) {
+      skipped.push({ name: plugin.name, reason: 'private_runtime_plugin_must_remain_owner_private' });
+      continue;
+    }
+    const identifiers = [plugin.name, ...(plugin.aliases || [])]
+      .map(value =>
+        String(value || '')
+          .trim()
+          .toLowerCase(),
+      )
+      .filter(Boolean);
+    const collisions = identifiers.filter(identifier => occupied.has(identifier));
+    if (collisions.length) {
+      skipped.push({ name: plugin.name, reason: 'command_collision', identifiers: collisions });
+      continue;
+    }
+    const key = `private-runtime:${plugin.name}`;
+    target.set(key, { plugin, file: null, privateRuntime: true });
+    for (const identifier of identifiers) occupied.set(identifier, plugin.name);
+    loaded += 1;
+  }
+  if (skipped.length)
+    logger.warn({ skipped }, 'Private runtime plugins skipped by contract or command collision audit');
+  logger.info(
+    { loaded, skipped: skipped.length, version: runtime.version || null },
+    'Private runtime plugins synchronized',
+  );
+  return { loaded, skipped, mode: 'private-runtime' };
 }
 
 async function mergeGeneratedCommands(target) {
@@ -51,17 +108,31 @@ async function mergeGeneratedCommands(target) {
     if (target.has(key)) continue;
     target.set(key, { plugin, file: null, generated: true });
   }
-  if (generated.skipped.length) logger.warn({ skipped: generated.skipped.slice(0, 30) }, 'Some ACIE commands were not loaded because provider gate or runtime collision checks failed');
+  if (generated.skipped.length)
+    logger.warn(
+      { skipped: generated.skipped.slice(0, 30) },
+      'Some ACIE commands were not loaded because provider gate or runtime collision checks failed',
+    );
   return generated;
 }
 
 export async function refreshGeneratedCommandPlugins() {
-  const next = new Map([...registry.entries()].filter(([, entry]) => !entry.generated));
+  const next = new Map([...registry.entries()].filter(([, entry]) => !entry.generated && !entry.privateRuntime));
   const result = await mergeGeneratedCommands(next);
+  const privateResult = await mergePrivateRuntimePlugins(next);
   registry.clear();
   for (const [key, entry] of next) registry.set(key, entry);
-  logger.info({ loaded: result.loaded, skipped: result.skipped.length }, 'ACIE generated command registry synchronized');
-  return { loaded: result.loaded, skipped: result.skipped.length, reasons: result.skipped };
+  logger.info(
+    { loaded: result.loaded, skipped: result.skipped.length, privateRuntimeLoaded: privateResult.loaded },
+    'Generated and private runtime command registries synchronized',
+  );
+  return {
+    loaded: result.loaded,
+    skipped: result.skipped.length,
+    privateRuntimeLoaded: privateResult.loaded,
+    reasons: result.skipped,
+    privateRuntimeReasons: privateResult.skipped,
+  };
 }
 
 export async function loadPlugins() {
@@ -73,6 +144,7 @@ export async function loadPlugins() {
   for (const file of files) {
     try {
       const plugin = await importPlugin(file);
+      if (!plugin) continue;
       const key = keyOf(plugin, file);
       if (next.has(key)) {
         throw new Error(`Duplicate plugin command name: ${plugin.name}`);
@@ -87,15 +159,33 @@ export async function loadPlugins() {
     }
   }
 
-  try { await mergeGeneratedCommands(next); }
-  catch (error) { logger.error({ code: error.code || error.name }, 'ACIE generated command registry could not be loaded; static plugins remain available'); }
+  try {
+    await mergeGeneratedCommands(next);
+  } catch (error) {
+    logger.error(
+      { code: error.code || error.name },
+      'ACIE generated command registry could not be loaded; static plugins remain available',
+    );
+  }
+  try {
+    await mergePrivateRuntimePlugins(next);
+  } catch (error) {
+    if (isPrivateRuntimeRequired()) throw error;
+    logger.error(
+      { code: error.code || error.name },
+      'Private runtime plugin could not be loaded; public plugins remain available',
+    );
+  }
 
   // Commit one complete registry snapshot. Deleted plugin files are removed,
   // added plugins and eligible ACIE commands become visible in the same registry.
   registry.clear();
   for (const [key, entry] of next) registry.set(key, entry);
   const plugins = listPlugins();
-  logger.info({ count: plugins.length, failed: failures.length, root: PLUGIN_ROOT }, 'Plugin registry atomically refreshed');
+  logger.info(
+    { count: plugins.length, failed: failures.length, root: PLUGIN_ROOT },
+    'Plugin registry atomically refreshed',
+  );
   return plugins;
 }
 
@@ -104,24 +194,34 @@ export function listPlugins() {
 }
 
 export function listPluginEntries() {
-  return [...registry.values()].map(({ plugin, file }) => ({ plugin, file: file || `generated:acie/${plugin.name}` }));
+  return [...registry.values()].map(({ plugin, file, privateRuntime }) => ({
+    plugin,
+    file: privateRuntime ? `private-runtime:${plugin.name}` : file || `generated:acie/${plugin.name}`,
+  }));
 }
 
 export function getPlugin(name) {
   const normalized = String(name || '').toLowerCase();
-  return [...registry.values()].find(({ plugin }) =>
-    plugin.name.toLowerCase() === normalized ||
-    (plugin.aliases || []).some(alias => String(alias).toLowerCase() === normalized)
+  return [...registry.values()].find(
+    ({ plugin }) =>
+      plugin.name.toLowerCase() === normalized ||
+      (plugin.aliases || []).some(alias => String(alias).toLowerCase() === normalized),
   )?.plugin;
 }
 
 async function validateSourceBatch(changes) {
   const files = changes
-    .filter(change => change.event !== 'unlink' && ['.js', '.sh', '.json'].includes(path.extname(change.file).toLowerCase()))
+    .filter(
+      change => change.event !== 'unlink' && ['.js', '.sh', '.json'].includes(path.extname(change.file).toLowerCase()),
+    )
     .map(change => change.file);
   for (const file of files) {
-    try { await fs.access(file); }
-    catch (error) { if (error.code === 'ENOENT') continue; throw error; }
+    try {
+      await fs.access(file);
+    } catch (error) {
+      if (error.code === 'ENOENT') continue;
+      throw error;
+    }
     const extension = path.extname(file).toLowerCase();
     if (extension === '.json') {
       const result = await validateJsonFile(file);
@@ -132,7 +232,9 @@ async function validateSourceBatch(changes) {
     const args = extension === '.sh' ? ['-n', file] : ['--check', file];
     const result = spawnSync(command, args, { encoding: 'utf8', timeout: 10_000 });
     if (result.error || result.status !== 0) {
-      const detail = String(result.stderr || result.stdout || result.error?.message || 'unknown syntax error').trim().slice(-1600);
+      const detail = String(result.stderr || result.stdout || result.error?.message || 'unknown syntax error')
+        .trim()
+        .slice(-1600);
       return { valid: false, file, detail };
     }
   }
@@ -148,6 +250,7 @@ async function reloadPluginTree(changes) {
   for (const file of files) {
     try {
       const plugin = await importPlugin(file);
+      if (!plugin) continue;
       const key = keyOf(plugin, file);
       if (next.has(key)) throw new Error(`Duplicate plugin command name: ${plugin.name}`);
       next.set(key, { plugin, file });
@@ -158,24 +261,48 @@ async function reloadPluginTree(changes) {
     }
   }
 
-  try { await mergeGeneratedCommands(next); }
-  catch (error) { logger.error({ code: error.code || error.name }, 'ACIE generated command reload failed; static source snapshot is retained'); }
+  try {
+    await mergeGeneratedCommands(next);
+  } catch (error) {
+    logger.error(
+      { code: error.code || error.name },
+      'ACIE generated command reload failed; static source snapshot is retained',
+    );
+  }
+  try {
+    await mergePrivateRuntimePlugins(next);
+  } catch (error) {
+    if (isPrivateRuntimeRequired()) throw error;
+    logger.error(
+      { code: error.code || error.name },
+      'Private runtime command reload failed; static source snapshot is retained',
+    );
+  }
 
   // Replace the registry in one synchronous turn, never expose a half-applied folder copy.
   registry.clear();
   for (const [key, entry] of next) registry.set(key, entry);
   const changed = changes.map(change => path.relative(PLUGIN_ROOT, change.file).replaceAll(path.sep, '/'));
-  logger.info({ count: registry.size, changed, failed: failures.length }, 'Plugin batch hot-reload committed atomically');
-  for (const failure of failures) logger.error(failure, 'Plugin update rejected; previous valid plugin retained when available');
+  logger.info(
+    { count: registry.size, changed, failed: failures.length },
+    'Plugin batch hot-reload committed atomically',
+  );
+  for (const failure of failures)
+    logger.error(failure, 'Plugin update rejected; previous valid plugin retained when available');
 }
 
 function fileSnapshot(changes) {
-  return changes.map(change => {
-    try {
-      const stat = requireStatSync(change.file);
-      return `${change.file}:${stat.size}:${stat.mtimeMs}:${stat.ino}`;
-    } catch { return `${change.file}:missing`; }
-  }).sort().join('|');
+  return changes
+    .map(change => {
+      try {
+        const stat = requireStatSync(change.file);
+        return `${change.file}:${stat.size}:${stat.mtimeMs}:${stat.ino}`;
+      } catch {
+        return `${change.file}:missing`;
+      }
+    })
+    .sort()
+    .join('|');
 }
 
 function requireStatSync(file) {
@@ -183,7 +310,11 @@ function requireStatSync(file) {
   return fsSync.statSync(file);
 }
 
-export function watchSourceFiles({ onRestartRequired = () => {}, onBatchStart = () => {}, onBatchSettled = () => {} } = {}) {
+export function watchSourceFiles({
+  onRestartRequired = () => {},
+  onBatchStart = () => {},
+  onBatchSettled = () => {},
+} = {}) {
   const watcher = watchFiles(PROJECT_ROOT, {
     ignoreInitial: true,
     persistent: true,
@@ -191,10 +322,18 @@ export function watchSourceFiles({ onRestartRequired = () => {}, onBatchStart = 
     ignored: candidate => {
       const relative = path.relative(PROJECT_ROOT, candidate).replaceAll(path.sep, '/');
       if (isRuntimeWatchIgnored(relative)) return true;
-      if (!relative || relative === '.' || relative === 'src' || relative.startsWith('src/') || relative === 'scripts' || relative.startsWith('scripts/')) return false;
+      if (
+        !relative ||
+        relative === '.' ||
+        relative === 'src' ||
+        relative.startsWith('src/') ||
+        relative === 'scripts' ||
+        relative.startsWith('scripts/')
+      )
+        return false;
       return !DEPENDENCY_MANIFESTS.has(relative);
     },
-    ignorePermissionErrors: true
+    ignorePermissionErrors: true,
   });
 
   const pending = new Map();
@@ -208,7 +347,9 @@ export function watchSourceFiles({ onRestartRequired = () => {}, onBatchStart = 
   const scheduleFlush = () => {
     clearTimeout(settleTimer);
     const wait = QUIET_WINDOW_MS;
-    settleTimer = setTimeout(() => { void flushChanges(); }, wait);
+    settleTimer = setTimeout(() => {
+      void flushChanges();
+    }, wait);
     settleTimer.unref?.();
   };
 
@@ -225,14 +366,17 @@ export function watchSourceFiles({ onRestartRequired = () => {}, onBatchStart = 
       const secondSnapshot = fileSnapshot(changes);
       // A new filesystem event means the copy/replace transaction is still
       // changing. Never clear it or restart from a partial folder snapshot.
-      if (!canCommitSourceBatch({
-        capturedRevision: revision,
-        currentRevision: batchRevision,
-        firstSnapshot,
-        secondSnapshot,
-        elapsedMs: Date.now() - firstChangeAt,
-        maxWindowMs: MAX_BATCH_WINDOW_MS
-      })) return;
+      if (
+        !canCommitSourceBatch({
+          capturedRevision: revision,
+          currentRevision: batchRevision,
+          firstSnapshot,
+          secondSnapshot,
+          elapsedMs: Date.now() - firstChangeAt,
+          maxWindowMs: MAX_BATCH_WINDOW_MS,
+        })
+      )
+        return;
 
       const classification = classifySourceBatch(changes);
       if (!classification.files.length) {
@@ -246,7 +390,10 @@ export function watchSourceFiles({ onRestartRequired = () => {}, onBatchStart = 
           if (pending.get(change.file) === change) pending.delete(change.file);
         }
         firstChangeAt = pending.size ? firstChangeAt : 0;
-        logger.error({ file: validation.file, detail: validation.detail, files: classification.files }, 'Source update batch rejected; running runtime retained because updated JavaScript is invalid');
+        logger.error(
+          { file: validation.file, detail: validation.detail, files: classification.files },
+          'Source update batch rejected; running runtime retained because updated JavaScript is invalid',
+        );
         return;
       }
 
@@ -259,7 +406,10 @@ export function watchSourceFiles({ onRestartRequired = () => {}, onBatchStart = 
       accepted = true;
 
       if (classification.requiresRestart) {
-        logger.warn({ files: classification.files, requiresInstall: classification.requiresInstall }, 'Core source update batch settled; requesting one controlled restart');
+        logger.warn(
+          { files: classification.files, requiresInstall: classification.requiresInstall },
+          'Core source update batch settled; requesting one controlled restart',
+        );
         await onRestartRequired({ ...classification, events: changes.map(({ file, event }) => ({ file, event })) });
       } else {
         await reloadPluginTree(changes);
@@ -270,8 +420,11 @@ export function watchSourceFiles({ onRestartRequired = () => {}, onBatchStart = 
       flushing = false;
       if (pending.size) scheduleFlush();
       else {
-        try { await onBatchSettled({ files: changes.map(change => change.file), accepted }); }
-        catch (error) { logger.warn({ message: error.message }, 'Source batch settle callback failed'); }
+        try {
+          await onBatchSettled({ files: changes.map(change => change.file), accepted });
+        } catch (error) {
+          logger.warn({ message: error.message }, 'Source batch settle callback failed');
+        }
       }
     }
   };
@@ -286,8 +439,11 @@ export function watchSourceFiles({ onRestartRequired = () => {}, onBatchStart = 
     if (!isSource && !isScript && !isManifest) return;
     if (!firstChangeAt) {
       firstChangeAt = Date.now();
-      try { onBatchStart({ file, event }); }
-      catch (error) { logger.warn({ message: error.message }, 'Source batch start callback failed'); }
+      try {
+        onBatchStart({ file, event });
+      } catch (error) {
+        logger.warn({ message: error.message }, 'Source batch start callback failed');
+      }
     }
     pending.set(file, { file, event, at: Date.now() });
     batchRevision += 1;
@@ -299,15 +455,22 @@ export function watchSourceFiles({ onRestartRequired = () => {}, onBatchStart = 
     watcherFailureHandled = true;
     clearTimeout(settleTimer);
     if (error?.code === 'ENOSPC') {
-      try { onBatchSettled({ files: [...pending.keys()], accepted: false }); } catch {}
+      try {
+        onBatchSettled({ files: [...pending.keys()], accepted: false });
+      } catch {}
       pending.clear();
-      logger.error({ code: error.code, syscall: error.syscall, path: error.path }, 'Source watcher kehabisan kuota; hot reload dihentikan agar runtime tetap stabil');
+      logger.error(
+        { code: error.code, syscall: error.syscall, path: error.path },
+        'Source watcher kehabisan kuota; hot reload dihentikan agar runtime tetap stabil',
+      );
       void watcher.close().catch(() => {});
       return;
     }
     logger.error({ code: error?.code, message: error?.message }, 'Source watcher gagal');
   });
-  watcher.on('ready', () => logger.info({ root: SOURCE_ROOT, quietWindowMs: QUIET_WINDOW_MS }, 'Transactional source watcher active'));
+  watcher.on('ready', () =>
+    logger.info({ root: SOURCE_ROOT, quietWindowMs: QUIET_WINDOW_MS }, 'Transactional source watcher active'),
+  );
 
   return {
     watcher,
@@ -316,7 +479,7 @@ export function watchSourceFiles({ onRestartRequired = () => {}, onBatchStart = 
       clearTimeout(settleTimer);
       pending.clear();
       await watcher.close();
-    }
+    },
   };
 }
 

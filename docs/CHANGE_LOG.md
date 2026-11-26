@@ -1,6 +1,51 @@
+## v1.10.52 — Root Documentation and Release Metadata Layout
+
+- Keep `README.md` as the only Markdown document directly in the repository root.
+- Move the project structure guide to `docs/architecture/PROJECT_STRUCTURE.md` and the release index to `docs/releases/CHANGELOG.md`; detailed history remains in this file.
+- Generate operator bundle metadata at `.release/OPERATOR_BUNDLE.json` locally and at the same path inside the operator ZIP; never emit it at the archive root.
+- Extract Ocha release path inclusion rules into `scripts/release-policy.js` so `docs/releases/` remains included while `.release/`, `release/`, `releases/`, and `release-staging/` remain excluded from source traversal.
+- Add regression tests for root Markdown/JSON policy, documentation location, Git-ignore behavior, and ZIP manifest path.
+- Validation: 75 Markdown links valid; 288 JavaScript files pass syntax; focused layout tests pass; full Ocha suite 392 passed, 0 failed, 1 skipped.
+
+## v1.10.52 — Paired Release and Runtime Audit
+
+- Add `npm run maintain:two-bases` as one deterministic verification/release entrypoint; it stops on test/integrity failures and records unavailable Prettier, live VPS and WhatsApp checks as limitations.
+
+- Pair Ocha operator v1.10.52 with the independent AC component v2.1.0 over NADI HTTP API v1.
+- Bump only private runtime package metadata; all four original private module SHA-256 fingerprints and byte lengths remain unchanged.
+- Add one release orchestrator to create the local-only Ocha operator ZIP, independent AC ZIP, and a manifest with artifact SHA-256 values.
+- Keep `.private/` Git-ignored and retain publication audit checks; the operator archive containing private source is not a public GitHub artifact.
+- ACIE read-only registry/provider health audit remains executable on the VPS; local archive has no persisted VPS registry, so actual VPS provider health is not reported.
+- Make the ACIE JSON audit mode machine-readable by suppressing routine loader logs on stdout; retain diagnostics on stderr and add a CLI regression test.
+- Full regression results and live-transport limitations are recorded in the paired release report.
+
+## v1.10.51 — Repository Intelligence, Registry Audit & NADI Maintenance Review
+
+### Added / Changed
+
+- Audited the supplied v1.10.51 source archive against the live public `main` repository; documented that the ZIP has no Git ancestry metadata and must be reconciled by diff before publication.
+- Added a static command registry audit: 47 canonical descriptors, 89 aliases and zero normalized source-level collisions; explicitly excluded dynamic ACIE entries not present in the archive.
+- Added a separate Nexora/ACIE provider registry audit and a source/function location index for the runtime, serializer, database, AI, ACIE and NADI integration layers.
+- Added a private `AI_WORKFLOW.md` continuity guide and refreshed `AI_CONTEXT.md` from the supplied source snapshot.
+- Completed the required NADI 2.1.0 subsystem review. Identified repeated MIMPI consolidation as a deduplication risk and long-gap `dt` numerical stability as a required experiment. No external NADI source was changed.
+- No bot runtime source or contributed original source was modified or executed in this audit.
+
+### Validation
+
+- `npm run check`: 275 JavaScript files passed syntax validation.
+- Selected ACIE, contribution, NADI loader/runtime and kernel telemetry tests: 36 passed, 0 failed.
+- Full `npm test` not run: supplied ZIP has no lockfile or installed dependencies.
+- ACIE container execution and live WhatsApp runtime were not probed.
+
+### Operational/security notes
+
+- The supplied ZIP includes local `.env` and JSONL/config runtime files; the archive must not be published or forwarded as a source release. Secret contents and runtime data contents were not inspected or reproduced.
+- Public GitHub `main` remains a separately observed 1.10.48 baseline at audit time. No remote changes were pushed.
+
 ## v1.10.47 — Menu, Message Test Lab & Master controls
 
 ### Added / Changed
+
 - Rebuild all selectable command menus through the repository's `sock.buttonBuilder()` contract (`addSelection`, `makeSection`, `makeRow`, `send`) rather than constructing raw interactive list payloads.
 - Expose YouTube Search as a direct main-menu action; show YTS canonical command and every registered alias through the general command pages. Expose Message Test Lab and `.master status` directly in the owner main menu.
 - Keep `.test` as a two-page, 16-number catalogue using the same serializer ButtonBuilder. The catalogue mirrors the supplied numbered test families; test payload success/errors are recorded in logs without verbose chat result summaries.
@@ -11,12 +56,12 @@
 - Correct Master Console documentation to reflect actual warning and group-control semantics.
 
 ### Validation
+
 - `npm run check`: 268 JavaScript files passed syntax validation.
 - Focused menu, serializer, 16-suite test-lab, YouTube inventory, and master-control tests passed 13/13, including direct main-menu entries for `.yts` and owner-only `.test`.
 - Final `npm run check`: 268 JavaScript files passed syntax validation.
 - Final `npm test`: 356 total, 354 passed, 0 failed, 2 skipped.
 - Added `docs/MENU_TEST_LAB_MASTER_FIXES.md` and `.env.example` with the non-conflicting Rental API port default.
-
 
 ## 1.10.47 — Command Menu, Message Test Lab & Master Controls
 
@@ -31,6 +76,7 @@
 ## v1.10.46 — ACIE intake: Rizkyrohan text-canvas contribution
 
 ### Added / Changed
+
 - Detect JavaScript dynamic imports as dependency candidates so runtime packages such as `@napi-rs/canvas` are not omitted from dependency intelligence.
 - Detect text-image Canvas signals from the combination of `createCanvas`, `loadImage`, `fillText`/`strokeText`, and JPEG encoding; mark the capability `image-canvas.render.text` as `unverified` until an adapter protocol test passes.
 - Generate a no-argument `.textimage` command draft (alias `.timg`) for the current fixed-content contribution. Draft remains hidden and cannot execute while the provider is quarantined.
@@ -38,12 +84,14 @@
 - Record the repeated receipt as a duplicate of the earlier byte-identical contribution; retain both intake records and both original snapshots.
 
 ### Validation
+
 - `npm run check`: 264 JavaScript files passed syntax validation. `npm test`: 351 total, 349 passed, 0 failed, 2 skipped. The new Rizkyrohan intake regression suite passed 7/7. Original source remains static-only and is not executed.
 - Font/background asset binaries were not vendored: their GitHub repositories report no license metadata, so asset rights remain pending. Production rendering remains blocked until asset permissions, dependency isolation, and an approved adapter are available.
 
 ## v1.10.45 — ACIE Part 3: autonomous command engineering & live registry integration
 
 ### Added / Changed
+
 - Complete ACIE command lifecycle from static capability drafts to owner-approved virtual plugin descriptors. Drafts remain hidden until provider, sandbox, adapter protocol, integrity, license, attribution, security and owner-approval gates pass.
 - Integrate generated commands into the existing `src/core/plugin-loader.js` registry. Existing Ocha dispatcher, permission, cooldown, group policy, menu and command catalog remain authoritative; no second command framework or contributed-source imports are introduced.
 - Add explicit lifecycle operations for command inspect, protocol test, approve (`public` or `owner`), reject, revoke and runtime registry sync. Owner-only generated commands are private-chat-only.
@@ -56,11 +104,13 @@
 - Update ACIE Part 1–3 documentation and operations workflow.
 
 ### Validation
+
 - `npm run check`: 262 JavaScript files passed syntax validation.
 - `npm test`: 344 tests total, 342 passed, 0 failed, 2 skipped.
 - ACIE focused command-engine/foundation/runtime tests passed. Live container execution, target VPS provider behavior and WhatsApp client rendering remain target-host checks.
 
 ### Operational boundaries
+
 - The sandbox still uses `--network=none`; public-service downloader contributions cannot fetch external URLs. Dependencies must already be present in a reviewed pinned runtime image. Generic JSON-stdio execution currently supports Node.js, Python, Go, PHP, Java source-launch and Bash; TypeScript/Rust require dedicated build adapters. Generated command output currently renders text and HTTPS links, not arbitrary local media uploads. Vault encryption-at-rest remains an encrypted-host-volume responsibility.
 
 ## v1.10.43 — ACIE Part 1: preservation and audit hardening
@@ -82,6 +132,7 @@ Validation: `npm run check` passed (255 JavaScript files); ACIE focused tests pa
 ## v1.10.42 — ACIE contribution intelligence foundation
 
 ### Added
+
 - Introduce ACIE as an internal Ocha subsystem with private Git-ignored contribution storage, immutable version paths, original-file SHA-256 inventory, provenance records, static analysis, capability candidates, adapter descriptors, provider registry, command specification drafts, worker roles, routing/fallback primitives, circuit breaker, trace IDs and JSONL audit records.
 - Add directory and ZIP intake through `npm run acie:intake`; ZIP extraction rejects traversal, absolute paths, symlinks, duplicate entries, special entries and configured size/count overflows. A source ZIP is retained byte-for-byte alongside the extracted original tree.
 - Support static discovery for JavaScript/Node, CommonJS/ESM, TypeScript, Python, Go, PHP, Java, Rust and Bash, with heuristic runtime, dependency, imports, function/parameter, export, environment, network, output-shape and risk candidates.
@@ -91,12 +142,14 @@ Validation: `npm run check` passed (255 JavaScript files); ACIE focused tests pa
 - Add 17 ACIE architecture, preservation, intake, language, adapter, routing, fallback, command, runtime, security, governance, monitoring, troubleshooting and operations documents.
 
 ### Security and limitations
+
 - Original contribution bytes are copied into `original/`, checked by SHA-256 and made read-only best effort. Every re-submission is a new version; no source patching/refactoring occurs.
 - Original contributions are never imported or executed by the bot. Providers default to quarantined; command candidates default to pending validation; credentials are not printed or added to telemetry.
 - The current release is a foundation, not full acceptance of all ACIE goals: no production Docker/OCI sandbox runner, isolated dependency installation, live multi-language process execution, automatic active command factory, external malware/license review, signed contributor identity, or ACIE-managed encryption-at-rest is included. The vault currently relies on restrictive host filesystem permissions; place it on an encrypted volume before accepting contributions containing live credentials. Provider activation is fail-closed until the execution and governance gates are implemented and proven.
 - Language/capability/interface detection is static heuristic analysis; findings are candidates, not runtime proof. ZIP intake requires the already declared `yauzl` package to be installed.
 
 ### Validation
+
 - `npm run check`: 254 JavaScript files passed syntax checking.
 - ACIE focused tests: 14 passed, 0 failed. Tests cover path traversal rejection, multi-language recognition, capability candidate filtering, byte preservation, provenance, immutable versioning, provider quarantine, static alias collision scanning, fallback eligibility, credential redaction and error classification.
 - Full `npm test`: 316 tests, 314 passed, 0 failed, 2 skipped. `npm run check`: 254 JavaScript files passed syntax checking.
@@ -105,12 +158,14 @@ Validation: `npm run check` passed (255 JavaScript files); ACIE focused tests pa
 ## v1.10.37 — Native command menu, Kernel response reliability & profile canvas refresh
 
 ### Added / Changed
+
 - Replace the two quick-access-only menu buttons with a native-flow category selector and paginated command selector sourced from the live plugin registry. Rows execute canonical command IDs through the regular dispatcher, permissions, tenant command policy, and quota checks.
 - Hide owner-category and `ownerOnly` commands from non-owner interactive menus; owner category remains visible to backend-verified owner sessions. Add category navigation for General, Developer, and Owner/System plus Profile and Website shortcuts.
 - Send an immediate local telemetry acknowledgement when `.kernel` is invoked, before waiting for Code Lab/TryCloudflare initialization. Follow with a WebView CTA and URL when available, or a clear diagnostic reply when the gateway is unavailable.
 - Redesign the `.profile` SVG canvas to a 1080×1520 dark graphite/gold layout with level medallion, rank, XP progress, activity metrics, familiarity, trust, role progression, and achievement chips. Keep all profile fields escaped and progress values clamped.
 
 ### Validation
+
 - `npm run check`: 225 JavaScript files passed.
 - Focused menu, Kernel, profile-canvas and menu-renderer tests: 11 passed, 0 failed.
 - Full `npm test`: 286 tests, 281 passed, 3 failed, 2 skipped. The failures are outside the edited modules: one AI local-policy XP threshold assertion and two test cleanup races (`ENOTEMPTY`) while asynchronous User Vault persistence is still finishing (AI batching and website-builder integration).
@@ -119,6 +174,7 @@ Validation: `npm run check` passed (255 JavaScript files); ACIE focused tests pa
 ## v1.10.36 — Chokidar dependency and watcher fallback reliability
 
 ### Fixed
+
 - Pin `chokidar` to `4.0.3`, which remains compatible with the repository's Node.js `>=20.18.0` engine range.
 - Route plugin hot reload and Auto Git Sync through a shared watcher adapter. Chokidar remains the primary watcher; a native Node.js filesystem watcher is used if the package cannot be resolved.
 - Keep runtime/cache/session directories excluded from the native fallback and normalize add/change/unlink events for the existing transactional reload and Git-sync handlers.
@@ -126,6 +182,7 @@ Validation: `npm run check` passed (255 JavaScript files); ACIE focused tests pa
 - Add watcher regression tests for add, change, unlink and ignored-directory behavior.
 
 ### Validation
+
 - `npm run check`: 222 JavaScript files passed.
 - Focused watcher tests: 2 passed, 0 failed, including add/change/unlink, nested directory discovery, and ignored-directory behavior.
 - Full `npm test`: 273 passed, 3 failed, 2 skipped. The six prior `ERR_MODULE_NOT_FOUND` failures caused by Chokidar are gone. The remaining failures are outside this watcher patch: one AI XP threshold assertion and two `ENOTEMPTY` cleanup races while asynchronous User Vault writes are still completing.
@@ -134,6 +191,7 @@ Validation: `npm run check` passed (255 JavaScript files); ACIE focused tests pa
 ## v1.10.35 — Website Builder, tenant dashboard mutations & Android source
 
 ### Added
+
 - Add seven responsive professional website templates: business, portfolio, agency, storefront, creator, restaurant and event.
 - Add persistent website drafts, private editing sessions, public publication through the existing shared Code Lab TryCloudflare gateway, custom sections, and website-specific audit records.
 - Add text, image and MP4 website posts; images accept JPG/PNG/WEBP up to 10 MB, videos accept MP4 up to 20 MB, and site media is capped at 50 MB. Add 1:1 PNG share-card generation through optional `sharp`.
@@ -144,18 +202,21 @@ Validation: `npm run check` passed (255 JavaScript files); ACIE focused tests pa
 - Add a native Java Android dashboard source project under `apps/android-dashboard/` for rental overview, member-limit changes, queued member actions, command policy, history and setup guidance.
 
 ### Security and limitations
+
 - Public website URLs contain random tokens; only token hashes are persisted. Editor sessions expire after 24 hours, use a Bearer token and same-origin checks, and are separate from public website access.
 - Rental API mutations require active tenant entitlement, matching billing-contact ownership, `rental:write`, a unique `Idempotency-Key`, and audit journaling. Member actions are queued, not executed directly from the HTTP request.
 - The internal member limit cannot exceed the purchased plan ceiling or fall below current membership; it does not change WhatsApp's platform-wide maximum.
 - Android source is included, but a compiled APK is not claimed: Android SDK/Gradle compilation was not available in the build environment. The PNG share-card command requires `sharp` to be installed on the host.
 
 ### Validation
+
 - Focused tests cover website templates, public token and media routes, editor authorization, tenant command policy, dashboard API tenant ownership and idempotency, and existing website preview gateway.
 - Live WhatsApp group actions, TryCloudflare behavior, live payment settlement, optional `sharp` execution and Android device installation remain target-host validations.
 
 ## v1.10.34 — Rental dashboard API, one-time website verification & command collision audit
 
 ### Added
+
 - Add tenant-bound dashboard API keys with separate `rental:read` and `profile:read` scopes. Raw secrets use the `ocha_live_` prefix and are displayed once; SHA-256 hashes are stored in the JSONL repository.
 - Add read-only HTTP endpoints `/v1/rental/overview` and `/v1/profile`, `x-api-key` authentication, no-store response headers, and a 60-request/minute per-key limiter.
 - Add optional TryCloudflare quick-tunnel launch for the dashboard API (`OCHA_RENTAL_API_TUNNEL=1`, requires `cloudflared`).
@@ -165,12 +226,14 @@ Validation: `npm run check` passed (255 JavaScript files); ACIE focused tests pa
 - Add menu quick-access buttons for `.profile` and `.website`.
 
 ### Security and scope
+
 - API key secrets are never persisted in plaintext. Rental keys are bound to one selected group; profile keys are bound to their issuing WhatsApp account.
 - API Part 1 is read-only. Membership changes, raising member limits, quota mutations, public page editor, seven templates, shareable media posts, and APK packaging are deferred to Part 2 until write authorization, audit, and idempotency are implemented.
 - Website verification costs Rp10.000 once. Payment evidence is stored privately and forwarded for manual review; screenshot receipt does not automatically grant a badge or website slot.
 - Duplicate command detection does not delete or rewrite source automatically. It stages recommendations because semantic equivalence and compatibility require complete-file review, WorkloadTracker assessment, tests, and atomic source revision.
 
 ### Validation
+
 - JavaScript syntax check: 213 files passed.
 - Full test run: 257 passed, 6 failed, 2 skipped. The six failures were environment-related subprocess imports because `chokidar` was unavailable; dependency installation timed out in this environment. Full suite must be rerun after `npm install` on the target host.
 - Live WhatsApp delivery, TryCloudflare tunnel, owner approval workflow, and public API calls remain target-host validation tasks.
@@ -184,6 +247,7 @@ Validation: `npm run check` passed (255 JavaScript files); ACIE focused tests pa
 - Add `docs/BAILEYS_REFERENCE_REVIEW.md` with source-linked review notes from the upstream Baileys guide and public Baileys bot repositories. Research recommendations are separated from delivered code.
 
 ### Validation
+
 - Focused YouTube config, application-config migration, and rental customer-portal tests: 12 passed, 0 failed.
 - JavaScript syntax validation: 205 files checked.
 - Live WhatsApp delivery, YouTube binary execution, full dependency installation, and VPS/Cloudflare deployment remain target-host checks.
@@ -191,17 +255,20 @@ Validation: `npm run check` passed (255 JavaScript files); ACIE focused tests pa
 ## v1.10.32 — Public Kernel WebView & live telemetry
 
 ### Added
+
 - Added public `.kernel` command with `.kernelstatus` and `.nadiweb` aliases; it publishes a read-only WebView through the shared Nexora Code Lab HTTPS Quick Tunnel.
 - Added persistent aggregate counters for inbound messages, bot output messages, correlated reply turns, AI requests/responses/failures, provider counts, response characters, and rolling latency percentiles.
 - Added a live dashboard for NADI oscillator, homeostasis, OCC appraisal, neuromodulator fields, predictive self-model, EFE policies, integration and entropy proxies, memory-chain integrity, WhatsApp connection, and Node runtime diagnostics.
 - Added bounded event history, 24-hour activity chart, explicit model equations, telemetry tests, and public-dashboard operational documentation.
 
 ### Security and interpretation
+
 - The public endpoint uses a 256-bit random path token, GET-only handling, restrictive response headers, rate limiting, and the existing HTTPS tunnel; it does not expose the loopback NADI API.
 - Public telemetry excludes message contents, phone numbers, JIDs, sender identities, user profiles, private conversation history, private memory, self-narrative, and workspace broadcast text. Runtime state values are synthetic computation, not evidence of biological emotion or phenomenal consciousness.
 - Runtime telemetry and dashboard token are excluded from Git through `data/kernel/`. Counters start with this version and are not reconstructed from historical chat logs.
 
 ### Validation
+
 - JavaScript syntax check: 201 files passed.
 - Focused telemetry test: 1 passed, 0 failed.
 - Full bot integration and live WhatsApp/Cloudflare rendering still require validation on the target host with declared dependencies and `cloudflared` installed.
@@ -209,22 +276,26 @@ Validation: `npm run check` passed (255 JavaScript files); ACIE focused tests pa
 ## v1.10.31 — External NADI component separation
 
 ### Added
+
 - Added an external NADI component manager using Node.js native `fetch`, bounded GitHub archive downloads, SHA-256 verification, safe ZIP extraction, component-layout validation, and atomic installation outside the Ocha source tree.
 - Added configurable GitHub repository/ref support, optional immutable archive checksum pinning, a manual external source directory, and optional remote HTTP service mode.
 - Added an HTTP client for NADI v2.1 with readiness checks, status polling, managed heartbeat controls, explicit ticks, sleep consolidation, integrity verification, and shutdown checkpointing.
 
 ### Changed
+
 - Removed the embedded Python NADI package from `src/consciousness/`; NADI is now a separately versioned repository/component.
 - NADI owns its drift-corrected heartbeat; Ocha polls telemetry instead of sending one tick per interval, avoiding duplicate heartbeat loops.
 - Updated `.nadi` commands and runtime documentation for external component/version/source visibility.
 - Preserved existing NADI state under `data/consciousness/` by default and preserved the entire Ocha feature tree, AI provider chain, plugin set, and database behavior.
 
 ### Security and fallback
+
 - ZIP extraction rejects traversal, absolute paths, symbolic links, oversized archives, and excessive entries.
 - NADI stays loopback-only by default; repository credentials remain in environment secrets.
 - If the NADI repository is not yet configured, NADI is marked unavailable and normal WhatsApp/AI functions continue.
 
 ### Validation
+
 - NADI Python base suite: 4/4 passed; extended suite: 8/8 passed.
 - Ocha syntax check: 196 JavaScript files passed; focused NADI/runtime suite: 6/6 passed.
 - Direct Ocha-to-external-NADI HTTP integration passed: startup, heartbeat, prompt telemetry, manual tick, chain verification, heartbeat pause/resume, and clean shutdown.
@@ -236,24 +307,28 @@ Validation: `npm run check` passed (255 JavaScript files); ACIE focused tests pa
 ## [1.10.28] - 2026-11-24
 
 ### Added
+
 - Added contextual feature-build intent resolution. A short confirmation such as `buat aja` is linked only to a recent user request plus Ocha's preceding offer to prepare that feature.
 - Added private, encrypted owner feature backlog events (`feature.requested` / `feature.status`) with deduplication, acceptance criteria, status history, and account-scoped retrieval.
 - Added owner-only `.features list|all|show|progress|complete|cancel|reopen` to review development requests from the authenticated owner's own User Vault.
 - Added focused tests for intent confirmation, encrypted storage, cross-account isolation, append-only status changes, and explicit opt-in interactive UI.
 
 ### Changed
+
 - Unsupported game requests now receive a conversational development offer instead of a hard stop. A confirmed owner request is recorded as a proposal; feature source is never self-written or self-installed by the model.
 - Unknown natural-language command requests now ask for the desired outcome and offer capability matching or a development request instead of a blunt registry error. Restricted command execution remains backend-gated.
 - AI-generated quick replies, lists, copy CTA, and URL CTA are ignored unless the current user explicitly requests the corresponding interactive presentation. Ordinary answers remain plain text.
 - Capability grounding now instructs the model to find a legitimate alternative or prepare a feature proposal rather than terminating at an unavailable-feature statement.
 
 ### Validation
+
 - Feature intent, encrypted vault lifecycle, owner backlog isolation, AI response UI, and command-intent tests: 13 passed, 0 failed.
 - Syntax validation and full test suite are run separately in the release environment; provider and WhatsApp live behavior still require target-server validation.
 
 ## [1.10.26] - 2026-11-23
 
 ### Changed
+
 - Re-audited official provider model IDs, pricing, free-tier eligibility, and rate-limit documentation. Model-list visibility is no longer treated as proof of free access or inference health.
 - Groq free-plan routing now selects only the verified `openai/gpt-oss-120b` primary for this deployment; Gemini `gemini-3.8-flash` remains a documented free-tier secondary. DeepSeek and OpenAI remain excluded from free-only routing because their published inference APIs are usage-priced.
 - Added policy version and research timestamp to the persisted model catalog. Unknown or merely visible models cannot be auto-promoted into free-only routing.
@@ -262,6 +337,7 @@ Validation: `npm run check` passed (255 JavaScript files); ACIE focused tests pa
 - AI provider exhaustion remains silent to the requesting user. The owner receives one compact private maintenance report; provider diagnostics are not echoed into other users' chats.
 
 ### Validation
+
 - Provider/model catalog, free-only routing, TPM fitting, provider error classification, and fallback tests: 20 passed, 0 failed.
 - Syntax check: 184 JavaScript files.
 - Official references and observed-log diagnosis: `docs/AI_MODEL_CATALOG.md`.
@@ -269,6 +345,7 @@ Validation: `npm run check` passed (255 JavaScript files); ACIE focused tests pa
 ## [1.10.25] - 2026-11-23
 
 ### Added
+
 - Expanded Ocha's versioned operational self-model with identity, session scope, relationship statistics, decision protocol, capability provenance, authority boundary, and explicit non-consciousness contract.
 - Added owner-only rental support queue commands: `.rentals support [open|answered|closed|all]`, `.rentals reply <ticket-id> <message>`, and `.rentals close <ticket-id> [note]`.
 - Added customer support intake through `.sewa masukan`, `.sewa saran`, `.sewa keluhan`, and `.sewa konsultasi`; duplicate submissions are deduplicated and tickets are auditable.
@@ -276,6 +353,7 @@ Validation: `npm run check` passed (255 JavaScript files); ACIE focused tests pa
 - Added higher rank milestones through Paragon, Nova, Cosmic, Apex, Transcendent, Nexus, and Singularity, followed by unbounded dynamic Singularity tiers for continued high-level progression.
 
 ### Changed
+
 - Expanded default AI context to 96 recent turns and 96,000 input characters; raised requested output budget to 32,768 tokens and per-provider timeout to 60 seconds while retaining the 180-second shared task deadline.
 - Completion recovery now continues until the shared deadline or a no-progress guard instead of stopping after a fixed number of attempts.
 - Memory facts are relevance-ranked against the active query and can fill a larger adaptive context budget. The application has no fixed total fact-count cap; individual notes are bounded to 16,000 characters for storage safety.
@@ -286,6 +364,7 @@ Validation: `npm run check` passed (255 JavaScript files); ACIE focused tests pa
 - Per-user encrypted `data/roo/<sha256-user-id>/` archives remain the source of record. Group conversations do not load private long-term memory.
 
 ### Validation
+
 - Focused memory/identity/profile/vault/rental suite: 29 passed, 0 failed. Configuration and group-mute migration suite: 12 passed, 0 failed. Owner rental support plugin was exercised end-to-end with a mocked socket: ticket listing, owner DM reply, and close transition succeeded.
 - Full repository suite: 224 passed, 6 blocked by the missing `chokidar` package in this build environment, 2 skipped. `npm install` could not complete within the build environment; `chokidar` is declared in `package.json` and is installed by the target startup bootstrap. `npm run check` validates all 184 JavaScript files.
 - Live WhatsApp rendering, provider continuation, and the full suite must still be rerun on the deployment server after declared dependencies are installed.
@@ -302,6 +381,7 @@ Validation: `npm run check` passed (255 JavaScript files); ACIE focused tests pa
 ## [1.10.23] - 2026-11-23
 
 ### Added
+
 - Added a versioned Ocha Identity Kernel with stable operational persona traits, private-owner warmth in verified DMs, reserved-but-respectful behavior for new contacts, and professional group tone. It explicitly does not claim consciousness, AGI, or ASI.
 - Added encrypted per-user `roo/<sha256-id>` storage for long-term private conversation archives, memory snapshots, relationship profiles, project repositories, indexes, and project history.
 - Added one-time idempotent migration of legacy private-DM AI turns into each sender's encrypted vault. Migration retains original timestamps, skips group and ambiguous cross-chat rows, and does not rewrite the legacy append-only journal.
@@ -311,6 +391,7 @@ Validation: `npm run check` passed (255 JavaScript files); ACIE focused tests pa
 - Added per-user serialized memory writes and tests for migration isolation, idempotence, concurrency, and default `roo` project location.
 
 ### Changed
+
 - Raised schema v31 AI defaults to 30-second per-provider timeout, 120-second shared job deadline, requested 8,192 output tokens, 24 recent history turns, and 24,000 user-input characters. Provider-level hard limits still apply.
 - Truncated output may receive up to four deadline-bound continuation attempts on the originating provider.
 - Project Library now uses the same normalized SHA-256 user namespace as the encrypted User Vault by default; legacy project folders are copied into that private namespace without overwriting existing destination data.
@@ -318,12 +399,14 @@ Validation: `npm run check` passed (255 JavaScript files); ACIE focused tests pa
 - Removed application event-count and XP daily caps. Physical disk limits, provider context/token ceilings, WhatsApp payload limits, and Project Builder resource quotas remain explicit safety controls.
 
 ### Validation
+
 - New identity, vault migration, user-vault, memory concurrency, profile/XP concurrency, rental, provider-deadline, configuration, and project-library focused tests are run separately.
 - Full `npm test` still requires all declared dependencies to be installed on the target runtime. Live provider and WhatsApp-client behavior must be validated after deployment.
 
 ## [1.10.22] - 2026-11-23
 
 ### Added
+
 - Added live plugin/capability grounding to AI prompts, plus deterministic command-directory explanations for quoted `.menu`/command listings.
 - Added explicit natural-language command invocation through the shared `executeRegisteredPlugin` policy gate. Only `.ping`, `.about`, and `.profile` are currently allowlisted with `aiCallable: true`; aliases inherit the canonical plugin policy.
 - Added sender-scoped opt-in long-term memory in the namespaced repository, with private-chat-only controls, 20-fact bounds, secret/sensitive fact rejection, and matching/full deletion.
@@ -333,12 +416,14 @@ Validation: `npm run check` passed (255 JavaScript files); ACIE focused tests pa
 - Recovered queued/generated AI jobs now use the same completion inspection, WhatsApp formatter, validated UI delivery, and per-chunk reply-anchor pipeline as live responses.
 
 ### Changed
+
 - AI output defaults are now 900 output tokens, 8 recent history turns, 5,000 input characters, and 100 ms coalescing through configuration schema v29. The migration updates only known prior shipped defaults and preserves other owner overrides.
 - AI replies use WhatsApp-native markers (`*bold*`, `_italic_`, `~strikethrough~`, monospace/backtick, and triple-backtick code blocks) rather than leaking `**Markdown**` syntax.
 - AI message UI remains text-first. Quick replies/lists/copy/URL CTAs are validated; image/video/carousel output requires a registered backend media capability and is not invented by the model.
 - Truncated provider outputs receive up to two bounded continuation attempts on the originating provider; unresolved truncation is explicitly disclosed rather than silently presented as complete.
 
 ### Validation
+
 - Focused regression set: 46 passed, 0 failed. `npm run check`: 175 JavaScript files checked successfully.
 - Four integration test files could not execute in this build container because `chokidar` is not installed; this is an environment dependency limitation, not a passing test.
 - Live WhatsApp delivery, client-side button rendering, and provider continuation are not simulated by unit tests and still require a live deployment check.
@@ -346,6 +431,7 @@ Validation: `npm run check` passed (255 JavaScript files); ACIE focused tests pa
 ## [1.10.21] - 2026-11-23
 
 ### Added
+
 - Added owner-controlled `.buttons full all` adaptive command UI with aliases `.button`, `.fullbutton`, `.commandbutton`, `.buttonmode`, and `.uibuttons`.
 - Added per-command policy evaluation, live registry audit/dry-run, persistent owner exclusions, plugin-defined safe actions, and alias inheritance from canonical plugin metadata.
 - Added Quick Reply for one to three actions and Single Select for four to eight actions; long/code/progress/diagnostic output keeps the original text transport.
@@ -353,11 +439,13 @@ Validation: `npm run check` passed (255 JavaScript files); ACIE focused tests pa
 - Added schema v28 configuration and focused tests for action discovery, button type selection, alias inheritance, exemptions, temporary wrapping/restoration, and text fallback.
 
 ### Changed
+
 - Dispatcher installs the adaptive reply adapter only after command authorization/guard/quota checks and restores the original serializer reply method in `finally`.
 - Legacy `.buttons on/off/status` now controls the adaptive full-button setting while preserving the legacy `ui.buttonsEnabled` field.
 - Group admin responses expose safe follow-up actions for group info, saved rules, and the admin help screen.
 
 ### Validation
+
 - Full automated suite: 195 passed, 2 skipped, 0 failed (197 total).
 - `npm run check`: 165 JavaScript files checked successfully.
 - Static command/alias audit: 101 distinct registered command tokens; no alias collisions found. Runtime plugin-loader import was unavailable in this build container because `chokidar` is not installed.
@@ -366,6 +454,7 @@ Validation: `npm run check` passed (255 JavaScript files); ACIE focused tests pa
 ## [1.10.20] - 2026-11-23
 
 ### Added
+
 - Expanded owner-only `.test` Native Flow lab into five independently runnable test pages, covering quick replies, single-select, CTA URL/call/copy, send location, reminders, Galaxy Flow, catalog/address forms, voice-call request, call permission, MPM, review-and-pay, and order-detail payloads.
 - Added `.test identity` and `.test inspect` output for chat/sender PN-LID metadata, addressing mode, bot identity, message metadata, and parsed Native Flow callback fields.
 - Added `.yts`, `.ytmp3`, `.ytmp4`, and `.ytm` YouTube commands. Search results use uploaded thumbnail media in carousel cards and offer MP3 plus every detected MP4 resolution; `.ytmp4` can also show or download a selected quality.
@@ -373,12 +462,14 @@ Validation: `npm run check` passed (255 JavaScript files); ACIE focused tests pa
 - Added YouTube command, installation, resource-limit, and licensing guidance.
 
 ### Changed
+
 - Native Flow response parsing now preserves the full `paramsJson`, extracts nested IDs/row IDs, and exposes normalized response metadata to the standard command dispatcher.
 - All quick-reply/list callbacks in the message lab now carry `.test response ...` command IDs so taps can be verified through normal command routing. CTA URL/call/copy and other app-native actions are explicitly treated as WhatsApp-client actions, not guaranteed bot callbacks.
 - Carousel cards can prepare image URLs/Buffers with Baileys `prepareWAMessageMedia` and `waUploadToServer` before relay; each card's buttons are normalized losslessly.
 - Resolved sender PN metadata is also copied into the serializer identity inspector after the connection pipeline resolves it.
 
 ### Validation
+
 - Full automated suite: 186 passed, 2 skipped, 0 failed (188 total); `npm run check`: 163 JavaScript files checked successfully.
 - Added tests for interactive message text, nested Native Flow response parsing, YouTube URL validation, MP4 resolution extraction, MP3/MP4 selection rows, and metadata formatting.
 - Native Flow schema review follows Baileys `WAProto.proto`; relay success does not guarantee that every WhatsApp account/device/client renders every experimental action or sends a bot callback.
@@ -387,6 +478,7 @@ Validation: `npm run check` passed (255 JavaScript files); ACIE focused tests pa
 ## [1.10.19] - 2026-11-22
 
 ### Added
+
 - Private rental checkout routing: `.sewa` in a group stores a 12-hour group context and sends all checkout information to the verified user's DM.
 - Group acknowledgement throttling (45 seconds per group/user) and a safe fallback when a private message cannot be delivered.
 - Package member limits (Mini 50, Standard 200, Pro 1,000), order-time capacity checks, over-limit tenant enforcement, and owner `.rentals setmembers` control.
@@ -395,6 +487,7 @@ Validation: `npm run check` passed (255 JavaScript files); ACIE focused tests pa
 - Detailed Indonesian customer guide and updated 100-item implemented-vs-roadmap rental catalog.
 
 ### Changed
+
 - Customer checkout, QRIS/account instructions, payment reporting, and payment evidence are handled only in private chat.
 - Accidental payment-evidence images sent with a rental command in a group are rejected; the bot attempts deletion and asks the sender to resend privately.
 - Rental expiry reminders are delivered privately to the billing contact or verified group admins.
@@ -402,6 +495,7 @@ Validation: `npm run check` passed (255 JavaScript files); ACIE focused tests pa
 - Profile streak rendering now uses the interaction timestamp when returning a recorded interaction, removing a clock-dependent test inconsistency.
 
 ### Validation
+
 - Added targeted tests for DM routing, one-time group acknowledgement, group evidence rejection/deletion attempt, checkout-context expiry, package member-cap enforcement, evidence validation, and group rules/welcome persistence.
 - Full suite: 175 passed, 2 skipped, 0 failed (177 total); `npm run check`: 159 JavaScript files checked successfully.
 
@@ -416,17 +510,20 @@ Validation: `npm run check` passed (255 JavaScript files); ACIE focused tests pa
 ## [1.10.14] - 2026-11-21
 
 ### Added
+
 - Added owner-only private command `.joingc <url>` using Baileys `groupGetInviteInfo()` and `groupAcceptInvite()` with strict HTTPS `chat.whatsapp.com` host validation.
 - New groups joined by the owner are persisted as muted by default, and `features.lastJoinedGroupId` records the target for the follow-up `.mute off` command.
 - Added per-group mute overrides while preserving the existing global mute default. `.mute on/off` targets the last joined group; explicit Group JIDs and `all` scope are supported.
 - Updated `.groupinfo` to display per-group active/mute status, global totals, and the origin of each group's mute setting.
 
 ### Fixed
+
 - A newly joined group can be activated independently without enabling bot responses in all other groups.
 - Per-group mute overrides and last-joined target are cleared when the bot is removed from that group.
 - Added configuration schema v25 migration and validation for Group JID keyed mute state.
 
 ### Validation
+
 - Added tests for official invite URL validation, owner/private command restrictions, join result persistence, default-muted behavior, per-group enable/mute, global override clearing, group inventory status rendering, and schema v25 migration.
 - Full suite: 151 tests, 149 passed, 2 skipped, 0 failed; syntax check: 130 JavaScript files.
 - Baileys API method usage follows its documented `groupGetInviteInfo(code)` and `groupAcceptInvite(code)` pattern.
@@ -434,12 +531,14 @@ Validation: `npm run check` passed (255 JavaScript files); ACIE focused tests pa
 ## [1.10.11] - 2026-11-21
 
 ### Changed
+
 - Removed systemd/cron installation requirements and external model-catalog timer scripts; discovery is now managed by the main Node.js lifecycle after `npm start`.
 - Replaced 15-minute polling with a one-shot timer aligned to the persisted 24-hour deadline, plus hourly retry for transient provider catalogue outages. `npm start` now also launches a singleton detached Node.js worker that survives terminal closure and main-bot shutdown.
 - API key additions/deletions trigger immediate metadata-only rediscovery; worker refreshes reload the key vault, and `.aimodels status` / `.aistatus` show worker PID, heartbeat, and next run.
 - The detached worker uses an exclusive PID lock, 30-second heartbeat, and separate log; the next `npm start` recreates it after VPS downtime and catches up from the saved catalogue timestamp.
 
 ### Validation
+
 - Syntax check: 122 JavaScript files checked.
 - Offline suite: 132 passed, 2 skipped, 0 failed (134 total).
 - Detached-worker smoke test: worker remained alive after its launcher exited, wrote PID/heartbeat status, and cleaned up its lock on SIGTERM.
@@ -448,6 +547,7 @@ Validation: `npm run check` passed (255 JavaScript files); ACIE focused tests pa
 ## [1.10.10] - 2026-11-21
 
 ### Added
+
 - Added authenticated model-list discovery for Groq, Gemini, DeepSeek, and OpenAI, with no inference prompt or output-token use during catalog refresh.
 - Added a 24-hour autonomous scheduler, dedicated atomic catalogue database (`data/ai-model-catalog.json`), 30-snapshot history, and cross-process refresh lock.
 - Added independent systemd service/timer installer with cron fallback, so catalogue refresh continues when the WhatsApp bot and terminal are stopped while the host remains powered on.
@@ -455,12 +555,14 @@ Validation: `npm run check` passed (255 JavaScript files); ACIE focused tests pa
 - Added provider-specific current free/paid policies, model recommendation selection, Gemini `generateContent` filtering, and stale last-known-good retention for temporary catalog outages.
 
 ### Fixed
+
 - Provider-wide network/timeout/5xx errors, 429 quota/rate limits, 402 balance errors, and malformed/unsupported model requests now stop same-provider key fan-out and advance to the next provider. Only key-specific authentication failures keep rotating sibling keys.
 - Corrected HTTP 402 classification to `insufficient_balance`; DeepSeek's 402 is a balance issue, not model deprecation.
 - Standalone catalog refresh skips the main JSONL event journal so the independent systemd process cannot race the application's single-writer database.
 - Fixed schema migration ordering by applying schema v24 after migrations v11–v22; existing user-configured provider priority is preserved.
 
 ### Validation
+
 - Syntax check: 121 JavaScript files checked.
 - Offline suite: 127 passed, 2 skipped, 0 failed (129 total).
 - Model discovery and fallback tests use mocked provider APIs; live provider credentials and inference still require verification on the target host.
@@ -468,6 +570,7 @@ Validation: `npm run check` passed (255 JavaScript files); ACIE focused tests pa
 ## [1.10.5] - 2026-11-21
 
 ### Added
+
 - Added Nexora Project Library with persistent per-user website repositories, canonical PN-derived user namespaces, per-chat active repository selection, project memory, task history, file hashes, local Git commits, and bounded version snapshots.
 - Separated permanent website source from temporary Code Lab preview sessions so previews can expire or be republished without deleting project source.
 - Added incremental repository updates using changed-file manifests and explicit deletions; untouched files are preserved. Added static local-reference auditing for HTML assets, CSS URLs, and JavaScript imports before a project version is committed.
@@ -477,6 +580,7 @@ Validation: `npm run check` passed (255 JavaScript files); ACIE focused tests pa
 - Restricted Project Library operations and ZIP delivery to private WhatsApp chats to prevent accidental source disclosure in groups.
 
 ### Fixed
+
 - Metadata-only active-project lookup no longer loads full website source files into the AI request path.
 - A manual ZIP request remains available even when automatic ZIP delivery is set to `off`.
 - Failed project writes roll back the staged repository and do not prune prior history before the new version is committed.
@@ -485,6 +589,7 @@ Validation: `npm run check` passed (255 JavaScript files); ACIE focused tests pa
 - User-facing project status does not disclose the absolute host Project Library root.
 
 ### Validation
+
 - Added unit/integration coverage for user isolation, incremental updates, project memory, version snapshots, local-reference auditing, export allowlisting, and private-chat restrictions.
 - Final local suite: 117 passed, 2 skipped, 0 failed (119 total); syntax check: 115 JavaScript files.
 - Live WhatsApp and public preview delivery still require deployment verification. Project Library is a logical private filesystem workspace, not a dedicated per-user Docker/Podman container.
@@ -492,6 +597,7 @@ Validation: `npm run check` passed (255 JavaScript files); ACIE focused tests pa
 ## [1.10.3] - 2026-11-21
 
 ### Fixed
+
 - Repaired schema migration ordering: schema v20 now runs after migrations v11–v19 rather than being nested inside the v11 block, so older installations no longer skip intermediate migrations.
 - Changed host bootstrap to pass the configured `auto` runtime preference through to the host script. It now uses direct administrative commands when already root, checks the actual PID 1/init manager, starts Docker without `sudo` when appropriate, and falls back to daemonless Podman.
 - Corrected manual `dockerd` PID/log file newline handling and retained the single-daemon lock. Bootstrap remains non-interactive for non-root users and does not weaken socket permissions or enable privileged containers.
@@ -500,6 +606,7 @@ Validation: `npm run check` passed (255 JavaScript files); ACIE focused tests pa
 - Added deterministic private-chat owner configuration inspection. Non-secret config is available to the verified owner; API keys, tokens, passwords, embedded database URL credentials, sessions, and private keys are redacted. Config snapshots are not sent to the LLM or persisted in AI history.
 
 ### Validation
+
 - Syntax check: 111 JavaScript files checked.
 - Offline test suite: 108 passed, 2 skipped, 0 failed (110 total).
 - Added owner identity, LID mapping persistence, configuration intent, secret-redaction, bootstrap dry-run, root-without-sudo Podman fallback, Code Lab runtime fallback, and owner configuration-flow tests.
@@ -508,6 +615,7 @@ Validation: `npm run check` passed (255 JavaScript files); ACIE focused tests pa
 ## [1.10.1] - 2026-11-21
 
 ### Changed
+
 - Changed the free Cloudflare Quick Tunnel from bot-startup/persistent operation to on-demand startup: the first public preview starts one shared tunnel and all concurrent users reuse that same process and hostname.
 - Added serialized tunnel lifecycle operations and a cross-process exclusive lease with PID/start-time verification, token-bound cleanup, and orphan recovery. A replacement process is not started until the prior `cloudflared` process has closed and its lease has been reconciled.
 - Removed unattended reconnect loops. An unexpected tunnel exit revokes preview sessions tied to the old hostname, applies bounded exponential backoff, and waits for a subsequent user preview request before starting a replacement.
@@ -515,9 +623,11 @@ Validation: `npm run check` passed (255 JavaScript files); ACIE focused tests pa
 - Added parallel-start, cross-process lease, idle-shutdown, and forced-exit recovery tests. Bumped the package version and config schema to 1.10.1 / 19.
 
 ### Cloudflare limitations
+
 - Quick Tunnels remain temporary development previews, not production hosting: no uptime guarantee, a random hostname on each creation, a 200 in-flight request limit, and no Server-Sent Events. Use a named Cloudflare Tunnel for stable production hostnames and multi-connector availability.
 
 ### Validation
+
 - Syntax check: 107 JavaScript files checked.
 - Offline test suite: 100 passed, 2 skipped, 0 failed (102 total).
 - Tunnel lifecycle tests use a controlled local fake `cloudflared` executable. A live public Quick Tunnel and the target VPS networking/runtime still require deployment verification.
@@ -535,6 +645,7 @@ Validation: `npm run check` passed (255 JavaScript files); ACIE focused tests pa
 ## [1.9.1] - 2026-11-20
 
 ### Fixed
+
 - Code execution now reads `m.quoted.text` first, so replying directly to an AI message containing code is sufficient; it no longer depends on a persisted AI reply-chain anchor to recover the quoted source.
 - Added parsing for incomplete fenced code blocks. If an AI answer was cut off by its output-token limit, Nexora asks the configured provider to complete the quoted code before passing it to the isolated worker; incomplete repair output is never executed.
 - Added task-aware output budgets for code-generation requests (up to 4,096 output tokens and a bounded 45-second fallback budget) while ordinary chat keeps its low-latency budget.
@@ -542,6 +653,7 @@ Validation: `npm run check` passed (255 JavaScript files); ACIE focused tests pa
 - Docker/Podman prerequisite diagnostics now distinguish a missing/inactive daemon socket from missing runtime images and provide the correct recovery command.
 
 ### Validation
+
 - Added regression tests for quoted-message priority, truncated quoted code completion, code-generation intent classification, and code-block parsing.
 - Offline test suite and syntax checks run for this release; live WhatsApp quote serialization and Docker daemon operation still require verification on the VPS.
 
@@ -550,6 +662,7 @@ Validation: `npm run check` passed (255 JavaScript files); ACIE focused tests pa
 ## [1.10.26] - 2026-11-23
 
 ### Changed
+
 - Re-audited official provider model IDs, pricing, free-tier eligibility, and rate-limit documentation. Model-list visibility is no longer treated as proof of free access or inference health.
 - Groq free-plan routing now selects only the verified `openai/gpt-oss-120b` primary for this deployment; Gemini `gemini-3.8-flash` remains a documented free-tier secondary. DeepSeek and OpenAI remain excluded from free-only routing because their published inference APIs are usage-priced.
 - Added policy version and research timestamp to the persisted model catalog. Unknown or merely visible models cannot be auto-promoted into free-only routing.
@@ -558,14 +671,15 @@ Validation: `npm run check` passed (255 JavaScript files); ACIE focused tests pa
 - AI provider exhaustion remains silent to the requesting user. The owner receives one compact private maintenance report; provider diagnostics are not echoed into other users' chats.
 
 ### Validation
+
 - Provider/model catalog, free-only routing, TPM fitting, provider error classification, and fallback tests: 20 passed, 0 failed.
 - Syntax check: 184 JavaScript files.
 - Official references and observed-log diagnosis: `docs/AI_MODEL_CATALOG.md`.
 
-
 ## [1.8.0] - 2026-11-20
 
 ### Added
+
 - Added Nexora capability registry and owner controls for Code Lab, natural-language auto-run, public tunnel, worker concurrency, and Docker/Podman selection.
 - Added isolated Python 3.12 and Node.js 22 execution workers plus sandboxed HTML/CSS/JavaScript browser previews.
 - Added a shared free TryCloudflare Quick Tunnel with unique per-session 256-bit URL tokens, one-hour maximum session TTL, per-user quotas, FIFO worker scheduling, and rate limits.
@@ -574,11 +688,13 @@ Validation: `npm run check` passed (255 JavaScript files); ACIE focused tests pa
 - Added `docs/CODE_LAB.md` and schema v15 migration for Code Lab configuration.
 
 ### Safety and lifecycle
+
 - Python/Node workers run without network access, with non-root UID, read-only root filesystem, read-only source mount, dropped capabilities, no-new-privileges, bounded memory/CPU/PIDs/tmpfs, and two-minute default execution limit.
 - Session expiry revokes the per-session URL path, stops/removes workers, and deletes source workspace. The shared Quick Tunnel closes after a two-minute no-session grace period.
 - Graceful shutdown handles SIGINT/SIGTERM/SIGHUP. A detached watchdog performs best-effort container/tunnel/workspace cleanup after an ungraceful bot process exit.
 
 ### Validation
+
 - Syntax check: 89 JavaScript files checked.
 - Offline suite: 71 passed, 2 skipped, 0 failed.
 - Local smoke tests used mock Quick Tunnel and mock container runtime to verify concurrent session quota reservation, preview HTTP response, token rejection, interactive stdin, and gateway shutdown. Docker/Podman and real Cloudflare Quick Tunnel were not available in the build environment; live VPS/WhatsApp validation remains required.
@@ -586,6 +702,7 @@ Validation: `npm run check` passed (255 JavaScript files); ACIE focused tests pa
 ## [1.7.3] - 2026-11-20
 
 ### Fixed
+
 - Excluded `sessions/`, quarantined session backups, `data/`, `logs/`, and other runtime/cache/build directories from repository-wide Chokidar traversal. This prevents one watcher per Baileys auth file and addresses the observed `ENOSPC: System limit for number of file watchers reached` failure.
 - Watcher `ENOSPC` errors now produce one compact actionable diagnostic and close the affected watcher instead of repeatedly emitting error dumps.
 - Incoming user messages are no longer printed in `[OCHA FLOW]`; incoming records remain in memory for reply correlation, and outgoing bot responses/receipt updates remain observable.
@@ -593,14 +710,17 @@ Validation: `npm run check` passed (255 JavaScript files); ACIE focused tests pa
 - Terminal ANSI colors now honor `NO_COLOR`, `FORCE_COLOR`, TTY detection, and `TERM=dumb` to avoid escape-code leakage in redirected logs.
 
 ### Diagnostics
+
 - The supplied `408 / ECONNRESET` reconnect sequence began about six minutes before the first `ENOSPC` watcher error. The watcher issue is real but is not sufficient to explain the initial WebSocket disconnect. The available logs cannot identify whether the earlier reset came from VPS networking, routing, or the remote WhatsApp edge. No evidence links the `.owner` command itself to the disconnect.
 
 ### Validation
+
 - Added tests for runtime watcher exclusions, incoming-message log suppression, and Signal-key redaction. Offline tests do not reproduce the VPS inotify limit or live WhatsApp network conditions.
 
 ## [1.7.2] - 2026-11-20
 
 ### Added
+
 - JavaScript eval receives live `sock`, `m` / `message`, config, logger, database API, filesystem/path/OS/crypto/process APIs, child_process, require, and dynamic import helper.
 - WorkloadTracker classifies CLI, JavaScript eval, Python, and Go source before execution.
 - Ocha AI impact assessment is invoked only for suspicious workloads to limit token usage.
@@ -609,6 +729,7 @@ Validation: `npm run check` passed (255 JavaScript files); ACIE focused tests pa
 - Schema v13 migration; runner enablement remains unchanged.
 
 ### Safety notes
+
 - Owner-only eval exposes real host capabilities and is not a security sandbox.
 - AI review is advisory, not a safety proof. Scoped destructive actions require explicit confirmation; root/disk/host-wide critical patterns are blocked.
 
@@ -617,6 +738,7 @@ Validation: `npm run check` passed (255 JavaScript files); ACIE focused tests pa
 ## [1.10.26] - 2026-11-23
 
 ### Changed
+
 - Re-audited official provider model IDs, pricing, free-tier eligibility, and rate-limit documentation. Model-list visibility is no longer treated as proof of free access or inference health.
 - Groq free-plan routing now selects only the verified `openai/gpt-oss-120b` primary for this deployment; Gemini `gemini-3.8-flash` remains a documented free-tier secondary. DeepSeek and OpenAI remain excluded from free-only routing because their published inference APIs are usage-priced.
 - Added policy version and research timestamp to the persisted model catalog. Unknown or merely visible models cannot be auto-promoted into free-only routing.
@@ -625,14 +747,15 @@ Validation: `npm run check` passed (255 JavaScript files); ACIE focused tests pa
 - AI provider exhaustion remains silent to the requesting user. The owner receives one compact private maintenance report; provider diagnostics are not echoed into other users' chats.
 
 ### Validation
+
 - Provider/model catalog, free-only routing, TPM fitting, provider error classification, and fallback tests: 20 passed, 0 failed.
 - Syntax check: 184 JavaScript files.
 - Official references and observed-log diagnosis: `docs/AI_MODEL_CATALOG.md`.
 
-
 ## [1.7.1] - 2026-11-19
 
 ### Changed
+
 - Reduced the default AI coalescing window to 80 ms, output budget to 180 tokens, conversation history to 3 turns, input budget to 3,500 characters, and per-provider timeout to 3.5 seconds.
 - Added `.aiset speed boost` with Groq-first routing, one eligible key attempt per provider, a 14-second total fallback deadline, 180 output tokens, and 80 ms coalescing. `fast` and `balanced` profiles remain available.
 - Removed response-path waits for queued/generated/delivered checkpoints, AI turn journaling, provider hit/success telemetry, and reply-anchor persistence. Hot history and quote anchors are updated immediately; append-only durability writes continue asynchronously with error logging.
@@ -640,13 +763,14 @@ Validation: `npm run check` passed (255 JavaScript files); ACIE focused tests pa
 - Migrated schema v11 installations to v12, applying Boost values only when the stored setting still equals a known shipped default; owner-customized values are preserved.
 
 ### Validation
+
 - Regression suite covers AI message coalescing, provider routing, config migration, reply-chain behavior, and command reply-session priority.
 - Offline validation is recorded with the release archive; live provider latency and WhatsApp response timing still require measurement on the user's host and API keys.
-
 
 ## [1.7.0] - 2026-11-19
 
 ### Added
+
 - Added a sender-bound quoted reply-session router. Active command screens are matched by chat and quoted message ID, validated before AI, consumed once on selection, and expire after 10 minutes by default.
 - Reworked `.groupinfo` private-chat navigation: reply `1`-`10` to open a cached group, `0` for the next page, `00` for the previous page, and `0` from a detail screen to return to the list.
 - Added persistent AI answer anchors and bounded quoted-reply chains. Group AI activates from a quote only when the quoted ID belongs to an AI answer, preserving up to 8 levels / 12,000 context characters.
@@ -655,11 +779,13 @@ Validation: `npm run check` passed (255 JavaScript files); ACIE focused tests pa
 - Added local `sock.ButtonBuilder()` alias for the existing project builder and reminder/cancel-reminder native-flow helper methods; corrected local CTA call parameters to `phone_number`.
 
 ### Changed
+
 - AI no longer treats every quoted bot command/system message in a group as a conversational trigger. Group quoted-reply AI is restricted to persisted AI answer anchors; explicit bot mentions continue to trigger AI.
 - AI checkpoint recovery now writes the same quote anchor as a normal AI delivery whenever WhatsApp returns a message ID.
 - Documented that `MessageType` is a TypeScript key union (`keyof proto.Message`), `WAMessageStubType` is the system-event enum, and `ButtonBuilder` is a local project helper rather than a Baileys public export.
 
 ### Validation
+
 - Unit tests cover sender-bound command sessions, one-time choice consumption, AI reply-chain bounding and dispatcher trigger rules.
 - Syntax check: 77 JavaScript files. Offline test suite: 55 passed, 2 skipped, 0 failed; the two skips require the Baileys runtime dependency which was not installed in the build sandbox. AI reply-anchor history is warmed before the socket accepts incoming messages.
 - Message delivery/rendering for hydrated, reminder, native-flow, event, poll, PTV, view-once, AI rich and carousel payloads still requires a live WhatsApp linked-device test. Media cases additionally require reachable URLs with matching MIME types.
@@ -667,12 +793,14 @@ Validation: `npm run check` passed (255 JavaScript files); ACIE focused tests pa
 ## [1.6.3] - 2026-11-19
 
 ### Changed
+
 - `.owner` now sends a native WhatsApp contact card instead of a text-only phone number and `wa.me` URL.
 - Added serializer helper `m.sendContact()` so contact messages use the same JID normalization and outgoing-message tracking path as other serializer sends.
 - Contact vCard includes structured `N` plus `FN`, a WhatsApp `waid` telephone field, and `Razzaq Ventures` organization metadata. The `displayName` field is placed inside the contact item for compatibility with the corrected Baileys contact-message shape.
 - Added strict international phone-number validation and vCard escaping; no email, social profile, or unrelated personal metadata is fabricated.
 
 ### Validation
+
 - Added unit coverage for number validation, vCard structure, and contact-item display name placement.
 - Live delivery and save-to-address-book behavior still require verification on a linked WhatsApp client.
 
@@ -686,13 +814,14 @@ Validation: `npm run check` passed (255 JavaScript files); ACIE focused tests pa
 - Added `docs/MASTER_CONSOLE.md` and `docs/GROUP_MUTE_AND_MESSAGE_FLOW.md`; updated README/menu and migrated configuration to schema v11.
 
 ### Validation
+
 - Unit tests cover independent CLI authorization, legacy `.master exec` compatibility, muted group dispatch, always-on metadata/contact ingestion, and receipt-state aggregation.
 - WhatsApp's real message status still requires a live linked-device session to verify; sandbox tests use event fixtures.
-
 
 ## [1.6.1] - 2026-11-19
 
 ### Fixed
+
 - Removed the global monkey-patch that replaced every serializer `m.reply()` with a native-flow interactive message. All command replies now retain the serializer's ordinary `{ text }` sendMessage path, so they remain readable, selectable, and copyable in standard WhatsApp clients.
 - Reworked `.menu` and private-chat `.groupinfo` output to text-first command lists with explicit copyable command syntax.
 - Updated `.buttons` status/help text: the setting is retained for backwards compatibility, but cannot force an interactive transport that has caused unreadable messages.
@@ -700,9 +829,9 @@ Validation: `npm run check` passed (255 JavaScript files); ACIE focused tests pa
 - Added regression tests asserting command replies are never redirected to `sock.sendInteractive` when the compatibility preference is ON.
 
 ### Compatibility note
+
 - Native-flow messages remain available only through explicit low-level APIs and are not used for ordinary command responses. A successful relay/ACK is not treated as proof that every WhatsApp client can render the interactive payload.
 - Live WhatsApp client validation was not available in the build environment.
-
 
 ## [1.6.0] - 2026-11-19
 
@@ -723,6 +852,7 @@ All notable changes to Ocha Lidya are recorded here. The newest release is liste
 ## [1.5.0] - 2026-11-19
 
 ### Added
+
 - Dedicated `data/contact.jsonl` PN-only contact index. Each number is digits-only and stored once with blank `name` and `gender` fields. Legacy duplicate/bad lines are backed up to quarantine and compacted at startup.
 - Dedicated `data/group-metadata.jsonl` event log, a one-time `groupFetchAllParticipating()` bootstrap, a durable completion marker, cached group listing in private chat, and lazy one-time fetch with cooldown only for an unknown group.
 - Incremental group cache updates from `groups.upsert`, `groups.update`, and `group-participants.update`; participant add/modify events index verified PN contacts, participant removal updates only group metadata, and bot removal deletes only that group's cache entry.
@@ -732,17 +862,20 @@ All notable changes to Ocha Lidya are recorded here. The newest release is liste
 - Added group cache, PN/LID, contacts, AI coalescing, and command-mode regression tests.
 
 ### Changed
+
 - Bumped package to `1.5.0` and configuration schema to v9. `src/config.js` now contains `ui`, `groupMetadata`, and the low-latency AI defaults; existing custom model IDs are preserved during migration.
 - `.groupinfo` is no longer group-only. In private chat it lists cached groups and selecting one displays stored metadata without re-fetching already-cached groups.
 - Owner resolution uses the same verified PN extraction path as the contact database. Master runner messages now explain their individual opt-in switches; runners remain off by default.
 - README, AI guide, configuration guide, and new contacts/group-cache guide updated.
 
 ### Validation
+
 - Offline test suite: 36 tests passed, 2 Baileys-dependent serializer tests skipped because `@whiskeysockets/baileys` was not installed in this build sandbox.
 - Syntax checks and ZIP package verification run after assembly.
 - No live WhatsApp group, contact, or AI provider integration session was run in the build sandbox.
 
 ## v1.4.2 — 2026-11-18
+
 - Updated `src/config.js` directly: WhatsApp login now defaults to `pairing` with the configured bot number.
 - Added one-time JSONL configuration migration from schema v3 to v4 so existing v1.4.1 installs do not silently retain the old QR default.
 - Added validation for WhatsApp auth mode, pairing number, and session directory.
@@ -759,12 +892,14 @@ All notable changes to Ocha Lidya are recorded here. The newest release is liste
 ## [1.4.0] - 2026-11-18
 
 ### Added
+
 - WhatsApp login supports both QR scanning and phone-number pairing code through persistent `whatsapp.authMode` configuration.
 - Pairing code is requested only after Baileys reports the socket as `connecting`, and the phone number is normalized and validated in international format.
 - Added configurable session directory through persistent `whatsapp.sessionDir` configuration.
 - Added pure connection-policy helpers and unit tests for phone normalization, disconnect classification, and reconnect delay.
 
 ### Fixed
+
 - Replaced the one-shot reconnect guard with a single-timer reconnect scheduler, preventing repeated close events from suppressing future recovery attempts.
 - Handles Baileys `restartRequired` (515) by recreating the socket promptly, as required after QR/pairing handshakes.
 - Adds bounded exponential backoff with jitter for transient disconnects and stops automatic retries for logged-out/invalid sessions.
@@ -773,18 +908,21 @@ All notable changes to Ocha Lidya are recorded here. The newest release is liste
 - Adds explicit connection/query timeouts, keepalive interval, and disables link-preview generation on inbound processing for a lighter connection path.
 
 ### Notes
+
 - Pairing code is a WhatsApp linked-device flow, not a phone-number/SMS OTP. It must be entered in WhatsApp's Linked Devices screen.
 - Baileys is an unofficial WhatsApp Web client library. Reconnection logic cannot prevent account-side unlinking, network outages, or WhatsApp protocol changes.
 
 ## [1.3.1] - 2026-11-18
 
 ### Fixed
+
 - Fixed the startup failure caused by importing `serialize`, `extendSocket`, and `trackSentMessageId` as named ESM exports when `serializ_simple.js` exposes them through its default export object.
 - `src/index.js` now imports the serializer default object and destructures the required functions, preserving compatibility with the converted serializer module.
 
 ## [1.1.1] - 2026-11-18
 
 ### Added
+
 - `.master` owner command for persistent control of developer runner switches.
 - Append-only JSONL event database with sequence numbers and SHA-256 hash chaining.
 - Primary journal and mirrored replica with startup integrity validation and automatic repair from the longest valid copy.
@@ -800,23 +938,27 @@ All notable changes to Ocha Lidya are recorded here. The newest release is liste
 - `docs/` directory for technical documentation.
 
 ### Changed
+
 - `.env` now contains secrets only; bot mode, prefixes, execution flags, limits, and database policies are ordinary persistent settings.
 - Prefix and bot-mode updates are written to the event database.
 - `README.md` documents all current commands, architecture, settings, database behavior, recovery, and security constraints.
 - `SOURCE_CONVERSION.md` moved from the project root to `docs/SOURCE_CONVERSION.md`.
 
 ### Security and reliability
+
 - Database directories are created with restrictive permissions where supported.
 - Every journal append is flushed with `fsync` when enabled.
 - The archive source is validated and the ZIP is verified before active journal truncation.
 - Retention is bounded by `database.archiveMaxCount`; archives beyond the configured retention window are pruned.
 
 ### Reliability refinements
+
 - Runtime master-command switches and execution limits are now loaded from persistent config, not `.env`.
 - Configuration replay includes archived JSONL segments, so auto-archiving does not erase saved settings.
 - Archive segment identifiers make interrupted rotation recovery idempotent.
 
 ### Known limitations
+
 - The JSONL database is a single-process, single-writer store; it is not a distributed database.
 - ZIP archive lookup is linear across selected archive files. It avoids extraction but is not yet an indexed random-access database.
 - A local mirror on the same disk protects against some logical corruption, not physical disk loss. Use off-device backups for disaster recovery.
@@ -825,6 +967,7 @@ All notable changes to Ocha Lidya are recorded here. The newest release is liste
 ## [1.2.0] - 2026-11-18
 
 ### Added
+
 - Repository-wide automatic file monitoring for additions, edits, renames, and deletions across the project, including JS, JSON, Markdown, YAML, and other tracked file types.
 - Automatic local commits and push to `origin/main` using `GITHUB_PAT` from `.env` through a temporary Git askpass helper.
 - Jakarta-localized commit timestamps containing weekday, date, time, and WIB timezone.
@@ -835,6 +978,7 @@ All notable changes to Ocha Lidya are recorded here. The newest release is liste
 - Unit tests for Git status parsing, ignore-pattern extraction, and Jakarta commit timestamps.
 
 ### Changed
+
 - Moved `CHANGE_LOG.md` to `docs/CHANGE_LOG.md`.
 - Moved the central configuration API from root `config.js` to `src/config.js`; `src/core/config.js` now acts as the internal compatibility adapter.
 - Root-level files are limited to hidden configuration files, `package.json`, and `README.md`; implementation, tests, scripts, and documentation stay in their respective directories.
@@ -842,21 +986,23 @@ All notable changes to Ocha Lidya are recorded here. The newest release is liste
 - Bumped package version to `1.2.0`.
 
 ### Security and reliability
+
 - GitHub PAT is never embedded in the remote URL, process command arguments, source files, JSONL settings, or application logs.
 - Automatic push never uses force. Remote divergence and rebase conflicts stop the operation without deleting local changes.
 - `.gitignore` excludes `.env`, dependencies, Git internals, session credentials, private runtime data, logs, and temporary artifacts. `.env.example` remains trackable.
 - Core ESM source changes trigger a controlled restart rather than unsafe in-process cache replacement.
 
 ### Known limitations
+
 - Automatic Git monitoring requires the app or `npm run git:watch` process to remain running; it is not an OS daemon.
 - Auto-push requires Git, a correct local Git identity, branch `main`, the exact `origin` remote, network connectivity, and a valid PAT with repository Contents read/write access.
 - Existing remote/local divergence is not force-resolved. Manual reconciliation is required when the two histories have diverged or contain rebase conflicts.
 - The Git watcher and authenticated push path were not executed against GitHub in this build because runtime dependencies, a local clone of the target repository, and `GITHUB_PAT` were unavailable. The source passed syntax validation and the pure Git/timestamp helpers passed unit tests. The full serializer test requires `npm install` so `@whiskeysockets/baileys` is present.
 
-
 ## 1.3.0 — Multi-provider AI engine
 
 ### Added
+
 - Multi-provider AI service for Gemini, Groq, Qwen, DeepSeek, and OpenAI using provider-specific HTTP adapters.
 - Private-chat AI trigger for non-command messages; strict group gate requiring an explicit bot mention or a reply to a bot-authored message.
 - Persistent conversation turns and AI job checkpoints in the JSONL event database.
@@ -866,43 +1012,49 @@ All notable changes to Ocha Lidya are recorded here. The newest release is liste
 - `docs/AI_ENGINE.md` with trigger policy, providers, credentials, failover, checkpointing, and operations.
 
 ### Changed
+
 - Added persistent AI defaults and validation to `src/config.js`.
 - Added `QWEN_API_KEY` and `DEEPSEEK_API_KEY` to `.env.example`.
 - Updated README command and AI documentation.
 
 ### Security
+
 - Provider keys remain in `.env`; AI status never prints key values.
 - Group AI is opt-in per message through mention/reply metadata; no unsolicited group responses.
-
 
 ## [1.4.3] - 2026-11-18
 
 ### Fixed
+
 - Corrected the Baileys browser identity from the invalid custom label `Ocha Lidya` to the recognized `Chrome` browser profile on Ubuntu.
 - Added `whatsapp.browserName` to the actual `src/config.js` defaults and validation, with schema v5 migration that normalizes existing saved configurations to `Chrome`.
 - Pairing-code requests now wait for Baileys' initial `qr` readiness event, emitted after the initial `pair-device` exchange, instead of firing at the earlier `connection: connecting` event. The QR payload remains hidden in pairing mode.
 - Updated pairing troubleshooting to explain that an emitted local code does not, by itself, prove server acceptance on upstream Baileys rc14; documented upstream PR #2559 as an unmerged follow-up rather than silently switching to an unmerged fork.
 
 ### Documentation
+
 - Updated `README.md` and `docs/WHATSAPP_CONNECTION.md` with the required canonical browser-name setting and pairing readiness sequence.
 
 ### Validation
-- Syntax checks and offline unit tests were run. Live WhatsApp pairing was not performed in the build environment.
 
+- Syntax checks and offline unit tests were run. Live WhatsApp pairing was not performed in the build environment.
 
 ## [1.4.4] - 2026-11-19
 
 ### Fixed
+
 - A previously saved, registered WhatsApp session rejected with `401` in pairing mode no longer silently stops before a pairing code can be requested. The app waits for credential writes, moves the rejected session directory to a timestamped `.invalid-*` backup, and starts one fresh pairing attempt. The old auth data is preserved and never deleted.
 - ZIP/source deployments without a `.git` directory no longer start an Auto Git watcher that repeatedly fails with `fatal: not a git repository`. Auto Git Sync now validates repository, branch, and remote before enabling its watcher.
 
 ### Changed
+
 - Replaced the default JSON-line terminal logger with a compact, color-capable application logger with WIB timestamps, severity colors, scope labels, and structured details.
 - Baileys now receives a dedicated Pino-compatible no-op logger configured at `silent`; application lifecycle and recovery logs remain visible through Ocha Lidya's logger.
 - Added `whatsapp.recoverInvalidSession` and `logging` defaults/validation to the actual `src/config.js`, with schema v6 migration for existing installations.
 - Updated README and connection, configuration, and Auto Git Sync documentation.
 
 ### Validation
+
 - Added regression tests for one-time invalid-session recovery policy and schema v6 migration.
 - Pairing against a live WhatsApp account was not run in the build environment; a printed code still requires phone-side confirmation and an eventual `connection: open` state.
 
@@ -918,28 +1070,30 @@ All notable changes to Ocha Lidya are recorded here. The newest release is liste
 - Added documentation and tests for website intent detection and project validation.
 - Website Builder v1.9.0 supports static frontend prototypes only; real backend/database/authentication/payment/deployment are explicitly out of scope.
 
-
 ## v1.9.2 — Nexora automatic host dependency manager
 
 ### Added
+
 - Added npm `prestart`/`predev` dependency checks; missing declared Node packages are installed automatically with `npm install --no-audit --no-fund`.
 - Added `scripts/bootstrap/ensure-host.sh` and `src/runtime/bootstrap-agent.js` as an idempotent host dependency manager.
 - After loading the saved configuration, `npm start` checks the selected container runtime, starts an existing Docker service, installs missing supported host packages, verifies `cloudflared`, and pulls only missing `python:3.12-alpine` / `node:22-alpine` images.
 - Added a dry-run mode with `NEXORA_BOOTSTRAP_DRY_RUN=1` for safe inspection.
 
 ### Security and reliability
+
 - The bootstrap runs synchronously once during startup and exits; it does not spawn a worker, terminal, tunnel, or background installer per user. Code Lab remains responsible for one shared persistent `cloudflared` process.
 - The bot continues to start if optional host provisioning cannot complete. Code Lab reports unavailable runtime capabilities instead of disabling WhatsApp/AI chat.
 - No automatic Docker socket chmod or docker-group membership changes; both could grant root-equivalent control. Privileged package/service operations require root or sudo.
 - Package installation uses supported OS package managers and the official Cloudflare package source/release; no arbitrary remote shell script is piped into a root shell.
 
 ### Validation
-- Added shell syntax, dry-run, and bootstrap integration tests. Host package installation and live Docker/Cloudflare operations must still be verified on the target VPS.
 
+- Added shell syntax, dry-run, and bootstrap integration tests. Host package installation and live Docker/Cloudflare operations must still be verified on the target VPS.
 
 ## v1.10.0 — Identity, Relationship & Experience Engine
 
 ### Added
+
 - Added a safe public identity allowlist in configuration: owner/creator name, organization, and a public disclosure switch. Default creator and owner identity is Arifi Razzaq under Razzaq Ventures.
 - Added deterministic local answers for creator identity, model identity, and simple greetings. These responses do not call an AI provider and remain available during generative-AI maintenance. Greeting variants rotate to avoid repetitive static replies.
 - Added per-user persistent relationship profiles with XP, levels, rank tiers, active days, interaction counts, and aggregate communication-style preferences.
@@ -949,18 +1103,22 @@ All notable changes to Ocha Lidya are recorded here. The newest release is liste
 - Added fair round-robin rotation among eligible provider keys and increased default per-provider attempts to three (Boost), two (Fast), and four (Balanced).
 
 ### Fixed
+
 - Provider network errors are now wrapped instead of mutating native/fetch error objects. This fixes getter-only `code` properties that previously caused `Cannot set property code` and falsely exhausted Groq/Gemini routes.
 - Verified owner identity is passed to the model only as a trusted application fact; ordinary chat claims cannot grant owner status.
 
 ### Privacy and limits
+
 - Profile storage keeps aggregate counters and bounded message-ID deduplication only; raw chat content is not copied into profile records.
 - XP has a 100-point daily cap. Relationship roles indicate interaction familiarity, not human emotion or psychological assessment.
 - Only explicit public identity fields are exposed to the model; API keys, phone number, secret vault, and raw configuration remain excluded.
 
 ### Validation
+
 - Added regression tests for provider error wrapping, round-robin key rotation, owner identity without provider availability, varied greetings, profile progression, duplicate-message XP protection, daily cap, and profile-card escaping.
 
 ## v1.10.7 — Owner confirmation during provider outage
+
 - Keep single-provider Groq routing; never fall back to another AI vendor.
 - If the workload assessor is unavailable, use local deterministic heuristics and require an explicit owner reply confirmation instead of silently denying all non-hard-blocked work.
 - Every suspicious workload now requires confirmation even if an AI assessment recommends ALLOW.
@@ -971,6 +1129,7 @@ All notable changes to Ocha Lidya are recorded here. The newest release is liste
 ## v1.10.9 — Ordered AI provider fallback
 
 ### Added
+
 - Added a shared AI provider-chain router used by chat generation and the owner Workload Assessor.
 - Exhaust every currently eligible key in the active provider's key array for key-specific 401/403/429 failures before moving to the next provider in the configured order.
 - Added automatic fallback across Groq, Gemini, DeepSeek, and OpenAI using the exact `.aiset order` priority list.
@@ -978,16 +1137,19 @@ All notable changes to Ocha Lidya are recorded here. The newest release is liste
 - Added schema v22 migration from the previous Groq-only default to the ordered provider chain while preserving non-default owner-configured provider order.
 
 ### Fixed
+
 - Fixed AI restart recovery so provider routing checkpoints do not overwrite and lose the original queued job/messages payload.
 - Provider-wide network/timeout/5xx errors and malformed model/request errors now move to the next provider without wasting time retrying the same payload against every key.
 - `.aiset speed` no longer silently resets the configured provider order or limits the number of quota-affected keys tried.
 
 ### Validation
+
 - Added tests proving all Groq keys are attempted on quota exhaustion before Gemini succeeds, providers without keys are skipped, and queued jobs remain recoverable after provider checkpoints.
 
 ## [1.10.12] - 2026-11-21
 
 ### Added
+
 - Transactional source update batches for bulk folder copy/replace, with a 4.2-second quiet window, write-finish stabilization, revision fencing, dual snapshots, bounded five-minute batch window, and JavaScript syntax validation before applying any update.
 - Plugin-only updates now use a shadow registry and a single synchronous swap; core-source/dependency changes request one controlled process handoff. Auto Git Sync is paused during source writes and does not push syntax-rejected batches.
 - Atomic single-instance lock with PID/start-time/token validation. The replacement process waits for the previous owner to release the lock before loading a second WhatsApp socket.
@@ -996,6 +1158,7 @@ All notable changes to Ocha Lidya are recorded here. The newest release is liste
 - `.env.example` restored for clean source/ZIP installation and documented the minimum first-run path.
 
 ### Fixed
+
 - Prevented watcher flush races that could clear filesystem events arriving during snapshot validation and restart from a partial folder copy.
 - Rejected JavaScript syntax errors without replacing the active runtime or pushing rejected source through Auto Git Sync.
 - Replaced legacy Code Lab watchdogs that pin the old parent PID; protocol-v2 watchdogs can be reused during handoff without spawning duplicates.
@@ -1003,22 +1166,25 @@ All notable changes to Ocha Lidya are recorded here. The newest release is liste
 - Host bootstrap failures now schedule an in-process retry rather than waiting for a manual restart.
 
 ### Validation
-- Transactional hot reload, single-instance locking, host-preflight, and Code Lab tunnel handoff regression tests passed in the v1.10.12 development baseline.
 
+- Transactional hot reload, single-instance locking, host-preflight, and Code Lab tunnel handoff regression tests passed in the v1.10.12 development baseline.
 
 ## [1.10.13] - 2026-11-21
 
 ### Added
+
 - Added failure-safe Code Lab handoff rollback. If a controlled replacement cannot complete, the old process restores gateway ownership and re-adopts the existing healthy Cloudflare tunnel only after the replacement process has stopped. A dedicated integration test simulates a process-identity mismatch and verifies the old gateway resumes.
 - Validate the replacement PID and Linux process start ticks before closing the Code Lab gateway or transferring tunnel ownership. For first upgrades from a legacy watcher with no lock file or handoff environment marker, the new process identifies its direct parent `src/index.js` and waits for it to exit before opening the WhatsApp socket.
 - Force one updated host preflight when files under `scripts/bootstrap/` are included in a source update batch; normal code reloads continue to reuse the host preflight cache.
 
 ### Fixed
+
 - Prevented a failed or unverifiable replacement PID from leaving Code Lab closed.
 - Ensure a rollback does not take over a tunnel while another verified owner PID remains alive.
 - Updated source hot-reload documentation to describe the full transactional watcher scope and the plugin-asset/core restart policy.
 
 ### Validation
+
 - JavaScript syntax: 127 files checked.
 - Full test suite: 148 tests, 146 passed, 2 skipped, 0 failed.
 - Code Lab tunnel handoff integration test: passed; replacement adopted the same tunnel PID and URL without starting a duplicate Cloudflared process.
@@ -1026,24 +1192,27 @@ All notable changes to Ocha Lidya are recorded here. The newest release is liste
 ## [1.10.16] - 2026-11-21
 
 ### Added
+
 - Replaced the manually maintained `.menu` command list with a live snapshot of the active plugin registry. Added/removed/reloaded plugins now appear in the next menu without editing a second list.
 - Added command `usage` metadata for argument-taking plugins, including `.test <type> [args]` and `.apikey <add|delete|list|get> <provider> [value]`.
 - Added a branded Ocha Lidya AI / Nexora menu banner asset and a compact command-registry summary widget (plugin count, category count, prefix mode, and bot mode).
 - Expanded user profiles with current and best daily activity streaks, daily XP remaining, and milestone achievements; upgraded the profile card layout.
 
 ### Fixed
+
 - Manual plugin reload now builds a complete shadow registry and swaps it atomically. Removed plugin files are removed from the registry, failed replacements retain the previous valid plugin when available, and duplicate plugin command names are rejected.
 - Profile streaks use Asia/Jakarta calendar days, do not increase more than once per day, reset after a missed day, and do not appear active when the last interaction is older than yesterday.
 - The menu no longer uses a hard-coded command list, preventing owner commands such as `.test` and `.apikey` from being omitted.
 
 ### Validation
+
 - Added menu-renderer tests for live plugin metadata, argument placeholders, duplicate command names, prefix/mode widgets, and the master-console block.
 - Added profile tests for consecutive-day streaks, missed-day reset, daily XP capacity, and SVG escaping.
-
 
 ## [1.10.18] - 2026-11-21
 
 ### Added
+
 - Per-group rental subscriptions with Mini, Standard, and Pro 30-day plans and shared rolling 24-hour workload-weighted quotas.
 - Customer package selection, invoice generation, QRIS/e-wallet/SeaBank instructions, customer payment reporting, and owner-only manual payment approval/rejection.
 - Owner rental console for tenant/order inspection, quota usage, audit history, price/quota adjustments, manual activation/suspension, and term extension.
@@ -1052,12 +1221,14 @@ All notable changes to Ocha Lidya are recorded here. The newest release is liste
 - One hundred-feature rental capability catalog distinguishing delivered functionality from roadmap work.
 
 ### Changed
+
 - Rental invoice terms are snapshotted at creation so later package price/quota updates do not alter pending invoices.
 - Order, payment, approval, quota, and scheduler writes are serialized per tenant to avoid duplicate billing and state races.
 - Failed group-mute side effects retry without writing redundant configuration events every scheduler cycle.
 - Raw low-level `sock.relayMessage()` payloads are left untouched; `sendInteractive` validates only registered native-flow payloads and retains text fallback.
 
 ### Safety
+
 - QRIS is static and payment reports never activate service automatically. Owner must verify settlement before approval. Screenshots are not treated as proof of settlement.
 - Automatic payment webhooks, dynamic QRIS, refund/reversal, and payment-provider reconciliation are not included without authorized gateway credentials.
 
@@ -1070,18 +1241,18 @@ All notable changes to Ocha Lidya are recorded here. The newest release is liste
 - Added fail-closed behavior when User Vault integrity/authentication checks fail.
 - Added regression tests including exhaustive legal human move sequences against Minimax.
 
-
 ## v1.10.29 — Master workload warning controls
+
 - Added owner-only `.master warning status|on|off|compact|detailed` and `.master review status|on|off`.
 - Added native-flow CTA Copy for one-time `CONFIRM CODE`, plus explicit confirm/cancel quick replies.
 - Warning-off suppresses notification only; suspicious code is silently blocked and audit-logged.
 - Review-off disables AI semantic assessment while retaining local heuristics, confirmations, and hard-blocks.
 - Scoped private-chat `sock.relayMessage(m.chat, ...)`/`sock.sendMessage(m.chat, ...)` no longer triggers a blanket warning; arbitrary recipients and group sends remain flagged.
 
-
 ## v1.10.30 — NADI operational self-state heartbeat
 
 ### Added
+
 - Integrated the uploaded AC-Kernel NADI v2 component under `src/consciousness/ac/` and started it as a private Python child process from the main Node.js runtime.
 - Added a JSON-lines stdio protocol; no additional HTTP listener or API key duplication is required.
 - Added a one-second heartbeat, periodic snapshot persistence, clean shutdown, and supervised restart after unexpected sidecar exit.
@@ -1090,16 +1261,19 @@ All notable changes to Ocha Lidya are recorded here. The newest release is liste
 - Added consent-first social autonomy policy helpers: member opt-in and group-admin approval are required for any future proactive introduction; ignored recipients are not pursued.
 
 ### Safety and privacy
+
 - NADI does not receive raw WhatsApp messages, JIDs, or private account memories. The global kernel stores operational telemetry only; private conversations remain in each user's encrypted vault.
 - Heartbeat does not initiate outgoing WhatsApp messages, call the provider chain every second, or grant command permissions.
 - Angry, guilt-based, random-member, and repeated no-response messaging is explicitly prohibited.
 - NADI is documented as an operational self-state architecture, not subjective consciousness or sentience.
 
 ### Fixed
+
 - Calibrated homeostatic rates for a 1 Hz wall-clock heartbeat; disabled per-tick sleep consolidation to avoid excessive cycles and disk writes.
 - Snapshot writes are batched every 60 pulses and flushed on clean shutdown.
 
 ### Validation
+
 - Python component self-test: 5/5.
 - One-hour simulated heartbeat: 3,600 ticks; energy and thermal load remained inside calibrated ranges; no user events were written to the global ledger.
 - JavaScript syntax: 195 files checked.
@@ -1114,6 +1288,7 @@ All notable changes to Ocha Lidya are recorded here. The newest release is liste
 - Preserved NADI data directory and HTTP sidecar API contract.
 
 ## v1.10.39 — Quoted AI, Test Lab, Auto Reaction
+
 - Harden WhatsApp quoted-message extraction across wrapped message payloads and record privacy-safe quote diagnostics.
 - Prevent generic greeting-only AI output from replacing the response to a quoted turn; add a contextual clarification guard.
 - Replace manual message test setup with an owner-only interactive `.test` catalog backed by local fixtures in `assets/message-test/`; successful tests are silent in chat apart from the actual test payload, while failures are recorded in runtime logs.
@@ -1121,7 +1296,6 @@ All notable changes to Ocha Lidya are recorded here. The newest release is liste
 - Track deferred AI turn/checkpoint writes and flush them during graceful shutdown to protect private conversation persistence.
 - Align legacy test expectations with the current 60-second XP cooldown and the 2,048-token Groq free-tier output cap.
 - Update configuration migration tests to schema v37.
-
 
 ## v1.10.40 — Quoted AI, Message Test Lab, Auto Reaction
 
@@ -1131,7 +1305,6 @@ All notable changes to Ocha Lidya are recorded here. The newest release is liste
 - Added aggregate test result IDs and failure propagation so a failed test can end with the failure reaction.
 - Kept local message-test fixtures under `assets/message-test/`.
 - Added owner-only `.react` settings for global command and AI processing reactions; default remains disabled until owner activation.
-
 
 ## v1.10.41 — YouTube selection and pagination fix
 
@@ -1154,7 +1327,6 @@ All notable changes to Ocha Lidya are recorded here. The newest release is liste
 - Generic runner supports CLI-style JavaScript, Python, Go, PHP, Java source-launch, and Bash entrypoints. TypeScript/Rust remain discovery-only pending dedicated build adapters.
 - Production container execution was not tested in this environment because Docker/Podman is not installed; runtime remains unavailable by default.
 
-
 ## v1.10.48 — AI Direct-Answer Reliability Fix
 
 - Add an explicit high-priority prompt rule: answer substantive user questions and tasks directly; never replace them with generic greetings or “what would you like to do today?” prompts.
@@ -1163,3 +1335,82 @@ All notable changes to Ocha Lidya are recorded here. The newest release is liste
 - Add privacy-safe diagnostics for response repair outcomes without logging user prompt/response contents.
 - Document the quality guard, current-information boundary, test coverage and known limitations in `docs/AI_RESPONSE_QUALITY.md`.
 - Restore `src/acie/adapters/universal-adapter.js` and `src/acie/adapters/legacy-whatsapp-bridge.js`, which were referenced by v1.10.47 tests and intake/runtime but missing from that ZIP.
+
+## v1.10.49 — Rizkyrohan Source Preservation & Intake Test Accuracy
+
+- Added the complete Rizkyrohan `text-canvas-generator` v1 contribution as an immutable test/archive fixture.
+- Replaced the shortened source string in `test/acie-rizkyrohan-canvas.test.js` with the exact preserved `original/index.mjs` bytes.
+- Added byte-count and SHA-256 checks against `ACIE_RECEIPT.json`; the ACIE intake test now exercises the complete submitted source and verifies vault preservation.
+- Added a full source inventory, variable/logic map, intake command, expected runtime vault location, and activation blockers in `docs/contributions/RIZKYROHAN_TEXT_CANVAS.md`.
+- Kept `.textimage` / `.timg` as hidden, non-executable drafts. No original source logic, variables, external assets, dependency versions, or execution permissions were silently changed.
+
+## v1.10.50 — Public publication firewall
+
+- Added explicit path-based exclusion for the four owner-designated private source modules without deleting or changing their runtime source.
+- Added publication policy module, common secret-pattern scanner, safe audit CLI, and regression tests.
+- Added Prettier formatting before staging; publication fails closed if Prettier is unavailable or secret findings remain.
+- Added private-instruction, local-key, credentials, and staging exclusions to `.gitignore`.
+- Documented that prior public Git history remains public until a separately reviewed migration/history-removal process is performed.
+
+## v1.10.51 — Public / Private Runtime Extraction
+
+### Added / Changed
+
+- Extract the four owner-designated private modules into the external `@razzaqventures/ocha-private-runtime` package; preserve runtime copies and `original-source/` receipts byte-identically with sizes, archive provenance and per-file SHA-256 manifest.
+- Replace public serializer/helper/fake-reply source paths with stable compatibility facades and a public text-first serializer adapter.
+- Add an optional private-runtime loader, package contract validation, explicit host import allowlist, owner/private plugin gate, and command/alias collision checks through the existing plugin registry.
+- Remove the Message Test Lab plugin source from the public plugin directory; `.test` is offered only by the validated private package and remains owner-only/private-only.
+- Add operator installation/status scripts and `OCHA_PRIVATE_RUNTIME_REQUIRED` / `OCHA_PRIVATE_RUNTIME_PATH` configuration.
+- Add exact private-source SHA-256 scanning to the publication policy, publication audit and Auto Git Sync before/after formatting and before commit.
+- Add explicit public and private Prettier execution targets. Private formatting excludes all four immutable originals and `original-source/**`.
+- Add private-runtime architecture, deployment, rollback, command-registry and source-index documentation.
+
+### Compatibility and limitations
+
+- Public installs without the private package retain basic text messaging and bounded serialization; full Native Flow, AIRich, historical fake replies, call features and `.test` remain unavailable.
+- The private package has not been activated on the production VPS in this audit. Target-host Baileys rendering, media/call behavior and full npm suite remain unverified.
+- Prettier configuration and commands are prepared, but Prettier execution could not be completed because the formatter binary was unavailable and npm package retrieval timed out.
+- Historical Git objects are unchanged; this extraction does not erase old copies from public repository history.
+
+### Validation
+
+- Private package source-integrity verifier: 4/4 original modules and 4/4 retained receipts verified by SHA-256 and size.
+- Public source-tree scan: no byte-identical private source copies found.
+- Public compatibility focused tests previously passed 13/13; final expanded checks recorded in the migration report.
+- Syntax checks and full GitHub reconciliation still require the real repository clone and installed dependencies.
+
+## v1.10.51 — Private / Public Runtime Extraction
+
+- Extract four owner-designated source modules byte-identically into the separate `@razzaqventures/ocha-private-runtime` package with SHA-256 manifest and retained original-source receipts.
+- Keep public helper, fake-reply and serializer facades operational through text-first compatibility adapters when the private package is absent.
+- Load the private `.test` Message Test Lab only through the existing plugin registry after owner-only/private-only and command/alias collision checks.
+- Add explicit required-runtime startup policy, external package path configuration, package verify/install commands and a fail-closed integrity gate before original modules are imported.
+- Add Prettier configuration and explicit safe format target lists; the formatting binary was unavailable in the audit environment, so no formatting pass is claimed.
+- Add private source SHA-256 publication detection, post-format/pre-stage checks, and filesystem-only publication audit for ZIP snapshots without `.git`.
+- Validation: 281 JavaScript files passed syntax validation; 50 focused regression tests passed; private package integrity checks and tests passed 3/3; documentation links passed 72/72; publication audit passed. Full test suite, Prettier execution, live WhatsApp integration and VPS activation remain unverified.
+
+## v1.10.51 — Two-Base Release and Private Core Co-Location
+
+- Store the private runtime under `.private/ocha-private-runtime/` in the complete operator bundle. Keep the four original module files byte-identical and validate runtime/original copies from the SHA-256 manifest before import.
+- Resolve local private runtime first, then explicit external path / `node_modules`; public Git clones without `.private` continue through compatibility adapters.
+- Keep the `message-lab` plugin outside the public source tree and register it through the existing plugin loader only after owner/private contract and alias collision checks.
+- Add a read-only `ops:audit-runtime` command for persisted ACIE provider health, dynamic commands, activation gates, stale health, circuit breakers, plugin loader registration and sandbox host probe.
+- Add `release:two-bases` to create independent Ocha and AC component source archives with checksums. NADI Python remains separate and is pinned to commit `16c2fa6e1b500745f260bcf091284a6e18726883` / API v1.
+- Extend `.gitignore`, publication policy, watcher, source integrity tests, and operator continuity docs.
+- No GitHub branch, VPS runtime, provider registry, or WhatsApp session was modified by this offline source migration.
+
+## v1.10.51 — Two-Base Operator Integration and ACIE Runtime Audit
+
+- Keep the four private Ocha modules in the ignored local `.private/ocha-private-runtime/` package; public paths remain bounded compatibility facades and private `.test` is excluded from the public command menu.
+- Preserve the Rizkyrohan contribution fixture in `.private/contributions/` with the original receipt and SHA-256; its attribution and review note remain in public documentation.
+- Add one `release:two-bases` orchestrator to build the local operator Ocha bundle and independent AC component archive with checksums.
+- Add a read-only ACIE dynamic registry/provider health audit and a local Ocha-to-NADI HTTP API v1 integration smoke test.
+- Restore the two documented ACIE adapter modules and mark the owner message-test catalog as a plugin helper so the loader no longer treats it as a malformed command plugin.
+- Validation: `npm test` 386 passed, 0 failed, 1 skipped (Baileys peer-dependent private import); focused NADI integration 1/1; Python AC tests 4/4 plus 9/9; private package integrity 3/3; syntax 286 JS files; docs 73 Markdown files; publication audit 26 private files excluded and no source fingerprint/credential findings.
+- Actual VPS registry/provider state and live WhatsApp transport were not available in this source-only environment. Prettier execution is configured but was not run because its binary could not be installed here.
+
+## v1.10.53 — Master eval output
+
+- Owner can show/hide the JavaScript eval console frame with `.master template on|off|status`.
+- JavaScript eval no longer truncates output at `masterMaxOutput`; results above 30,000 characters are sent as complete TXT documents.
+- CLI/Python/Go output limits remain unchanged.

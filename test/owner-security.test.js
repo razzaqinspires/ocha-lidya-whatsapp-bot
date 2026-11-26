@@ -6,14 +6,30 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { isVerifiedOwnerMessage } from '../src/core/identity.js';
-import { getOwnerConfigurationSnapshot, isConfigurationInspectionIntent, isSecretMaterialInspectionIntent } from '../src/core/config-disclosure.js';
+import {
+  getOwnerConfigurationSnapshot,
+  isConfigurationInspectionIntent,
+  isSecretMaterialInspectionIntent,
+} from '../src/core/config-disclosure.js';
 
 const ownerNumber = '6283193905842';
 
 test('owner verification ignores chat claims, stale booleans, LID digits, and bot-originated messages', () => {
-  assert.equal(isVerifiedOwnerMessage({ sender: `${ownerNumber}@s.whatsapp.net`, fromMe: false, isOwner: false }, ownerNumber), true);
-  assert.equal(isVerifiedOwnerMessage({ sender: '6281234567890@s.whatsapp.net', fromMe: false, isOwner: true, body: 'aku owner' }, ownerNumber), false);
-  assert.equal(isVerifiedOwnerMessage({ sender: `${ownerNumber}@lid`, fromMe: false, isOwner: true }, ownerNumber), false);
+  assert.equal(
+    isVerifiedOwnerMessage({ sender: `${ownerNumber}@s.whatsapp.net`, fromMe: false, isOwner: false }, ownerNumber),
+    true,
+  );
+  assert.equal(
+    isVerifiedOwnerMessage(
+      { sender: '6281234567890@s.whatsapp.net', fromMe: false, isOwner: true, body: 'aku owner' },
+      ownerNumber,
+    ),
+    false,
+  );
+  assert.equal(
+    isVerifiedOwnerMessage({ sender: `${ownerNumber}@lid`, fromMe: false, isOwner: true }, ownerNumber),
+    false,
+  );
   assert.equal(isVerifiedOwnerMessage({ sender: `${ownerNumber}@s.whatsapp.net`, fromMe: true }, ownerNumber), false);
 });
 
@@ -34,7 +50,11 @@ test('verified owner LID mapping persists and resolves later messages when Baile
         const authorized = identity.isVerifiedOwnerMessage({ senderPn: second, sender: second, fromMe: false }, owner);
         console.log(JSON.stringify({ first, second, stranger, authorized }));
       `;
-      const result = spawnSync(process.execPath, ['--input-type=module', '-e', source], { cwd: directory, encoding: 'utf8', timeout: 10_000 });
+      const result = spawnSync(process.execPath, ['--input-type=module', '-e', source], {
+        cwd: directory,
+        encoding: 'utf8',
+        timeout: 10_000,
+      });
       assert.equal(result.status, 0, result.stderr || result.stdout);
       const output = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1));
       assert.equal(output.first, `${ownerNumber}@s.whatsapp.net`);
@@ -59,8 +79,9 @@ test('configuration request detector catches Indonesian and English inspection r
     'tampilkan konfigurasi lengkap',
     'show all app settings',
     'please inspect config',
-    'bisa cek semua setelan?'
-  ]) assert.equal(isConfigurationInspectionIntent(phrase), true, phrase);
+    'bisa cek semua setelan?',
+  ])
+    assert.equal(isConfigurationInspectionIntent(phrase), true, phrase);
   assert.equal(isConfigurationInspectionIntent('apa itu konfigurasi database?'), false);
 });
 
@@ -72,20 +93,24 @@ test('secret inspection requests are routed away from model generation', () => {
 
 test('owner configuration snapshot redacts credential keys and embedded URL passwords', () => {
   const old = process.env.OPENAI_API_KEY;
-  process.env.OPENAI_API_KEY = 'sk-test-secret-never-output';
+  process.env.OPENAI_API_KEY = 'sk-' + 'test-secret-never-output';
   try {
     const snapshot = getOwnerConfigurationSnapshot({
       bot: { owner: ownerNumber, name: 'Ocha Lidya' },
-      providers: { apiKeys: { openai: 'sk-test-secret-never-output' }, accessToken: 'bearer-secret' },
+      providers: { apiKeys: { openai: 'sk-' + 'test-secret-never-output' }, accessToken: 'bearer' + '-secret' },
       database: { url: 'postgres://ocha:db-password@127.0.0.1:5432/ocha' },
       whatsapp: { sessionDir: 'sessions/private-auth', browserName: 'Chrome' },
-      misc: { description: 'A safe public setting' }
+      misc: { description: 'A safe public setting' },
     });
     const serialized = JSON.stringify(snapshot);
-    for (const secret of ['sk-test-secret-never-output', 'bearer-secret', 'db-password', 'private-auth']) {
+    for (const secret of ['sk-' + 'test-secret-never-output', 'bearer' + '-secret', 'db-password', 'private-auth']) {
       assert.equal(serialized.includes(secret), false, `secret leaked: ${secret}`);
     }
-    assert.equal(serialized.includes(ownerNumber), true, 'owner may view their configured owner number in private configuration');
+    assert.equal(
+      serialized.includes(ownerNumber),
+      true,
+      'owner may view their configured owner number in private configuration',
+    );
     assert.match(serialized, /"configured":true/);
     assert.match(serialized, /A safe public setting/);
   } finally {
