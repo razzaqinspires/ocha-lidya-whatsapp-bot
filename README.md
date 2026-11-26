@@ -1,5 +1,9 @@
 # Ocha Lidya WhatsApp Bot
 
+## AI Response Quality Guard (v1.10.48)
+
+Substantive questions and tasks are now protected from short generic invitations. A detected non-answer receives one bounded correction attempt; if it remains generic, Ocha returns a truthful, topic-preserving fallback. Current-event claims require a real retrieved source; no live news source is added by this change. See [`docs/AI_RESPONSE_QUALITY.md`](docs/AI_RESPONSE_QUALITY.md).
+
 ## ACIE — Autonomous Contribution Integration & Orchestration Engine (v1.10.46 · Rizkyrohan intake review)
 
 ACIE is an internal Ocha subsystem for immutable third-party contribution intake, bounded multi-language static discovery, governance, isolated provider execution, routing/fallback and command engineering. Original source bytes remain in a private versioned vault and are never imported into the bot process. Adapter code and generated commands live outside the original source.
@@ -797,3 +801,11 @@ The local dashboard API binds to `127.0.0.1:8788`. Set `OCHA_RENTAL_API_TUNNEL=1
 - `.test` opens an owner-only interactive catalogue with local fixtures in `assets/message-test/`; successful tests send only the target payload, while failures are written to runtime logs with test IDs.
 - Result IDs are logged when available; no “relay success” summary is sent to chat.
 - `.react` is an owner-only private manager for command and AI reactions (`⏳` / `💭` → `✅`, failure `❌`). It is disabled by default.
+
+
+## v1.10.48 — AI Direct-Answer Guard
+
+- Add a substantive-turn response quality guard to suppress short generic invitations when the user asked a real question or gave a task.
+- Retry one non-answer once with a bounded, same-provider correction prompt; if it remains generic or cannot be repaired, return a truthful topic-preserving fallback.
+- Explicitly instruct the model to answer the user's concrete request before adding follow-up questions and to disclose missing live sources for current-events requests.
+- Restore the two ACIE adapter modules omitted from the v1.10.47 distribution archive so the ACIE intake/runtime imports and associated tests resolve.

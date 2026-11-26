@@ -1153,3 +1153,13 @@ All notable changes to Ocha Lidya are recorded here. The newest release is liste
 - Added Part 2 runtime, adapter and provider-routing documentation and tests.
 - Generic runner supports CLI-style JavaScript, Python, Go, PHP, Java source-launch, and Bash entrypoints. TypeScript/Rust remain discovery-only pending dedicated build adapters.
 - Production container execution was not tested in this environment because Docker/Podman is not installed; runtime remains unavailable by default.
+
+
+## v1.10.48 — AI Direct-Answer Reliability Fix
+
+- Add an explicit high-priority prompt rule: answer substantive user questions and tasks directly; never replace them with generic greetings or “what would you like to do today?” prompts.
+- Detect generic non-answer outputs for substantive user turns, make at most one bounded correction attempt using the same successful provider, and suppress the generic response if correction fails.
+- Add topic-preserving truthful fallback for current Gaza/current-events questions when no live source was retrieved; no current facts are fabricated.
+- Add privacy-safe diagnostics for response repair outcomes without logging user prompt/response contents.
+- Document the quality guard, current-information boundary, test coverage and known limitations in `docs/AI_RESPONSE_QUALITY.md`.
+- Restore `src/acie/adapters/universal-adapter.js` and `src/acie/adapters/legacy-whatsapp-bridge.js`, which were referenced by v1.10.47 tests and intake/runtime but missing from that ZIP.

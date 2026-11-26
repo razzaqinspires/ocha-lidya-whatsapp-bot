@@ -28,11 +28,14 @@ import { parseFeatureBuildIntent, resolveGameFeature, createFeatureRequest, form
 import { executeRegisteredPlugin } from '../core/plugin-execution.js';
 import { buildIdentityKernelPrompt } from './identity-kernel.js';
 import { buildLocalGreeting } from './persona-style.js';
+import { isSubstantiveUserTurn, isGenericNonAnswerResponse, buildNonAnswerFallback } from './response-quality.js';
 import { migrateLegacyPrivateAIHistory } from './legacy-history-migration.js';
 import { getConsciousnessPrompt } from '../runtime/consciousness-runtime.js';
 import { beginAIRequest, finishAIRequest } from '../runtime/kernel-telemetry.js';
 
 const SYSTEM_PROMPT = `Kamu adalah Ocha Lidya, asisten WhatsApp berbasis Nexora di bawah Razzaq Ventures. Kamu harus akurat, konsisten, memahami konteks, dan jujur mengenai kemampuan runtime. Identitas model publik: Nexora-2.0-Flash. Jika ditanya model, jawab persis: Saya menggunakan Nexora-2.0-Flash. Jangan menyebut provider, vendor, endpoint, nama model internal, atau rahasia konfigurasi.
+
+ATURAN MENJAWAB PESAN PENGGUNA — PRIORITAS TINGGI: Pada setiap pesan non-sapaan, identifikasi permintaan atau pertanyaan konkret lalu jawab langsung. Jangan membalas pertanyaan, permintaan penjelasan, permintaan analisis, atau permintaan tindakan dengan sapaan atau pertanyaan generik seperti “Apa yang ingin kamu lakukan hari ini?”, “Mau mulai dari mana?”, atau “Ada yang bisa saya bantu?”. Jangan mengubah pertanyaan faktual menjadi ajakan ngobrol. Jawab dalam bahasa pengguna. Jika pengguna meminta perkembangan hari ini/terbaru dan tidak ada sumber real-time yang benar-benar diambil pada giliran ini, nyatakan keterbatasan itu secara jelas; jangan mengarang data atau mengalihkan topik. Pertanyaan lanjutan hanya boleh ditambahkan setelah inti permintaan dijawab, dan hanya bila memang diperlukan.
 
 ATURAN SUMBER KEBENARAN DAN PENYELESAIAN: Registry command, capability runtime, metadata pesan, state sesi, dan hasil backend adalah fakta otoritatif. Gunakan registry untuk menjelaskan apa yang benar-benar terpasang. Saat fitur belum tersedia, jangan berhenti pada kalimat penolakan yang kaku: pahami tujuan pengguna, tawarkan alternatif yang tersedia, atau susun proposal fitur saat pengguna meminta dibuatkan. Persetujuan pembuatan fitur harus dicatat melalui workflow backend yang terotorisasi; jangan menulis source, memasang plugin, mengubah konfigurasi, atau mengklaim fitur aktif sendiri. Jangan mengarang command, alias, game, state permainan, file, gambar, video, hasil pencarian, tombol, atau tindakan. Jangan meneruskan simulasi seolah ada state yang tersimpan. Jika pengguna bertanya tentang pesan yang dikutip, identifikasi dulu jenis dan sumber kutipan itu; jangan menjawab terlalu umum.
 
@@ -290,7 +293,7 @@ async function executeWithFallback(job) {
     maxOutputTokens: Math.max(64, Math.min(8192, Number(job.maxOutputTokens) || Number(config.maxOutputTokens))),
     groqMaxOutputTokens: 2048,
     providerInputCharLimits: { groq: 18000 },
-    temperature: config.temperature,
+    temperature: Number.isFinite(Number(job.temperature)) ? Math.max(0, Math.min(1, Number(job.temperature))) : config.temperature,
     deferTelemetry: true,
     publicModel: 'Nexora-2.0-Flash',
     onProviderCheckpoint: event => checkpoint(job.id, 'queued', {
@@ -637,6 +640,36 @@ async function completeTruncatedResponse(job, initialResult) {
     text += '\n\n(Bagian jawaban mungkin belum lengkap karena batas keluaran. Ketik “lanjutkan” untuk meneruskan.)';
   }
   return { ...initialResult, ...current, text, completion: { ...inspection, finishReason: current.finishReason || initialResult.finishReason || '' } };
+}
+
+async function repairGenericNonAnswer(job, initialResult) {
+  const remainingMs = Number(job.deadlineAt) - Date.now();
+  if (remainingMs < 5000) return null;
+  const priorText = String(initialResult?.text || '').slice(0, 1800);
+  const repairInstruction = [
+    'KOREKSI JAWABAN — JANGAN MENGULANG JAWABAN SEBELUMNYA.',
+    'Jawaban sebelumnya hanya berisi pertanyaan pembuka generik dan sama sekali tidak menjawab permintaan pengguna.',
+    'Baca pesan pengguna terakhir yang sudah ada di konteks, identifikasi inti pertanyaannya, lalu jawab inti itu secara langsung dalam bahasa Indonesia.',
+    'Jangan menyapa, jangan bertanya “apa yang ingin dilakukan”, dan jangan mengalihkan topik.',
+    'Untuk informasi terkini, jangan menyatakan fakta real-time kecuali datanya benar-benar tersedia di konteks. Jika tidak tersedia, katakan secara eksplisit bahwa kamu tidak dapat memverifikasinya saat ini.',
+    'Jawab ringkas tetapi substantif. Jangan menyebut proses koreksi internal.'
+  ].join(' ');
+  const repairJob = {
+    ...job,
+    id: crypto.randomUUID(),
+    messages: [
+      ...(Array.isArray(job.messages) ? job.messages : []),
+      { role: 'assistant', content: priorText },
+      { role: 'user', content: repairInstruction }
+    ],
+    ...(initialResult?.provider ? { providerOrder: [initialResult.provider] } : {}),
+    temperature: 0.2,
+    maxOutputTokens: Math.min(1400, Math.max(600, Number(job.maxOutputTokens) || 1200)),
+    providerTimeoutMs: Math.min(35_000, remainingMs - 1000),
+    totalBudgetMs: Math.min(Number(job.totalBudgetMs) || 120_000, remainingMs),
+    deadlineAt: Number(job.deadlineAt)
+  };
+  return executeWithFallback(repairJob);
 }
 
 async function registerDeliveredAnchors(delivery, job) {
@@ -1004,11 +1037,26 @@ async function answerMessageUnlockedCore(sock, message) {
   void setComposing(sock, message.chat, 'composing');
   try {
     const generated = await executeWithFallback(job);
-    const result = await completeTruncatedResponse(job, generated);
+    let result = await completeTruncatedResponse(job, generated);
     let finalResponseText = result.text;
-    if (hasQuotedMessage && isGenericGreetingResponse(finalResponseText)) {
+    if (hasQuotedMessage && (isGenericGreetingResponse(finalResponseText) || isGenericNonAnswerResponse(finalResponseText))) {
       finalResponseText = buildQuotedFallbackResponse({ userText, quoteText, quoteType });
-      logger.warn({ jobId: id, messageId: message.id || message.key?.id || null, quoteType, quoteLength: quoteText.length }, 'Generic greeting response suppressed for a quoted AI turn');
+      logger.warn({ jobId: id, messageId: message.id || message.key?.id || null, quoteType, quoteLength: quoteText.length, reason: 'generic_non_answer' }, 'Generic response suppressed for a quoted AI turn');
+    } else if (isSubstantiveUserTurn(userText) && isGenericNonAnswerResponse(finalResponseText)) {
+      let repaired = null;
+      try {
+        repaired = await repairGenericNonAnswer(job, result);
+      } catch (repairError) {
+        logger.warn({ jobId: id, provider: result.provider || null, code: repairError.code || null }, 'AI response repair attempt failed');
+      }
+      if (repaired?.text && !isGenericNonAnswerResponse(repaired.text)) {
+        finalResponseText = repaired.text;
+        result = { ...result, ...repaired, responseRepairApplied: true };
+        logger.info({ jobId: id, provider: repaired.provider || result.provider || null, reason: 'generic_non_answer_repaired' }, 'AI generic response successfully repaired');
+      } else {
+        finalResponseText = buildNonAnswerFallback(userText);
+        logger.warn({ jobId: id, provider: result.provider || null, repairProvider: repaired?.provider || null, reason: 'generic_non_answer_after_repair' }, 'AI generic non-answer replaced with truthful local fallback');
+      }
     }
     const cleanAnswer = extractAIResponsePlan(finalResponseText, userText).text;
     await persistTurn(job, 'assistant', cleanAnswer, result, { defer: true });
