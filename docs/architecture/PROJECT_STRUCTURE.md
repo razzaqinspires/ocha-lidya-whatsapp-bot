@@ -45,7 +45,7 @@ No `CHANGELOG.md`, `PROJECT_STRUCTURE.md`, or `OPERATOR_BUNDLE.json` file is kep
 │   │   └── CHANGELOG.md               # Release-history index
 │   ├── CHANGE_LOG.md                  # Detailed canonical release history
 │   └── ...                            # Domain architecture, operations, registries, audits
-├── scripts/                            # Bootstrap, maintenance, audit, and release scripts
+├── scripts/                            # Bootstrap, maintenance, audit, release, and env inventory scripts
 ├── src/                                # Public application source and compatibility facades
 │   ├── acie/
 │   ├── ai/
@@ -84,3 +84,7 @@ No `CHANGELOG.md`, `PROJECT_STRUCTURE.md`, or `OPERATOR_BUNDLE.json` file is kep
 ## Safe publication
 
 Run `npm run security:publication` before staging. Review `git status`, `git ls-files`, and the staged file list. Do not use `git add .` when private or local runtime assets are present.
+
+## Independent auto-push repositories (Ocha v1.10.57)
+
+The operator checkout can contain two separate Git roots: the Ocha root and `.private/artificial-consciousness-component/.git`. The parent Ocha repository ignores the entire `.private/` tree and has a pre-commit tracked-path guard; the nested AC repository owns its own remote, branch, and token. Persistent toggles live in `.private/automation/auto-push.json`, outside both Git publication roots. See [`../AUTO_PUSH_TWO_REPOSITORIES.md`](../AUTO_PUSH_TWO_REPOSITORIES.md).

@@ -14,11 +14,25 @@ function git(args, allowFailure = false) {
 
 const inside = git(['rev-parse', '--is-inside-work-tree'], true);
 if (inside.status !== 0) {
+  const remoteMain = git(['ls-remote', '--heads', repo, 'refs/heads/main'], true);
+  if (remoteMain.status !== 0) {
+    throw new Error(
+      'Tidak dapat memeriksa remote Ocha. Setup dibatalkan; clone repository dengan akses GitHub yang valid terlebih dahulu.',
+    );
+  }
+  if (remoteMain.stdout.trim()) {
+    throw new Error(
+      'Folder ini belum memiliki .git, sedangkan remote Ocha sudah memiliki riwayat main. Jangan membuat orphan git init. Jalankan `git clone https://github.com/razzaqinspires/ocha-lidya-whatsapp-bot.git` pada folder kerja baru, lalu terapkan source operator melalui proses merge/review.',
+    );
+  }
   git(['init', '-b', 'main']);
-  console.log('Git repository lokal dibuat dengan branch main.');
+  console.log('Git repository lokal dibuat dengan branch main karena remote belum memiliki commit.');
 } else {
   const top = path.resolve(git(['rev-parse', '--show-toplevel']).stdout.trim());
-  if (top !== root) throw new Error(`Root Git ${top} berbeda dari root proyek ${root}. Jalankan setup dari clone repository yang benar.`);
+  if (top !== root)
+    throw new Error(
+      `Root Git ${top} berbeda dari root proyek ${root}. Jalankan setup dari clone repository yang benar.`,
+    );
   const currentBranch = git(['branch', '--show-current']).stdout.trim();
   if (currentBranch !== 'main') {
     const existingMain = git(['show-ref', '--verify', '--quiet', 'refs/heads/main'], true);
@@ -31,10 +45,16 @@ const remote = git(['remote', 'get-url', 'origin'], true);
 if (remote.status !== 0) {
   git(['remote', 'add', 'origin', repo]);
   console.log('Remote origin ditambahkan:', repo);
-} else if (remote.stdout.trim().replace(/\.git$/i, '') !== 'https://github.com/razzaqinspires/ocha-lidya-whatsapp-bot') {
-  throw new Error(`Remote origin harus menggunakan HTTPS ke repository target, bukan: ${remote.stdout.trim()}. Periksa dan ubah secara manual sebelum melanjutkan.`);
+} else if (
+  remote.stdout.trim().replace(/\.git$/i, '') !== 'https://github.com/razzaqinspires/ocha-lidya-whatsapp-bot'
+) {
+  throw new Error(
+    `Remote origin harus menggunakan HTTPS ke repository target, bukan: ${remote.stdout.trim()}. Periksa dan ubah secara manual sebelum melanjutkan.`,
+  );
 } else {
   console.log('Remote origin sudah sesuai:', remote.stdout.trim());
 }
 
-console.log('Git setup selesai. Pastikan branch main, identitas Git terisi, .env berisi GITHUB_PAT, lalu jalankan npm start.');
+console.log(
+  'Git setup selesai. Pastikan branch main, identitas Git terisi, .env berisi GITHUB_PAT, lalu jalankan npm start. Script lama npm run git:setup tetap dipertahankan; setup tidak pernah force-push atau membuat riwayat orphan ketika remote sudah berisi commit.',
+);

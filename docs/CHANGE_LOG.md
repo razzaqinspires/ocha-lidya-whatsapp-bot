@@ -1,3 +1,34 @@
+## Environment inventory hardening — v1.10.55
+
+- Advance the Ocha-only package to 1.10.55; no Artificial Consciousness Component package or source is included in this update.
+- Expand Acorn AST discovery to include root-level JavaScript, process/global aliases, optional chaining, destructured `process.env`, constant and allowlist-resolved computed keys, and whole-environment pass-throughs. Scan shell parameter expansions and record dotenv load/reload sites.
+- Strengthen unresolved computed-access handling: `npm test`, `npm run check`, and explicit `npm run env:check` use strict mode and fail if a computed production environment read cannot be resolved. Computed test-only accesses remain visible in the generated report.
+- Ensure `prestart`, `predev`, and `pretest` synchronize `.env.example` and `docs/ENVIRONMENT_VARIABLES.md` in strict mode; newly discovered production keys are added as safe commented placeholders for review, never enabled with guessed values.
+- Inventory: 313 JavaScript files, 3 shell files, 58 names (23 application settings, 7 secrets, 23 host/OS, 4 internal markers, 1 test-only), 260 JavaScript access sites (247 static, 13 unresolved test-only), 9 shell expansion sites, 25 whole-environment pass-through sites, and 4 dotenv load/reload sites.
+- `OCHA_HOST_PREFLIGHT_COMPLETED` is already present as a commented internal marker. It is set/managed by Ocha, not a user-supplied secret or operator setting.
+- The scanner never reads `.env` values. It reads source code and generated metadata only.
+
+### Validation status
+
+- Environment inventory regression tests: 6/6 passed. Syntax, documentation, publication-security and full test results are recorded in the v1.10.55 release report; dependency bootstrap and live transport limitations are stated separately.
+
+## Environment inventory and auto-sync — v1.10.54
+
+- Advance Ocha package version to 1.10.54. Add Acorn 8.15.0 as a direct dependency so the AST scanner is available on clean operator installs.
+- Add `scripts/lib/env-inventory.js` and `scripts/sync-env-example.js`. The scanner maps static property/bracket reads, destructuring, aliases, provider-key registry entries, literal allowlists, shell overrides and inherited-environment pass-through without reading `.env` values.
+- Expand `.env.example` to cover the implemented provider credentials, GitHub token, encrypted vault master key, NADI loader/sidecar settings, kernel data paths, private runtime, Rental API, Python executable and host tooling. Runtime-generated markers are listed as internal and must not be manually configured.
+- Generate `docs/ENVIRONMENT_VARIABLES.md` with exact source locations and classifications. The current inventory scans 313 JavaScript files and 3 shell files, identifying 58 distinct environment names (57 appearing in production source, 1 test-only); it records 260 named JavaScript access sites (247 static and 13 computed), 9 shell expansion sites, and 25 whole-environment pass-through sites; no production computed access remains unresolved.
+- Add `npm run env:sync` / `npm run env:check`. `prestart`, `predev`, and `pretest` run dependency preflight then synchronize environment artifacts. `npm run check` validates that generated artifacts are current.
+- Add regression tests for AST discovery, provider-registry resolution, internal runtime markers, test-only variables and shell installer overrides. The generated report includes category totals, and tests assert that every discovered application/secret key is represented in `.env.example` while test-only keys stay excluded.
+- This change does not read, print, or modify the operator's `.env` file. The scanner only reads source code, `.env.example`, and generated documentation.
+
+### Validation status
+
+- AST scan: 313 JavaScript files and 3 shell files; 58 names identified; 0 parse errors; 0 unresolved production dynamic accesses; 13 unresolved computed accesses remain in test code only.
+- Environment-inventory tests: 4/4 passed. Syntax check: 294 JavaScript files. Documentation validation: 76 Markdown files. Publication security audit: passed; 26 private files excluded and no private-source fingerprints/credential patterns found.
+- Direct `node --test` suite: 404 tests, 403 passed, 0 failed, and 1 skipped (private runtime import requires the Baileys peer dependency). `npm test` lifecycle was invoked but dependency preflight attempted to install seven missing project dependencies and timed out because the npm registry was unreachable in this environment; direct suite execution completed independently.
+- Live WhatsApp transport and host bootstrap are not exercised by the static environment scan.
+
 ## v1.10.52 — Root Documentation and Release Metadata Layout
 
 - Keep `README.md` as the only Markdown document directly in the repository root.
@@ -1414,3 +1445,27 @@ All notable changes to Ocha Lidya are recorded here. The newest release is liste
 - Owner can show/hide the JavaScript eval console frame with `.master template on|off|status`.
 - JavaScript eval no longer truncates output at `masterMaxOutput`; results above 30,000 characters are sent as complete TXT documents.
 - CLI/Python/Go output limits remain unchanged.
+
+## v1.10.56 — paired AC/NADI maintenance — 2026-11-26
+
+- Pair Ocha with independent `ac-kernel-nadi@2.1.1` through the unchanged NADI HTTP API v1 contract.
+- Update local sibling-component integration test to verify NADI 2.1.1.
+- Update release builder to distinguish a verified Git-pinned component from a local source snapshot; no commit SHA is fabricated when workspace `.git` metadata is absent.
+- Update private runtime package metadata to match Ocha v1.10.56; its preserved source modules are not modified.
+- Carry forward the audited Lunara Pro contribution decision: held for source provenance, license, API contract and security gates; no runtime command/provider activated.
+- Full paired QA results and source provenance are recorded in `docs/RELEASE_REPORT_1.10.56.md` and the independent AC maintenance report.
+
+## v1.10.57 — Dual-repository automatic Git publication — 2026-11-27
+
+- Preserve the previous Ocha `npm run git:setup` and `npm run git:watch` scripts; make Ocha setup fail safely instead of initializing an unrelated orphan history when the canonical remote already has commits.
+- Add fixed AC Git policy for `razzaqinspires/artificial-consciousness-component` on `main`, rooted at `.private/artificial-consciousness-component`.
+- Add `ac:git:setup` to clone the canonical remote before applying a newer local snapshot, retain a pre-setup backup, reject unsafe version/branch/history combinations and keep the existing snapshot intact on failure.
+- Add an independent AC filesystem watcher with path-scoped staging, secret scanning, symlink rejection, runtime/data/config exclusions, temporary askpass authentication and no force-push.
+- Add persistent two-target controls and a private owner plugin `.autopush` (`gitpush`, `autogit` aliases) hidden from menu and group chat.
+- Add distinct `AC_GITHUB_PAT`, update `OCHA_NADI_SOURCE_DIR` to `.private/artificial-consciousness-component`, and retain the separate NADI HTTP API v1 integration boundary.
+- Ocha root `.gitignore`, watcher and publication firewall exclude the entire `.private/` tree. The Ocha operator ZIP may carry selected AC source privately for deployment, but never carries nested `.git` metadata, secrets or runtime state and must never be uploaded publicly.
+- Add pre-restart flush across both lanes, CLI status/manual push helpers, docs, command registry, source component index and continuity context.
+- AC v2.1.1 was reviewed for compatibility; no AC kernel formula, MIMPI/INTEROCEPTION behavior or HTTP API was changed in this operational integration release.
+- Add fail-closed detection of `.private/` paths already tracked in the Ocha Git index, quarantine corrupted auto-push settings with both targets disabled, and widen AC secret/config/certificate/database deny rules.
+- Add `AC_GITHUB_PAT` to source inventory and owner configuration redaction; the two credential variables remain separate and empty in `.env.example`.
+- No GitHub push is claimed from this source-only workspace: source archives have no Git metadata and remote authentication was not available for a write verification.

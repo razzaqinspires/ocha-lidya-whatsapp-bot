@@ -10,6 +10,8 @@ import { createAutomaticCommitMessage, parseGitIgnore, parsePorcelainZ } from '.
 import { isRuntimeWatchIgnored } from './watch-policy.js';
 import {
   auditPublicationPaths,
+  findPrivateTrackedPaths,
+  findProtectedStagedPaths,
   hasPrivateSourceFingerprint,
   isPrivatePublicationPath,
   scanSecrets,
@@ -74,10 +76,19 @@ async function getStagedPaths() {
   return result.stdout.split('\0').filter(Boolean);
 }
 
+async function getStagedDeletionPaths() {
+  const result = await run('git', ['diff', '--cached', '--diff-filter=D', '--name-only', '-z']);
+  return result.stdout.split('\0').filter(Boolean);
+}
+
 async function assertSafeStaging() {
   const staged = await getStagedPaths();
+  const deletions = new Set(await getStagedDeletionPaths());
   const blocked = [];
   for (const filePath of staged) {
+    // Explicit removal from the Ocha index is the safe migration path for
+    // previously tracked private files; never block those staged deletions.
+    if (deletions.has(filePath)) continue;
     if (isHardIgnored(filePath) || (await isIgnoredByGit(filePath))) blocked.push(filePath);
   }
   if (blocked.length) {
@@ -194,15 +205,26 @@ async function formatEligibleFiles(filePaths) {
 }
 
 async function assertNoProtectedStagedFiles() {
-  const staged = await getStagedPaths();
-  const protectedPaths = staged.filter(filePath => isPrivatePublicationPath(filePath));
-  if (protectedPaths.length) {
+  // Fail closed if any private path is already tracked by the Ocha repository.
+  // .gitignore does not untrack files that entered the index in the past.
+  const trackedPrivate = await run('git', ['ls-files', '-z', '--', '.private']);
+  const privateEntries = findPrivateTrackedPaths(trackedPrivate.stdout.split('\0').filter(Boolean));
+  if (privateEntries.length) {
     throw new Error(
-      `Commit diblokir: file privat/aturan khusus ter-stage. Keluarkan dari index secara manual: ${protectedPaths.join(', ')}`,
+      `Auto-push Ocha diblokir: ${privateEntries.length} path di .private masih tercatat dalam Git index. Hapus dari index dengan git rm -r --cached -- .private, review diff, lalu commit perubahan penghapusan. Source lokal tidak dihapus.`,
     );
   }
-  await assertNoPrivateSourceBytes(staged);
-  await assertNoSecrets(staged);
+  const staged = await getStagedPaths();
+  const deletions = await getStagedDeletionPaths();
+  const protectedPaths = findProtectedStagedPaths(staged, deletions);
+  if (protectedPaths.length) {
+    throw new Error(
+      `Commit diblokir: file privat/aturan khusus ter-stage untuk ditambahkan atau diubah. Hanya penghapusan dari index yang diizinkan: ${protectedPaths.join(', ')}`,
+    );
+  }
+  const stagedFiles = staged.filter(filePath => !deletions.includes(filePath));
+  await assertNoPrivateSourceBytes(stagedFiles);
+  await assertNoSecrets(stagedFiles);
 }
 
 async function stageEligibleChanges() {
@@ -284,7 +306,7 @@ async function syncOnce() {
   const token = process.env.GITHUB_PAT;
   if (!token) {
     logger.warn('Auto-push menunggu GITHUB_PAT di .env. Perubahan tetap lokal sampai token tersedia.');
-    return;
+    return { ok: false, reason: 'GITHUB_PAT_missing', staged: result.staged };
   }
 
   const askpass = await prepareAskPass(token);
@@ -292,12 +314,13 @@ async function syncOnce() {
     await reconcileRemote(askpass.env);
     await run('git', ['-c', 'credential.helper=', 'push', 'origin', `HEAD:refs/heads/${BRANCH}`], { env: askpass.env });
     logger.info({ branch: BRANCH, repository: REPOSITORY, files: result.staged }, 'Auto Git push selesai');
+    return { ok: true, branch: BRANCH, repository: REPOSITORY, files: result.staged };
   } finally {
     await fs.rm(askpass.file, { force: true }).catch(() => {});
   }
 }
 
-export async function startAutoGitSync({ root = PROJECT_ROOT } = {}) {
+export async function startAutoGitSync({ root = PROJECT_ROOT, enabled = true, watch = true } = {}) {
   if (path.resolve(root) !== PROJECT_ROOT)
     throw new Error('Auto Git Sync hanya boleh dijalankan dari root proyek Ocha Lidya.');
 
@@ -310,36 +333,71 @@ export async function startAutoGitSync({ root = PROJECT_ROOT } = {}) {
       { reason: error.message, root: PROJECT_ROOT },
       'Auto Git Sync nonaktif: folder ini belum siap sebagai clone Git yang valid. Jalankan npm run git:setup setelah konfigurasi Git tersedia.',
     );
-    return { enabled: false, pause() {}, resume() {}, async close() {} };
+    return {
+      enabled: Boolean(enabled),
+      ready: false,
+      async setEnabled(value) {
+        this.enabled = Boolean(value);
+        return this.getStatus();
+      },
+      async pushNow() {
+        return { ok: false, reason: 'ocha_repository_not_ready' };
+      },
+      async flush() {
+        return { ok: false, reason: 'ocha_repository_not_ready' };
+      },
+      async getStatus() {
+        return {
+          target: 'ocha',
+          enabled: this.enabled,
+          ready: false,
+          repository: REPOSITORY,
+          branch: BRANCH,
+          tokenAvailable: Boolean(process.env.GITHUB_PAT),
+          pendingChanges: null,
+          reason: 'ocha_repository_not_ready',
+        };
+      },
+      pause() {},
+      resume() {},
+      async close() {},
+    };
   }
   let timer;
   let syncing = false;
   let queued = false;
   let stopped = false;
   let suspended = false;
+  let active = Boolean(enabled);
+  let lastResult = null;
 
   const schedule = reason => {
-    if (stopped || suspended) return;
+    if (stopped || suspended || !active) return;
     clearTimeout(timer);
     timer = setTimeout(() => {
       void runSync(reason);
     }, QUIET_WINDOW_MS);
   };
 
-  const runSync = async reason => {
+  const runSync = async (reason, { force = false } = {}) => {
+    if (stopped || (!active && !force) || (suspended && !force)) return { ok: false, reason: 'disabled_or_paused' };
     if (syncing) {
       queued = true;
-      return;
+      return { ok: false, reason: 'sync_already_running' };
     }
     syncing = true;
     try {
       logger.debug({ reason }, 'Memeriksa perubahan proyek untuk auto-push');
-      await syncOnce();
+      const result = await syncOnce();
+      lastResult = { ok: true, ...result };
+      return lastResult;
     } catch (error) {
+      lastResult = { ok: false, reason: error.message };
       logger.error({ err: error }, 'Auto Git Sync gagal; perubahan lokal tidak dihapus');
+      return lastResult;
     } finally {
       syncing = false;
-      if (queued && !stopped && !suspended) {
+      if (queued && !stopped && !suspended && active) {
         queued = false;
         schedule('queued filesystem change');
       }
@@ -347,69 +405,111 @@ export async function startAutoGitSync({ root = PROJECT_ROOT } = {}) {
   };
 
   let watcherFailureHandled = false;
-  const watcher = watchFiles(PROJECT_ROOT, {
-    ignoreInitial: true,
-    persistent: true,
-    awaitWriteFinish: { stabilityThreshold: 700, pollInterval: 100 },
-    ignored: candidate => {
-      const relative = path.relative(PROJECT_ROOT, candidate);
-      return relative && isHardIgnored(relative);
-    },
-    ignorePermissionErrors: true,
-  });
+  let watcher = null;
+  if (watch) {
+    watcher = watchFiles(PROJECT_ROOT, {
+      ignoreInitial: true,
+      persistent: true,
+      awaitWriteFinish: { stabilityThreshold: 700, pollInterval: 100 },
+      ignored: candidate => {
+        const relative = path.relative(PROJECT_ROOT, candidate);
+        return relative && isHardIgnored(relative);
+      },
+      ignorePermissionErrors: true,
+    });
 
-  watcher.on('all', async (event, absolutePath) => {
-    const relative = path.relative(PROJECT_ROOT, absolutePath);
-    if (!relative || isHardIgnored(relative) || isPrivatePublicationPath(relative)) return;
+    watcher.on('all', async (event, absolutePath) => {
+      const relative = path.relative(PROJECT_ROOT, absolutePath);
+      if (!relative || isHardIgnored(relative) || isPrivatePublicationPath(relative)) return;
 
-    // .env is deliberately ignored by Git, but changing it may add/update the PAT.
-    if (relative === '.env') {
-      if (event === 'unlink') {
-        delete process.env.GITHUB_PAT;
-        logger.warn('.env dihapus; auto-push dihentikan sampai token disediakan kembali');
-      } else {
-        dotenv.config({ path: path.join(PROJECT_ROOT, '.env'), override: true });
-        logger.info('.env diperbarui; token tidak pernah dicetak ke log');
-      }
-      schedule('.env secret refresh');
-      return;
-    }
-
-    try {
-      if (await isIgnoredByGit(relative)) {
-        logger.debug({ file: relative, event }, 'File dikecualikan .gitignore; tidak akan di-stage');
+      // .env is deliberately ignored by Git, but changing it may add/update the PAT.
+      if (relative === '.env') {
+        if (event === 'unlink') {
+          delete process.env.GITHUB_PAT;
+          delete process.env.AC_GITHUB_PAT;
+          logger.warn('.env dihapus; auto-push dihentikan sampai token disediakan kembali');
+        } else {
+          dotenv.config({ path: path.join(PROJECT_ROOT, '.env'), override: true });
+          logger.info('.env diperbarui; token tidak pernah dicetak ke log');
+        }
+        if (watch) schedule('.env secret refresh');
         return;
       }
-    } catch (error) {
-      logger.warn({ err: error, file: relative }, 'Aturan .gitignore belum dapat diperiksa; sinkronisasi ditunda');
-      return;
-    }
 
-    logger.debug({ file: relative, event }, 'Perubahan file terdeteksi');
-    schedule(`${event}: ${relative}`);
-  });
+      if (!active) return;
 
-  watcher.on('ready', () => {
-    logger.info({ root: PROJECT_ROOT, repository: REPOSITORY, branch: BRANCH }, 'Pemantauan seluruh file proyek aktif');
-    schedule('startup reconciliation');
-  });
-  watcher.on('error', error => {
-    if (watcherFailureHandled) return;
-    watcherFailureHandled = true;
-    if (error?.code === 'ENOSPC') {
-      logger.error(
-        { code: error.code, syscall: error.syscall, path: error.path },
-        'Filesystem watcher kehabisan kuota; Auto Git Sync watcher dihentikan agar tidak membebani runtime. Kecualikan direktori sesi/runtime dan naikkan fs.inotify.max_user_watches bila memang diperlukan.',
+      try {
+        if (await isIgnoredByGit(relative)) {
+          logger.debug({ file: relative, event }, 'File dikecualikan .gitignore; tidak akan di-stage');
+          return;
+        }
+      } catch (error) {
+        logger.warn({ err: error, file: relative }, 'Aturan .gitignore belum dapat diperiksa; sinkronisasi ditunda');
+        return;
+      }
+
+      logger.debug({ file: relative, event }, 'Perubahan file terdeteksi');
+      schedule(`${event}: ${relative}`);
+    });
+
+    watcher.on('ready', () => {
+      logger.info(
+        { root: PROJECT_ROOT, repository: REPOSITORY, branch: BRANCH, enabled: active },
+        'Pemantauan repository Ocha siap',
       );
-      void watcher.close().catch(() => {});
-      return;
-    }
-    logger.error({ code: error?.code, message: error?.message }, 'Filesystem watcher gagal');
-  });
+      schedule('startup reconciliation');
+    });
+    watcher.on('error', error => {
+      if (watcherFailureHandled) return;
+      watcherFailureHandled = true;
+      if (error?.code === 'ENOSPC') {
+        logger.error(
+          { code: error.code, syscall: error.syscall, path: error.path },
+          'Filesystem watcher kehabisan kuota; Auto Git Sync watcher dihentikan agar tidak membebani runtime. Kecualikan direktori sesi/runtime dan naikkan fs.inotify.max_user_watches bila memang diperlukan.',
+        );
+        void watcher?.close().catch(() => {});
+        return;
+      }
+      logger.error({ code: error?.code, message: error?.message }, 'Filesystem watcher gagal');
+    });
+  }
 
   return {
-    enabled: true,
+    enabled: active,
+    ready: true,
     watcher,
+    async setEnabled(value) {
+      active = Boolean(value);
+      this.enabled = active;
+      if (!active) clearTimeout(timer);
+      else if (watcher) schedule('Ocha auto-push enabled');
+      return this.getStatus();
+    },
+    async pushNow() {
+      clearTimeout(timer);
+      return runSync('manual owner request', { force: true });
+    },
+    async flush() {
+      clearTimeout(timer);
+      if (!active) return { ok: false, reason: 'disabled' };
+      return runSync('controlled source update flush', { force: true });
+    },
+    async getStatus() {
+      const status = await run('git', ['status', '--porcelain=v1', '-z', '--untracked-files=all'], {
+        allowFailure: true,
+      });
+      const pending = status.code === 0 ? status.stdout.split('\0').filter(Boolean).length : null;
+      return {
+        target: 'ocha',
+        enabled: active,
+        ready: true,
+        repository: REPOSITORY,
+        branch: BRANCH,
+        tokenAvailable: Boolean(process.env.GITHUB_PAT),
+        pendingChanges: pending,
+        lastResult,
+      };
+    },
     pause(reason = 'source update batch') {
       suspended = true;
       queued = true;
@@ -424,7 +524,7 @@ export async function startAutoGitSync({ root = PROJECT_ROOT } = {}) {
         logger.warn({ reason }, 'Auto Git Sync resume skipped because source batch validation was rejected');
         return;
       }
-      if (queued) {
+      if (queued && active) {
         queued = false;
         schedule(reason);
       }
@@ -432,7 +532,7 @@ export async function startAutoGitSync({ root = PROJECT_ROOT } = {}) {
     async close() {
       stopped = true;
       clearTimeout(timer);
-      await watcher.close();
+      await watcher?.close();
     },
   };
 }

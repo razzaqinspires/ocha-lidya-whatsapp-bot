@@ -104,3 +104,9 @@ flowchart TD
 | Auto Git Sync         | `src/core/auto-git-sync.js`      | Watch, format, scan, stage, commit, reconcile and push                  | Existing runtime integration; manual audit via `scripts/publication-audit.js` |
 | Watch policy          | `src/core/watch-policy.js`       | Prevent watcher traversal into private/runtime paths                    | `test/watch-policy.test.js`                                                   |
 | Publication audit CLI | `scripts/publication-audit.js`   | Inventory local files and scan publishable text for credential patterns | Run `npm run security:publication`                                            |
+
+## v1.10.57 dual-repository extension
+
+Ocha's normal startup now uses `src/core/auto-push-runtime.js` to start two independent publication lanes: the existing Ocha root watcher (`GITHUB_PAT`) and a second watcher rooted exclusively at `.private/artificial-consciousness-component` (`AC_GITHUB_PAT`). The root Ocha watcher retains its original path-scoped staging and publication firewall, and `.private/` remains ignored before traversal. The AC lane has its own exact allowlisted `origin`, `main` branch, path policy, token and Git index. It cannot add files to the parent Ocha index. See [`AUTO_PUSH_TWO_REPOSITORIES.md`](AUTO_PUSH_TWO_REPOSITORIES.md) for setup, credentials, hidden owner controls, exclusions and troubleshooting.
+
+The prior `npm run git:setup` and `npm run git:watch` scripts are retained for compatibility. The standard `npm start` lifecycle launches both lanes when both Git roots are ready. The old `git:watch` remains Ocha-only.

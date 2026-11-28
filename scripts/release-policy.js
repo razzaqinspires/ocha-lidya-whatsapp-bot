@@ -1,3 +1,5 @@
+import { isAcRuntimeIgnored } from '../src/core/ac-git-policy.js';
+
 const EXCLUDED_COMPONENTS = new Set(['.git', 'node_modules', 'sessions', 'coverage', 'dist', 'build', 'logs']);
 
 const PRIVATE_ROOTS = new Set([
@@ -24,6 +26,13 @@ export function shouldIncludeOchaFile(relative) {
     return false;
 
   if (parts[0] === '.private') {
+    // Allow traversal of the parent directory; individual private paths remain allow-listed below.
+    if (normalized === '.private') return true;
+    if (parts[1] === 'artificial-consciousness-component') {
+      const acRelative = parts.slice(2).join('/');
+      if (acRelative && isAcRuntimeIgnored(acRelative)) return false;
+      return true;
+    }
     return (
       PRIVATE_ROOTS.has(normalized) ||
       normalized.startsWith('.private/ocha-private-runtime/') ||

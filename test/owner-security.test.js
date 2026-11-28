@@ -93,7 +93,9 @@ test('secret inspection requests are routed away from model generation', () => {
 
 test('owner configuration snapshot redacts credential keys and embedded URL passwords', () => {
   const old = process.env.OPENAI_API_KEY;
+  const oldAcPat = process.env.AC_GITHUB_PAT;
   process.env.OPENAI_API_KEY = 'sk-' + 'test-secret-never-output';
+  process.env.AC_GITHUB_PAT = 'ghp_' + 'test-ac-pat-never-output-0123456789';
   try {
     const snapshot = getOwnerConfigurationSnapshot({
       bot: { owner: ownerNumber, name: 'Ocha Lidya' },
@@ -103,7 +105,13 @@ test('owner configuration snapshot redacts credential keys and embedded URL pass
       misc: { description: 'A safe public setting' },
     });
     const serialized = JSON.stringify(snapshot);
-    for (const secret of ['sk-' + 'test-secret-never-output', 'bearer' + '-secret', 'db-password', 'private-auth']) {
+    for (const secret of [
+      'sk-' + 'test-secret-never-output',
+      'ghp_' + 'test-ac-pat-never-output-0123456789',
+      'bearer' + '-secret',
+      'db-password',
+      'private-auth',
+    ]) {
       assert.equal(serialized.includes(secret), false, `secret leaked: ${secret}`);
     }
     assert.equal(
@@ -112,9 +120,13 @@ test('owner configuration snapshot redacts credential keys and embedded URL pass
       'owner may view their configured owner number in private configuration',
     );
     assert.match(serialized, /"configured":true/);
+    const acTokenStatus = snapshot.environmentSecrets.find(item => item.name === 'AC_GITHUB_PAT');
+    assert.deepEqual(acTokenStatus, { name: 'AC_GITHUB_PAT', configured: true, value: '[NEVER SHOWN IN WHATSAPP]' });
     assert.match(serialized, /A safe public setting/);
   } finally {
     if (old === undefined) delete process.env.OPENAI_API_KEY;
     else process.env.OPENAI_API_KEY = old;
+    if (oldAcPat === undefined) delete process.env.AC_GITHUB_PAT;
+    else process.env.AC_GITHUB_PAT = oldAcPat;
   }
 });

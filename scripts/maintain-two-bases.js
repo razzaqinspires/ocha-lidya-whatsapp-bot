@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const OCHA_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const DEFAULT_AC_ROOT = path.resolve(OCHA_ROOT, '..', 'artificial-consciousness-component');
+const DEFAULT_AC_ROOT = path.resolve(OCHA_ROOT, '.private', 'artificial-consciousness-component');
 const args = process.argv.slice(2);
 function arg(name, fallback) {
   const index = args.indexOf(name);

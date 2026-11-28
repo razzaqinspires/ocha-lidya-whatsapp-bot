@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const componentRoot = path.resolve(root, '..', 'artificial-consciousness-component');
+const componentRoot = path.join(root, '.private', 'artificial-consciousness-component');
 
 async function freePort() {
   const server = net.createServer();
@@ -47,10 +47,10 @@ test('Ocha NADI client connects to the separate AC component over loopback HTTP 
     try {
       const started = await runtime.startConsciousnessRuntime();
       assert.equal(started.ready, true, started.lastError || 'NADI did not become ready');
-      assert.equal(started.componentVersion, '2.1.0');
+      assert.equal(started.componentVersion, '2.1.1');
       assert.equal(started.componentSource, 'external-directory');
       const status = await runtime.readConsciousnessStatus();
-      assert.ok(status.kernel_version === '2.1.0');
+      assert.ok(status.kernel_version === '2.1.1');
       assert.ok(status.heartbeat?.running === true);
       const integrity = await runtime.verifyConsciousnessMemory();
       assert.equal(integrity.valid, true);

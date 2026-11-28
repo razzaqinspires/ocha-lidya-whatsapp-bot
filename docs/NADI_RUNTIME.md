@@ -82,3 +82,19 @@ The general `.kernel` command (aliases `.kernelstatus`, `.nadiweb`) publishes a 
 ## Two-base compatibility pin
 
 The companion base supplied with Ocha v1.10.52 is `ac-kernel-nadi@2.1.0`, repository `razzaqinspires/artificial-consciousness-component`, commit `16c2fa6e1b500745f260bcf091284a6e18726883`, API contract `v1`. Ocha's default loader is pinned to this commit. Run the independent component checks with `python -m py_compile ac/*.py`, `python selftest.py`, and `python test_prime.py` from the component root.
+
+## Paired local source snapshot — Ocha v1.10.56 / AC v2.1.1
+
+The paired workspace snapshot distributed with Ocha v1.10.56 contains `ac-kernel-nadi@2.1.1`. It was produced from an extracted source workspace without Git metadata, so it has no new upstream commit SHA. To use this exact tested component package, extract both source ZIPs as sibling directories and set the following in the Ocha operator `.env`:
+
+```dotenv
+OCHA_NADI_SOURCE_DIR=../artificial-consciousness-component
+```
+
+The local directory is validated for the expected Python package structure before launch. When this variable is empty, Ocha deliberately retains its existing remote immutable fallback commit `16c2fa6e1b500745f260bcf091284a6e18726883` (NADI 2.1.0); it does not silently substitute an uncommitted local snapshot. HTTP API v1 remains unchanged.
+
+The v2.1.1 source adds MIMPI repeat-window idempotency and bounded INTEROCEPTION numerical integration. See [`NADI_MAINTENANCE_REPORT_2.1.1.md`](NADI_MAINTENANCE_REPORT_2.1.1.md) for results and limitations.
+
+## Current paired operator path — Ocha v1.10.57 / AC v2.1.1
+
+The current operator bundle co-locates the AC source at `.private/artificial-consciousness-component`. Set `OCHA_NADI_SOURCE_DIR=.private/artificial-consciousness-component` in the Ocha `.env`. The AC source remains a separate base and has its own nested Git root after `npm run ac:git:setup`; the parent Ocha Git root excludes the entire `.private/` tree. The standalone AC release ZIP remains independently deliverable. The Ocha operator ZIP is confidential and must not be published to the public Ocha repository. See [`AUTO_PUSH_TWO_REPOSITORIES.md`](AUTO_PUSH_TWO_REPOSITORIES.md).

@@ -10,13 +10,23 @@ test('runtime and private directories are excluded from recursive filesystem wat
     'logs/ocha.log',
     'node_modules/chokidar/index.js',
     '.git/objects/pack/file',
+    '.private/artificial-consciousness-component/ac/kernel.py',
+    '.private/artificial-consciousness-component/.git/config',
+    '.private/automation/auto-push.json',
     'coverage/report.json',
-    'tmp/build.tmp'
-  ]) assert.equal(isRuntimeWatchIgnored(value), true, value);
+    'tmp/build.tmp',
+  ])
+    assert.equal(isRuntimeWatchIgnored(value), true, value);
 });
 
 test('source and documentation files remain eligible for watch events', () => {
-  for (const value of ['src/index.js', 'src/plugins/general/owner.js', 'README.md', 'docs/HOT_RELOAD.md', '.env.example']) {
+  for (const value of [
+    'src/index.js',
+    'src/plugins/general/owner.js',
+    'README.md',
+    'docs/HOT_RELOAD.md',
+    '.env.example',
+  ]) {
     assert.equal(isRuntimeWatchIgnored(value), false, value);
   }
 });

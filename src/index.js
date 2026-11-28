@@ -10,24 +10,50 @@ import { loadConfig, getConfig } from './core/config.js';
 import { loadStore } from './core/store.js';
 import { initializeDatabase } from './core/database.js';
 import { loadPlugins, watchSourceFiles } from './core/plugin-loader.js';
-import { startAutoGitSync } from './core/auto-git-sync.js';
+import { startAutoPushRuntime } from './core/auto-push-runtime.js';
 import { dispatch } from './core/dispatcher.js';
 import { initializeCommandGovernor } from './core/command-governor.js';
-import { configureMessageMonitor, observeIncomingMessage, observeOutgoingMessage, observeMessageUpdates, observeGroupReceipts, getMessageMonitorStats } from './core/message-monitor.js';
+import {
+  configureMessageMonitor,
+  observeIncomingMessage,
+  observeOutgoingMessage,
+  observeMessageUpdates,
+  observeGroupReceipts,
+  getMessageMonitorStats,
+} from './core/message-monitor.js';
 import serializer from './lib/serializ_simple.js';
 const { serialize, extendSocket, trackSentMessageId, setOutgoingMessageObserver } = serializer;
 import { isVerifiedOwnerMessage } from './core/identity.js';
 import { initializeContacts, addContactFromPnJid } from './core/contacts.js';
 import { initializeGroupMetadata } from './core/group-metadata.js';
 import { resolveMessageSenderPn } from './core/jid-resolution.js';
-import { ensureGroupMetadata, hydrateParticipatingGroupsOnce, handleGroupsUpsert, handleGroupsUpdate, handleGroupParticipantsUpdate } from './core/group-runtime.js';
+import {
+  ensureGroupMetadata,
+  hydrateParticipatingGroupsOnce,
+  handleGroupsUpsert,
+  handleGroupsUpdate,
+  handleGroupParticipantsUpdate,
+} from './core/group-runtime.js';
 import { resumePendingAI, initializeAIHistoryCache, flushAIPersistenceWrites } from './ai/engine.js';
 import { initializeUserProfiles } from './ai/user-profiles.js';
 import { initializeProviderKeys } from './ai/providers.js';
 import { startModelCatalogScheduler, stopModelCatalogScheduler } from './ai/model-catalog.js';
 import { ensureModelCatalogWorkerStarted } from './ai/model-catalog-worker-manager.js';
-import { getReconnectDelay, isValidInternationalNumber, normalizePhoneNumber, shouldRequestPairingCode, shouldStopReconnect, shouldRecoverInvalidSession } from './core/connection-policy.js';
-import { startCodeLab, stopCodeLab, prepareCodeLabHandoff, cancelCodeLabHandoff, applyHostPreflightResult } from './runtime/code-lab.js';
+import {
+  getReconnectDelay,
+  isValidInternationalNumber,
+  normalizePhoneNumber,
+  shouldRequestPairingCode,
+  shouldStopReconnect,
+  shouldRecoverInvalidSession,
+} from './core/connection-policy.js';
+import {
+  startCodeLab,
+  stopCodeLab,
+  prepareCodeLabHandoff,
+  cancelCodeLabHandoff,
+  applyHostPreflightResult,
+} from './runtime/code-lab.js';
 import { acquireRuntimeLock } from './runtime/single-instance.js';
 import { stopNexoraBootstrapScheduler, runNexoraBootstrap } from './runtime/bootstrap-agent.js';
 import { startRentalScheduler, stopRentalScheduler } from './rental/runtime.js';
@@ -35,7 +61,12 @@ import { startRentalApiServer, stopRentalApiServer } from './rental/http-api.js'
 import { handleGroupWelcome } from './core/group-tools.js';
 import { getTenantStatus } from './rental/service.js';
 import { startConsciousnessRuntime, stopConsciousnessRuntime } from './runtime/consciousness-runtime.js';
-import { initializeKernelTelemetry, recordIncomingMessage, setWhatsAppConnection, flushKernelTelemetry } from './runtime/kernel-telemetry.js';
+import {
+  initializeKernelTelemetry,
+  recordIncomingMessage,
+  setWhatsAppConnection,
+  flushKernelTelemetry,
+} from './runtime/kernel-telemetry.js';
 import { classifyReactionTarget, dispatchWithAutoReaction } from './core/auto-reactions.js';
 import { initializeACIE } from './acie/index.js';
 
@@ -43,13 +74,18 @@ setOutgoingMessageObserver(observeOutgoingMessage);
 
 const runtimeLock = await acquireRuntimeLock();
 if (!runtimeLock.acquired) {
-  process.stderr.write(`[OCHA LIDYA] Runtime sudah berjalan pada PID ${runtimeLock.duplicatePid}; proses kedua ditolak agar socket WhatsApp tidak ganda.\n`);
+  process.stderr.write(
+    `[OCHA LIDYA] Runtime sudah berjalan pada PID ${runtimeLock.duplicatePid}; proses kedua ditolak agar socket WhatsApp tidak ganda.\n`,
+  );
   process.exit(0);
 }
 
 await initializeDatabase();
-try { await initializeACIE({ logger }); }
-catch (error) { logger.error({ err: error }, 'ACIE initialization failed; standard Ocha runtime will continue'); }
+try {
+  await initializeACIE({ logger });
+} catch (error) {
+  logger.error({ err: error }, 'ACIE initialization failed; standard Ocha runtime will continue');
+}
 await initializeKernelTelemetry();
 await loadConfig();
 if (getConfig().commandGuard?.antiSpam?.enabled) {
@@ -64,7 +100,10 @@ let hostPreflightResult = null;
 try {
   hostPreflightResult = await runNexoraBootstrap(getConfig().codeLab);
 } catch (error) {
-  logger.warn({ message: error.message }, 'Nexora dependency bootstrap incomplete; bot will continue and retry host provisioning autonomously');
+  logger.warn(
+    { message: error.message },
+    'Nexora dependency bootstrap incomplete; bot will continue and retry host provisioning autonomously',
+  );
 }
 process.env.OCHA_HOST_PREFLIGHT_COMPLETED = '1';
 applyHostPreflightResult(hostPreflightResult || {});
@@ -73,19 +112,37 @@ await initializeGroupMetadata();
 await initializeProviderKeys();
 try {
   const consciousness = await startConsciousnessRuntime({ logger });
-  logger.info({ ready: consciousness.ready, heartbeatMs: consciousness.heartbeatMs }, 'Ocha operational self-state / NADI runtime initialized');
+  logger.info(
+    { ready: consciousness.ready, heartbeatMs: consciousness.heartbeatMs },
+    'Ocha operational self-state / NADI runtime initialized',
+  );
 } catch (error) {
   logger.warn({ err: error }, 'Ocha NADI unavailable; standard Nexora AI service will continue');
 }
 try {
   const catalog = await startModelCatalogScheduler({ refreshAtStartup: true });
-  logger.info({ active: catalog.active, mode: catalog.mode, checkedAt: catalog.checkedAt, nextRunAt: catalog.nextRunAt, intervalHours: catalog.intervalHours }, 'In-process autonomous AI model catalog scheduler active');
+  logger.info(
+    {
+      active: catalog.active,
+      mode: catalog.mode,
+      checkedAt: catalog.checkedAt,
+      nextRunAt: catalog.nextRunAt,
+      intervalHours: catalog.intervalHours,
+    },
+    'In-process autonomous AI model catalog scheduler active',
+  );
 } catch (error) {
-  logger.warn({ err: error }, 'In-process AI model catalog scheduler could not initialize; it will retry on the next process start');
+  logger.warn(
+    { err: error },
+    'In-process AI model catalog scheduler could not initialize; it will retry on the next process start',
+  );
 }
 try {
   const worker = ensureModelCatalogWorkerStarted();
-  logger.info({ active: worker.active, workerStarted: worker.started, workerPid: worker.pid, logFile: worker.logFile || null }, 'Detached AI model catalog worker ensured');
+  logger.info(
+    { active: worker.active, workerStarted: worker.started, workerPid: worker.pid, logFile: worker.logFile || null },
+    'Detached AI model catalog worker ensured',
+  );
 } catch (error) {
   logger.warn({ err: error }, 'Detached AI model catalog worker could not start; in-process scheduler remains active');
 }
@@ -99,9 +156,16 @@ configureLogger(getConfig().logging);
 configureMessageMonitor({ color: getConfig().logging.color });
 try {
   const codeLabStatus = await startCodeLab();
-  if (codeLabStatus.enabled) logger.info({ gateway: codeLabStatus.gateway, maxConcurrent: codeLabStatus.maxConcurrent }, 'Nexora Code Lab initialized');
+  if (codeLabStatus.enabled)
+    logger.info(
+      { gateway: codeLabStatus.gateway, maxConcurrent: codeLabStatus.maxConcurrent },
+      'Nexora Code Lab initialized',
+    );
 } catch (error) {
-  logger.error({ message: error.message }, 'Nexora Code Lab initialization failed; WhatsApp bot continues without code preview');
+  logger.error(
+    { message: error.message },
+    'Nexora Code Lab initialization failed; WhatsApp bot continues without code preview',
+  );
 }
 const whatsappConfig = getConfig().whatsapp;
 const AUTH_DIR = whatsappConfig.sessionDir;
@@ -112,7 +176,7 @@ if (AUTH_MODE === 'pairing' && !isValidInternationalNumber(PAIRING_NUMBER)) {
 }
 await loadStore();
 await loadPlugins();
-const autoGitSync = await startAutoGitSync();
+const autoGitSync = await startAutoPushRuntime();
 
 let reconnectTimer;
 let restartTimer;
@@ -163,15 +227,20 @@ function runCommand(command, args, { timeoutMs = 10 * 60_000 } = {}) {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      if (error) reject(error); else resolve();
+      if (error) reject(error);
+      else resolve();
     };
     const timer = setTimeout(() => {
-      try { child.kill('SIGTERM'); } catch {}
+      try {
+        child.kill('SIGTERM');
+      } catch {}
       finish(new Error(`${command} exceeded ${timeoutMs} ms`));
     }, timeoutMs);
     timer.unref?.();
     child.once('error', finish);
-    child.once('close', (code, signal) => code === 0 ? finish() : finish(new Error(`${command} exited with ${code ?? signal}`)));
+    child.once('close', (code, signal) =>
+      code === 0 ? finish() : finish(new Error(`${command} exited with ${code ?? signal}`)),
+    );
   });
 }
 
@@ -183,12 +252,18 @@ async function closeSocketForHandoff() {
   let closeListener;
   const closed = new Promise(resolve => {
     const timer = setTimeout(resolve, 1800);
-    closeListener = () => { clearTimeout(timer); resolve(); };
+    closeListener = () => {
+      clearTimeout(timer);
+      resolve();
+    };
     ws?.once?.('close', closeListener);
     if (ws?.readyState === 3) closeListener();
   });
-  try { socket.end?.(new Error('Controlled source update handoff')); }
-  catch (error) { logger.warn({ message: error.message }, 'WhatsApp socket close during source handoff failed'); }
+  try {
+    socket.end?.(new Error('Controlled source update handoff'));
+  } catch (error) {
+    logger.warn({ message: error.message }, 'WhatsApp socket close during source handoff failed');
+  }
   await closed;
   if (closeListener) ws?.removeListener?.('close', closeListener);
 }
@@ -198,7 +273,10 @@ async function requestControlledRestart(batch = {}) {
   restarting = true;
   restartBatchInFlight = true;
   const files = Array.isArray(batch.files) ? batch.files : [batch.file].filter(Boolean);
-  logger.warn({ pid: process.pid, files, requiresInstall: Boolean(batch.requiresInstall) }, 'A stable core source update batch was detected; preparing one serialized runtime handoff');
+  logger.warn(
+    { pid: process.pid, files, requiresInstall: Boolean(batch.requiresInstall) },
+    'A stable core source update batch was detected; preparing one serialized runtime handoff',
+  );
   clearTimeout(restartTimer);
   restartTimer = setTimeout(async () => {
     let child;
@@ -206,6 +284,17 @@ async function requestControlledRestart(batch = {}) {
       if (batch.requiresInstall) {
         logger.info({ files }, 'Dependency manifest changed; reconciling Node dependencies before restart');
         await runCommand('npm', ['install', '--no-audit', '--no-fund']);
+      }
+
+      // Flush both publication lanes before the process handoff. A source update
+      // must not terminate the watchers before Ocha and AC have a chance to push.
+      const publication = await autoGitSync.flush('pre-restart controlled source update');
+      const failedPublications = Object.entries(publication || {}).filter(([, result]) => result?.ok === false);
+      if (failedPublications.length) {
+        logger.warn(
+          { targets: failedPublications.map(([target, result]) => ({ target, reason: result.reason || 'unknown' })) },
+          'Source update continues; one or more auto-push lanes remain local and will retry on the next startup/change',
+        );
       }
 
       const hostBootstrapChanged = files.some(file => {
@@ -218,11 +307,11 @@ async function requestControlledRestart(batch = {}) {
           ...process.env,
           OCHA_HANDOFF_FROM_PID: String(process.pid),
           OCHA_BOOTSTRAP_HANDOFF_CONSUMED: '0',
-          OCHA_HOST_BOOTSTRAP_FORCE: hostBootstrapChanged ? '1' : '0'
+          OCHA_HOST_BOOTSTRAP_FORCE: hostBootstrapChanged ? '1' : '0',
         },
         detached: true,
         stdio: 'inherit',
-        windowsHide: true
+        windowsHide: true,
       });
 
       child.once('error', error => {
@@ -239,30 +328,52 @@ async function requestControlledRestart(batch = {}) {
       // never write the same ledger concurrently.
       await stopConsciousnessRuntime();
       await runtimeLock.release();
-      logger.warn({ oldPid: process.pid, replacementPid: child.pid, files, tunnelPreserved: Boolean(handoff.preserved), tunnelPid: handoff.tunnelPid || null }, 'Runtime handoff committed; old process releases its lock before replacement connects');
+      logger.warn(
+        {
+          oldPid: process.pid,
+          replacementPid: child.pid,
+          files,
+          tunnelPreserved: Boolean(handoff.preserved),
+          tunnelPid: handoff.tunnelPid || null,
+        },
+        'Runtime handoff committed; old process releases its lock before replacement connects',
+      );
       child.unref();
       process.exit(0);
     } catch (error) {
       if (child?.pid && child.exitCode === null && child.signalCode === null) {
-        try { child.kill('SIGTERM'); } catch {}
+        try {
+          child.kill('SIGTERM');
+        } catch {}
         const closeWait = new Promise(resolve => {
           const timer = setTimeout(resolve, 1800);
-          child.once('close', () => { clearTimeout(timer); resolve(); });
+          child.once('close', () => {
+            clearTimeout(timer);
+            resolve();
+          });
         });
         await closeWait;
         if (child.exitCode === null && child.signalCode === null) {
-          try { child.kill('SIGKILL'); } catch {}
+          try {
+            child.kill('SIGKILL');
+          } catch {}
           await new Promise(resolve => setTimeout(resolve, 250));
         }
       }
       await cancelCodeLabHandoff().catch(rollbackError => {
         logger.error({ err: rollbackError }, 'Code Lab handoff rollback requires attention');
       });
-      try { await startConsciousnessRuntime({ logger }); }
-      catch (restartError) { logger.warn({ err: restartError }, 'NADI recovery after failed source handoff did not complete'); }
+      try {
+        await startConsciousnessRuntime({ logger });
+      } catch (restartError) {
+        logger.warn({ err: restartError }, 'NADI recovery after failed source handoff did not complete');
+      }
       restarting = false;
       restartBatchInFlight = false;
-      logger.error({ err: error, files }, 'Controlled source update handoff failed; previous runtime ownership was restored where verifiable');
+      logger.error(
+        { err: error, files },
+        'Controlled source update handoff failed; previous runtime ownership was restored where verifiable',
+      );
     }
   }, 350);
   restartTimer.unref();
@@ -271,10 +382,8 @@ async function requestControlledRestart(batch = {}) {
 const sourceWatcher = watchSourceFiles({
   onRestartRequired: requestControlledRestart,
   onBatchStart: change => autoGitSync.pause?.(change.file),
-  onBatchSettled: batch => autoGitSync.resume?.('source update batch settled', { sync: batch?.accepted !== false })
+  onBatchSettled: batch => autoGitSync.resume?.('source update batch settled', { sync: batch?.accepted !== false }),
 });
-
-
 
 async function quarantineInvalidSessionAndReconnect() {
   // Finish pending auth writes before moving the directory. The old session is
@@ -292,8 +401,10 @@ async function quarantineInvalidSessionAndReconnect() {
     if (error?.code !== 'ENOENT') throw error;
   }
 
-  logger.warn({ authDir: AUTH_DIR, backup: backup || '(session directory was already absent)' },
-    'Sesi tersimpan ditolak WhatsApp (401). Backup dipertahankan; Ocha Lidya akan memulai pairing baru satu kali.');
+  logger.warn(
+    { authDir: AUTH_DIR, backup: backup || '(session directory was already absent)' },
+    'Sesi tersimpan ditolak WhatsApp (401). Backup dipertahankan; Ocha Lidya akan memulai pairing baru satu kali.',
+  );
   scheduleReconnect(0);
 }
 
@@ -301,7 +412,9 @@ function scheduleReconnect(code) {
   // A reconnect is permitted only after the previous socket has been detached.
   // This also blocks late callbacks from a retired socket from creating a second one.
   if (restarting || shutdownInProgress || activeSocket || reconnectTimer) return;
-  const delay = getReconnectDelay(reconnectAttempt, code, { restartRequiredCode: DisconnectReason.restartRequired ?? 515 });
+  const delay = getReconnectDelay(reconnectAttempt, code, {
+    restartRequiredCode: DisconnectReason.restartRequired ?? 515,
+  });
   reconnectAttempt += 1;
   logger.warn({ code, attempt: reconnectAttempt, delayMs: delay }, 'Menjadwalkan koneksi ulang WhatsApp');
   reconnectTimer = setTimeout(() => {
@@ -340,11 +453,13 @@ async function start() {
       defaultQueryTimeoutMs: whatsappConfig.queryTimeoutMs,
       keepAliveIntervalMs: whatsappConfig.keepAliveIntervalMs,
       retryRequestDelayMs: 250,
-      getMessage: async () => undefined
+      getMessage: async () => undefined,
     });
     extendSocket(sock);
     if (restarting || shutdownInProgress) {
-      try { sock.end?.(new Error('Runtime is shutting down or restarting')); } catch {}
+      try {
+        sock.end?.(new Error('Runtime is shutting down or restarting'));
+      } catch {}
       return;
     }
     activeSocket = sock;
@@ -361,7 +476,10 @@ async function start() {
 
     sock.ev.on('connection.update', update => {
       if (activeSocket !== sock) {
-        logger.debug({ pid: process.pid, generation }, 'Mengabaikan update dari socket WhatsApp yang sudah tidak aktif');
+        logger.debug(
+          { pid: process.pid, generation },
+          'Mengabaikan update dari socket WhatsApp yang sudah tidak aktif',
+        );
         return;
       }
       const { connection, lastDisconnect, qr } = update;
@@ -374,18 +492,31 @@ async function start() {
 
       // In Baileys the first QR event is emitted after the initial pair-device stanza.
       // Use it as the readiness signal so requestPairingCode is not sent too early.
-      if (shouldRequestPairingCode({ authMode: AUTH_MODE, registered: Boolean(state.creds.registered || state.creds.me?.id), qr, pairingRequested })) {
+      if (
+        shouldRequestPairingCode({
+          authMode: AUTH_MODE,
+          registered: Boolean(state.creds.registered || state.creds.me?.id),
+          qr,
+          pairingRequested,
+        })
+      ) {
         pairingRequested = true;
         logger.debug('Baileys pairing readiness signal received; requesting phone-number code');
-        void sock.requestPairingCode(PAIRING_NUMBER)
+        void sock
+          .requestPairingCode(PAIRING_NUMBER)
           .then(code => {
             if (activeSocket !== sock || restarting || shutdownInProgress) {
               logger.debug('Mengabaikan respons kode pairing dari socket yang sudah tidak aktif');
               return;
             }
-            logger.info({ phone: `${PAIRING_NUMBER.slice(0, 3)}••••${PAIRING_NUMBER.slice(-3)}` }, 'Kode pairing Ocha Lidya siap');
+            logger.info(
+              { phone: `${PAIRING_NUMBER.slice(0, 3)}••••${PAIRING_NUMBER.slice(-3)}` },
+              'Kode pairing Ocha Lidya siap',
+            );
             process.stdout.write(`\n\n OCHA LIDYA PAIRING CODE: ${code}\n`);
-            process.stdout.write('Buka WhatsApp > Perangkat tertaut > Tautkan perangkat > Tautkan dengan nomor telepon.\n\n');
+            process.stdout.write(
+              'Buka WhatsApp > Perangkat tertaut > Tautkan perangkat > Tautkan dengan nomor telepon.\n\n',
+            );
           })
           .catch(error => {
             // The same socket may already have closed and a replacement may be
@@ -397,7 +528,9 @@ async function start() {
             pairingRequested = false;
             logger.error({ err: error }, 'Gagal meminta kode pairing WhatsApp');
             activeSocket = undefined;
-            try { sock.end?.(error); } catch {}
+            try {
+              sock.end?.(error);
+            } catch {}
             scheduleReconnect(0);
           });
       }
@@ -408,9 +541,21 @@ async function start() {
         reconnectTimer = undefined;
         reconnectAttempt = 0;
         const actual = sock.user?.id?.split(':')[0]?.split('@')[0];
-        logger.info({ pid: process.pid, generation, bot: actual, expected: getConfig().bot.expectedNumber, groupMute: getConfig().features.groupsMuted ? 'ON' : 'OFF', messageMonitor: getMessageMonitorStats() }, 'Ocha Lidya connected');
+        logger.info(
+          {
+            pid: process.pid,
+            generation,
+            bot: actual,
+            expected: getConfig().bot.expectedNumber,
+            groupMute: getConfig().features.groupsMuted ? 'ON' : 'OFF',
+            messageMonitor: getMessageMonitorStats(),
+          },
+          'Ocha Lidya connected',
+        );
         void resumePendingAI(sock).catch(error => logger.error({ err: error }, 'AI checkpoint recovery failed'));
-        void hydrateParticipatingGroupsOnce(sock).catch(error => logger.warn({ err: error }, 'Group cache bootstrap failed'));
+        void hydrateParticipatingGroupsOnce(sock).catch(error =>
+          logger.warn({ err: error }, 'Group cache bootstrap failed'),
+        );
         if (actual && actual !== getConfig().bot.expectedNumber) {
           logger.warn('Nomor bot aktual berbeda dari EXPECTED_BOT_NUMBER. Periksa akun yang dipasangkan.');
         }
@@ -420,16 +565,21 @@ async function start() {
         activeSocket = undefined;
         if (restarting || shutdownInProgress) return;
         const code = lastDisconnect?.error?.output?.statusCode;
-        logger.warn({ pid: process.pid, generation, code, error: lastDisconnect?.error?.message }, 'Koneksi WhatsApp terputus');
+        logger.warn(
+          { pid: process.pid, generation, code, error: lastDisconnect?.error?.message },
+          'Koneksi WhatsApp terputus',
+        );
 
         const registeredSession = Boolean(state.creds.registered || state.creds.me?.id);
-        if (shouldRecoverInvalidSession({
-          code,
-          authMode: AUTH_MODE,
-          recoverEnabled: whatsappConfig.recoverInvalidSession,
-          registered: registeredSession,
-          recoveryUsed: invalidSessionRecoveryUsed
-        })) {
+        if (
+          shouldRecoverInvalidSession({
+            code,
+            authMode: AUTH_MODE,
+            recoverEnabled: whatsappConfig.recoverInvalidSession,
+            registered: registeredSession,
+            recoveryUsed: invalidSessionRecoveryUsed,
+          })
+        ) {
           invalidSessionRecoveryUsed = true;
           void quarantineInvalidSessionAndReconnect().catch(error => {
             logger.error({ err: error, authDir: AUTH_DIR }, 'Pemulihan sesi gagal; sesi lama tetap dipertahankan');
@@ -437,16 +587,19 @@ async function start() {
           return;
         }
 
-        if (shouldStopReconnect(code, {
-          loggedOutCode: DisconnectReason.loggedOut ?? 401,
-          forbiddenCode: DisconnectReason.forbidden ?? 403,
-          multideviceMismatchCode: DisconnectReason.multideviceMismatch ?? 411,
-          connectionReplacedCode: DisconnectReason.connectionReplaced ?? 440,
-          badSessionCode: DisconnectReason.badSession ?? 500
-        })) {
-          const message = Number(code) === Number(DisconnectReason.connectionReplaced ?? 440)
-            ? 'Sesi WhatsApp digantikan koneksi lain (440). Reconnect otomatis dihentikan agar dua instance tidak saling merebut sesi; periksa proses bot lain.'
-            : 'Sesi WhatsApp ditolak atau memerlukan tindakan pengguna. Reconnect otomatis dihentikan untuk mencegah loop login.';
+        if (
+          shouldStopReconnect(code, {
+            loggedOutCode: DisconnectReason.loggedOut ?? 401,
+            forbiddenCode: DisconnectReason.forbidden ?? 403,
+            multideviceMismatchCode: DisconnectReason.multideviceMismatch ?? 411,
+            connectionReplacedCode: DisconnectReason.connectionReplaced ?? 440,
+            badSessionCode: DisconnectReason.badSession ?? 500,
+          })
+        ) {
+          const message =
+            Number(code) === Number(DisconnectReason.connectionReplaced ?? 440)
+              ? 'Sesi WhatsApp digantikan koneksi lain (440). Reconnect otomatis dihentikan agar dua instance tidak saling merebut sesi; periksa proses bot lain.'
+              : 'Sesi WhatsApp ditolak atau memerlukan tindakan pengguna. Reconnect otomatis dihentikan untuk mencegah loop login.';
           logger.error({ code, authDir: AUTH_DIR, registered: registeredSession }, message);
           return;
         }
@@ -476,17 +629,20 @@ async function start() {
             }
           }
           message.isOwner = isVerifiedOwnerMessage({ ...message, senderPn }, getConfig().bot.owner);
-          logger.debug({
-            messageId: message.id,
-            ownerVerified: message.isOwner,
-            senderPnResolved: Boolean(senderPn),
-            senderIsLid: String(raw.key.participant || raw.key.remoteJid || '').endsWith('@lid'),
-            isGroup: message.isGroup,
-            fromMe: Boolean(message.fromMe),
-            quotedMessageId: message.quoted?.key?.id || null,
-            quotedType: message.quoted?.type || null,
-            quotedTextLength: String(message.quoted?.text || '').length
-          }, 'Incoming sender identity verified from WhatsApp metadata');
+          logger.debug(
+            {
+              messageId: message.id,
+              ownerVerified: message.isOwner,
+              senderPnResolved: Boolean(senderPn),
+              senderIsLid: String(raw.key.participant || raw.key.remoteJid || '').endsWith('@lid'),
+              isGroup: message.isGroup,
+              fromMe: Boolean(message.fromMe),
+              quotedMessageId: message.quoted?.key?.id || null,
+              quotedType: message.quoted?.type || null,
+              quotedTextLength: String(message.quoted?.text || '').length,
+            },
+            'Incoming sender identity verified from WhatsApp metadata',
+          );
           observeIncomingMessage(message);
           if (!message.fromMe) recordIncomingMessage({ isGroup: Boolean(message.isGroup) });
           if (message.fromMe && !message.isOwner) continue;
@@ -504,7 +660,9 @@ async function start() {
       void handleGroupsUpsert(sock, payload).catch(error => logger.error({ err: error }, 'Group upsert cache failed'));
     });
     sock.ev.on('groups.update', payload => {
-      void handleGroupsUpdate(sock, payload).catch(error => logger.error({ err: error }, 'Group metadata event cache failed'));
+      void handleGroupsUpdate(sock, payload).catch(error =>
+        logger.error({ err: error }, 'Group metadata event cache failed'),
+      );
     });
     sock.ev.on('group-participants.update', update => {
       void (async () => {
@@ -513,7 +671,9 @@ async function start() {
           const rental = await getTenantStatus(update.id);
           if (rental.status === 'active') await handleGroupWelcome(sock, update.id, update.participants || [], 'add');
         }
-      })().catch(error => logger.error({ err: error, groupId: update?.id }, 'Group participant cache/welcome handling failed'));
+      })().catch(error =>
+        logger.error({ err: error, groupId: update?.id }, 'Group participant cache/welcome handling failed'),
+      );
     });
 
     sock.ev.on('messages.update', updates => {
@@ -525,7 +685,9 @@ async function start() {
     });
   } catch (error) {
     if (activeSocket === sock) activeSocket = undefined;
-    try { sock?.end?.(error); } catch {}
+    try {
+      sock?.end?.(error);
+    } catch {}
     throw error;
   } finally {
     startInFlight = false;
@@ -541,29 +703,60 @@ async function shutdownRuntime(signal, exitCode = 0) {
   clearTimeout(restartTimer);
   const socketToClose = activeSocket;
   activeSocket = undefined;
-  try { socketToClose?.end?.(new Error(`Process shutdown: ${signal}`)); } catch {}
+  try {
+    socketToClose?.end?.(new Error(`Process shutdown: ${signal}`));
+  } catch {}
   stopModelCatalogScheduler();
   stopRentalScheduler();
-  try { await stopRentalApiServer(); } catch (error) { logger.warn({ err: error }, 'Rental API shutdown cleanup failed'); }
+  try {
+    await stopRentalApiServer();
+  } catch (error) {
+    logger.warn({ err: error }, 'Rental API shutdown cleanup failed');
+  }
   stopNexoraBootstrapScheduler();
-  try { await stopConsciousnessRuntime(); }
-  catch (error) { logger.warn({ message: error.message }, 'NADI shutdown cleanup failed'); }
-  try { await sourceWatcher.close(); } catch {}
-  try { await autoGitSync.close(); } catch {}
-  try { await stopCodeLab(); }
-  catch (error) { logger.error({ message: error.message }, 'Code Lab shutdown cleanup failed'); }
-  try { await flushAIPersistenceWrites({ timeoutMs: 10_000 }); }
-  catch (error) { logger.warn({ err: error }, 'Deferred AI persistence could not be fully flushed during shutdown'); }
-  try { await flushKernelTelemetry(); }
-  catch (error) { logger.warn({ message: error.message }, 'Kernel telemetry could not be flushed during shutdown'); }
-  try { await runtimeLock.release(); }
-  catch (error) { logger.error({ message: error.message }, 'Runtime instance lock release failed'); }
+  try {
+    await stopConsciousnessRuntime();
+  } catch (error) {
+    logger.warn({ message: error.message }, 'NADI shutdown cleanup failed');
+  }
+  try {
+    await sourceWatcher.close();
+  } catch {}
+  try {
+    await autoGitSync.close();
+  } catch {}
+  try {
+    await stopCodeLab();
+  } catch (error) {
+    logger.error({ message: error.message }, 'Code Lab shutdown cleanup failed');
+  }
+  try {
+    await flushAIPersistenceWrites({ timeoutMs: 10_000 });
+  } catch (error) {
+    logger.warn({ err: error }, 'Deferred AI persistence could not be fully flushed during shutdown');
+  }
+  try {
+    await flushKernelTelemetry();
+  } catch (error) {
+    logger.warn({ message: error.message }, 'Kernel telemetry could not be flushed during shutdown');
+  }
+  try {
+    await runtimeLock.release();
+  } catch (error) {
+    logger.error({ message: error.message }, 'Runtime instance lock release failed');
+  }
   process.exit(exitCode);
 }
 
-process.once('SIGINT', () => { void shutdownRuntime('SIGINT', 0); });
-process.once('SIGTERM', () => { void shutdownRuntime('SIGTERM', 0); });
-process.once('SIGHUP', () => { void shutdownRuntime('SIGHUP', 0); });
+process.once('SIGINT', () => {
+  void shutdownRuntime('SIGINT', 0);
+});
+process.once('SIGTERM', () => {
+  void shutdownRuntime('SIGTERM', 0);
+});
+process.once('SIGHUP', () => {
+  void shutdownRuntime('SIGHUP', 0);
+});
 process.on('unhandledRejection', error => logger.error({ err: error }, 'Unhandled rejection'));
 process.on('uncaughtException', error => {
   logger.fatal({ err: error }, 'Uncaught exception');

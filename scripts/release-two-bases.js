@@ -6,6 +6,7 @@ import { createWriteStream } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { shouldIncludeOchaFile } from './release-policy.js';
+import { isAcRuntimeIgnored } from '../src/core/ac-git-policy.js';
 
 const require = createRequire(import.meta.url);
 let archiver = null;
@@ -14,7 +15,7 @@ try {
 } catch {}
 
 const OCHA_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const DEFAULT_AC_ROOT = path.resolve(OCHA_ROOT, '..', 'artificial-consciousness-component');
+const DEFAULT_AC_ROOT = path.resolve(OCHA_ROOT, '.private', 'artificial-consciousness-component');
 const args = process.argv.slice(2);
 function arg(name, fallback) {
   const index = args.indexOf(name);
@@ -27,6 +28,20 @@ const acPyproject = await fs.readFile(path.join(AC_ROOT, 'pyproject.toml'), 'utf
 const acName = acPyproject.match(/^name\s*=\s*["']([^"']+)["']/m)?.[1];
 const acVersion = acPyproject.match(/^version\s*=\s*["']([^"']+)["']/m)?.[1];
 if (acName !== 'ac-kernel-nadi' || !acVersion) throw new Error('AC component root is not an ac-kernel-nadi package.');
+const acReleaseMarkerPath = path.join(AC_ROOT, 'OCHA_COMPONENT_RELEASE.json');
+const acReleaseMarker = JSON.parse(await fs.readFile(acReleaseMarkerPath, 'utf8'));
+if (acReleaseMarker.version !== acVersion || acReleaseMarker.compatibleOchaVersion !== ochaPkg.version) {
+  throw new Error('OCHA_COMPONENT_RELEASE.json does not match this two-base release.');
+}
+const componentPin = acReleaseMarker.sourceCommit || null;
+if (componentPin !== null && !/^[a-f0-9]{40}$/i.test(componentPin)) {
+  throw new Error(
+    'AC sourceCommit must be a 40-character Git SHA or null for an explicitly documented local snapshot.',
+  );
+}
+if (componentPin === null && !acReleaseMarker.sourceSnapshot) {
+  throw new Error('AC local snapshot must include sourceSnapshot provenance when no Git SHA is available.');
+}
 await fs.access(path.join(AC_ROOT, 'ac', 'kernel.py'));
 await fs.access(path.join(AC_ROOT, 'ac', 'server.py'));
 await fs.access(path.join(OCHA_ROOT, '.gitignore'));
@@ -45,7 +60,6 @@ if (integrityCheck.status !== 0)
     `Private runtime integrity verification failed: ${integrityCheck.stderr || integrityCheck.stdout || integrityCheck.error?.message || 'unknown error'}`,
   );
 
-const componentPin = '16c2fa6e1b500745f260bcf091284a6e18726883';
 const componentRepo = 'https://github.com/razzaqinspires/artificial-consciousness-component';
 const privateRoot = path.join(OCHA_ROOT, '.private', 'ocha-private-runtime');
 const privateManifest = JSON.parse(await fs.readFile(path.join(privateRoot, 'manifest.json'), 'utf8'));
@@ -69,28 +83,7 @@ async function walk(root, relative = '', predicate = () => true) {
 }
 
 function acInclude(relative) {
-  const normalized = relative.replaceAll('\\', '/');
-  const parts = normalized.split('/');
-  if (
-    parts.some(part =>
-      [
-        '.git',
-        '.venv',
-        'venv',
-        '__pycache__',
-        '.pytest_cache',
-        '.mypy_cache',
-        '.ruff_cache',
-        'dist',
-        'build',
-        'nadi_state',
-      ].includes(part),
-    )
-  )
-    return false;
-  if (/^\.env(?:\..*)?$/i.test(parts.at(-1)) && parts.at(-1) !== '.env.example') return false;
-  if (/\.(?:pyc|pyo|log|tmp|sqlite|db)$/i.test(normalized)) return false;
-  return true;
+  return !isAcRuntimeIgnored(relative);
 }
 
 async function sha256File(file) {
@@ -171,9 +164,14 @@ const ochaBundleMeta = {
   artificialConsciousness: {
     repository: componentRepo,
     commit: componentPin,
+    sourceSnapshot: acReleaseMarker.sourceSnapshot || null,
+    defaultRemoteRef: acReleaseMarker.defaultRemoteRef || componentPin,
     version: acVersion,
-    localSiblingPath: '../artificial-consciousness-component',
-    pythonSourceCopiedIntoBot: false,
+    localPrivatePath: '.private/artificial-consciousness-component',
+    sourceMode: 'independent-nested-git-checkout',
+    pythonSourceTrackedByOchaGit: false,
+    pythonSourceIncludedOnlyInOperatorBundle: true,
+    independentGitRoot: true,
   },
   excluded: [
     '.env and credentials',
@@ -198,15 +196,6 @@ const ochaResult = await createZip({
   files: ochaFiles,
   generatedEntries: [{ name: '.release/OPERATOR_BUNDLE.json', content: operatorBundleContent }],
 });
-const acReleaseMarkerPath = path.join(AC_ROOT, 'OCHA_COMPONENT_RELEASE.json');
-const acReleaseMarker = JSON.parse(await fs.readFile(acReleaseMarkerPath, 'utf8'));
-if (
-  acReleaseMarker.version !== acVersion ||
-  acReleaseMarker.compatibleOchaVersion !== ochaPkg.version ||
-  acReleaseMarker.sourceCommit !== componentPin
-) {
-  throw new Error('OCHA_COMPONENT_RELEASE.json does not match this two-base release.');
-}
 const acResult = await createZip({
   root: AC_ROOT,
   name: 'artificial-consciousness-component',
@@ -216,15 +205,30 @@ const acResult = await createZip({
 const manifest = {
   schemaVersion: 1,
   generatedAt: stamp,
-  compatibility: { ochaVersion: ochaPkg.version, acVersion, nadiCommit: componentPin, httpApi: 'v1' },
+  compatibility: {
+    ochaVersion: ochaPkg.version,
+    acVersion,
+    nadiCommit: componentPin,
+    sourceSnapshot: acReleaseMarker.sourceSnapshot || null,
+    sourceMode: componentPin ? 'git-commit-pinned' : 'local-snapshot-requires-OCHA_NADI_SOURCE_DIR',
+    defaultRemoteRef: acReleaseMarker.defaultRemoteRef || componentPin,
+    httpApi: 'v1',
+  },
   artifacts: [
     { name: path.basename(ochaOutput), ...ochaResult },
-    { name: path.basename(acOutput), ...acResult },
+    {
+      name: path.basename(acOutput),
+      ...acResult,
+      sourceCommit: componentPin,
+      sourceSnapshot: acReleaseMarker.sourceSnapshot || null,
+    },
   ],
   publication: {
     ochaOperatorBundleContainsIgnoredPrivateSource: true,
+    nestedAcGitMetadataIncluded: false,
     publishThisZipToPublicGitHub: false,
-    relyOnGitignoreForGitStagingOnly: true,
+    rootOchaGitMustExcludeAllPrivatePaths: true,
+    acRepositoryHasItsOwnGitRoot: true,
   },
 };
 await fs.writeFile(path.join(OUTPUT_ROOT, 'TWO_BASE_RELEASE_MANIFEST.json'), `${JSON.stringify(manifest, null, 2)}\n`, {

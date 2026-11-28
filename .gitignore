@@ -113,3 +113,6 @@ releases/
 artificial-consciousness-component/
 *.operator.zip
 *.release.zip
+
+# Independent AC repository checkout. It must never enter the Ocha Git index.
+.private/artificial-consciousness-component/

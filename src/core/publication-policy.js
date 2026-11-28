@@ -111,6 +111,15 @@ export function scanSecrets(content) {
   return findings;
 }
 
+export function findPrivateTrackedPaths(paths) {
+  return [...(paths || [])].map(normalizePublicationPath).filter(isPrivatePublicationPath);
+}
+
+export function findProtectedStagedPaths(stagedPaths, deletionPaths = []) {
+  const deletions = new Set([...(deletionPaths || [])].map(normalizePublicationPath));
+  return findPrivateTrackedPaths(stagedPaths).filter(filePath => !deletions.has(filePath));
+}
+
 export function auditPublicationPaths(paths) {
   const privatePaths = [];
   const eligiblePaths = [];

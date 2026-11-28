@@ -21,7 +21,7 @@ test('Nexora host bootstrap dry-run lists Docker images and Cloudflare without m
     cwd: root,
     encoding: 'utf8',
     env: { ...process.env, NEXORA_BOOTSTRAP_DRY_RUN: '1' },
-    timeout: 15_000
+    timeout: 15_000,
   });
   assert.equal(result.status, 0, result.stderr);
   const output = `${result.stdout}\n${result.stderr}`;
@@ -50,7 +50,7 @@ test('npm prestart dependency checker supports a non-mutating dry-run', () => {
     cwd: root,
     encoding: 'utf8',
     env: { ...process.env, NEXORA_BOOTSTRAP_DRY_RUN: '1' },
-    timeout: 15_000
+    timeout: 15_000,
   });
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /NEXORA NPM PREFLIGHT/);
@@ -58,8 +58,12 @@ test('npm prestart dependency checker supports a non-mutating dry-run', () => {
 
 test('npm lifecycle invokes dependency preflight before the main start command', () => {
   const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
-  assert.equal(packageJson.scripts.prestart, 'node scripts/bootstrap/npm-deps.js');
+  const expectedPreflight = 'node scripts/bootstrap/npm-deps.js && node scripts/sync-env-example.js --strict';
+  assert.equal(packageJson.scripts.prestart, expectedPreflight);
+  assert.equal(packageJson.scripts.predev, expectedPreflight);
+  assert.equal(packageJson.scripts.pretest, expectedPreflight);
   assert.equal(packageJson.scripts.start, 'node src/index.js');
+  assert.equal(packageJson.scripts.dev, 'node src/index.js');
 });
 
 test('auto bootstrap selects a working Podman fallback without invoking sudo', async () => {
@@ -81,7 +85,7 @@ test('auto bootstrap selects a working Podman fallback without invoking sudo', a
       cwd: root,
       encoding: 'utf8',
       env: { ...process.env, PATH: `${fakeBin}:${process.env.PATH || ''}` },
-      timeout: 15_000
+      timeout: 15_000,
     });
     assert.equal(result.status, 0, result.stderr || result.stdout);
     const output = `${result.stdout}\n${result.stderr}`;
@@ -118,7 +122,6 @@ test('Code Lab handoff transfers healthy tunnel ownership and adopts only protoc
   assert.match(codeLab, /Existing healthy TryCloudflare tunnel adopted; no replacement process started/);
   assert.match(codeLab, /watchdogPreserved/);
 });
-
 
 test('bootstrap implementation changes force one host preflight during controlled handoff', () => {
   const index = fs.readFileSync(path.join(root, 'src', 'index.js'), 'utf8');

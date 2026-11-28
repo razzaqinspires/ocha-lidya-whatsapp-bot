@@ -53,14 +53,16 @@ Start Ocha normally with `npm start`. The host dependency manager checks or prov
 
 Direct execution is also available:
 
-```text
+````text
 .run python ```python
 print("Hello from Ocha")
-```
+````
 
 .run node ```javascript
 console.log("Hello from Node")
+
 ```
+
 ```
 
 ## Owner capability management
@@ -116,11 +118,9 @@ codeLab: {
 
 Nexora Website Builder publishes multi-file static frontend projects through the same shared gateway. Each website session has its own tokenized URL, but does not spawn its own tunnel, terminal, or container. Project files are stored in bounded memory and removed when the session expires. See `docs/NEXORA_WEBSITE_BUILDER.md` for format limits, CSP, iframe isolation, owner controls, and backend limitations.
 
-
-
 ## Automatic host dependency manager (v1.9.2)
 
-When `npm start` is invoked, npm first runs `prestart` (`scripts/bootstrap/npm-deps.js`). It checks the required Node dependencies and runs `npm install --no-audit --no-fund` when a dependency is missing or `npm ls --depth=0` reports an invalid dependency tree. After the main process loads the persistent configuration, `src/index.js` runs `scripts/bootstrap/ensure-host.sh` through the Nexora dependency manager before Code Lab starts. The host check is idempotent: it checks the selected Docker/Podman runtime, the Python and Node runtime images, and `cloudflared`; it installs only missing packages, starts an existing Docker service, and pulls only images that are not already present. Both checks run synchronously during startup and exit; they do not create a per-user background process, extra terminal, or additional Cloudflare tunnel. Code Lab creates no long-lived `cloudflared` process at bot startup. On the first preview request it obtains an exclusive lock and starts exactly one shared Quick Tunnel. Concurrent session requests reuse that process. Start/stop/restart transitions are serialized; shutdown waits for the previous process to exit before another can start. A second process sharing the same Code Lab temp directory is blocked by the lease. After the last session expires or is explicitly revoked, the tunnel is stopped after `tunnelIdleMs`. The local gateway admits at most 160 in-flight requests and returns HTTP 503 with `Retry-After: 2` when that local limit is reached, leaving headroom below Cloudflare Quick Tunnel’s hard 200 in-flight request limit.
+When `npm start` is invoked, npm first runs `prestart`: `scripts/bootstrap/npm-deps.js` checks the required Node dependencies and runs `npm install --no-audit --no-fund` when a dependency is missing or `npm ls --depth=0` reports an invalid dependency tree; then `scripts/sync-env-example.js` scans source with Acorn and synchronizes `.env.example` plus `docs/ENVIRONMENT_VARIABLES.md` before the bot process starts. `predev` and `pretest` use the same ordering. The sync reads source and template files only; it never reads or copies values from `.env`. After the main process loads the persistent configuration, `src/index.js` runs `scripts/bootstrap/ensure-host.sh` through the Nexora dependency manager before Code Lab starts. The host check is idempotent: it checks the selected Docker/Podman runtime, the Python and Node runtime images, and `cloudflared`; it installs only missing packages, starts an existing Docker service, and pulls only images that are not already present. Both checks run synchronously during startup and exit; they do not create a per-user background process, extra terminal, or additional Cloudflare tunnel. Code Lab creates no long-lived `cloudflared` process at bot startup. On the first preview request it obtains an exclusive lock and starts exactly one shared Quick Tunnel. Concurrent session requests reuse that process. Start/stop/restart transitions are serialized; shutdown waits for the previous process to exit before another can start. A second process sharing the same Code Lab temp directory is blocked by the lease. After the last session expires or is explicitly revoked, the tunnel is stopped after `tunnelIdleMs`. The local gateway admits at most 160 in-flight requests and returns HTTP 503 with `Retry-After: 2` when that local limit is reached, leaving headroom below Cloudflare Quick Tunnel’s hard 200 in-flight request limit.
 
 On Debian/Ubuntu, when the process has host-administrator privileges, the manager uses the distribution Docker Engine and Podman packages plus Cloudflare's signed APT repository for `cloudflared`. On RPM-based systems it uses the available `dnf`/`yum` package manager and the official Cloudflare RPM release. Other distributions are detected but may require manual provisioning. Runtime preference defaults to `auto`; `.nexora runtime docker`, `.nexora runtime podman`, and `.nexora runtime auto` allow an owner to change the preference.
 

@@ -4,7 +4,7 @@
 
 ## Repository map and verified snapshot status
 
-The supplied source archive identified itself as **v1.10.51**; this paired operator release advances it to **v1.10.53**. It was inspected against the actual implementation; it is not a Git checkout, so commit ancestry is unverified. The separately inspected public `main` branch was at commit `9e5791778f35838531d937df20a11dee53d25ef2` / package `1.10.48` on 2026-11-26. Reconcile those trees through a reviewed Git diff before publishing or replacing files.
+The inspected Ocha source archive baseline was **v1.10.56**. This paired local maintenance snapshot advances Ocha to **v1.10.57** and maintains the independent Artificial Consciousness Component at **v2.1.1**. Neither extracted workspace contains `.git` metadata, so no new commit SHA or remote push is claimed. A separate connector inspection during this maintenance cycle read the public Ocha `main` package at version `1.10.53` (package blob SHA `c2f311550a7c4ec535981950a4880912172b2583`). The local v1.10.57 archive is not a Git checkout, and the AC repository metadata could not be fetched through the connector; reconcile both local trees through a reviewed Git diff and authenticated clone before any upstream push.
 
 ```mermaid
 flowchart TD
@@ -37,9 +37,13 @@ The private package manifest retains the four SHA-256 values and `original-sourc
 
 ## Two independent base projects and one release command
 
-Every release is delivered as two compatible source bases: `ocha-lidya-bot` (Node.js) and `artificial-consciousness-component` (Python). The AC source remains in its own repository and is connected through the pinned NADI HTTP API v1 commit `16c2fa6e1b500745f260bcf091284a6e18726883` (version 2.1.0). Ocha contains no copy of the NADI Python package. See [`docs/TWO_BASE_RELEASE.md`](docs/TWO_BASE_RELEASE.md).
+Paired releases produce two independent source bases: `ocha-lidya-bot` (Node.js) and `artificial-consciousness-component` (Python), connected through NADI HTTP API v1. On an operator host, the AC source is co-located at `.private/artificial-consciousness-component` and has its own nested Git root; the parent Ocha Git repository must never track `.private/`. The Ocha operator ZIP includes this private source for deployment convenience, while the public Ocha Git repository excludes it. Set `OCHA_NADI_SOURCE_DIR=.private/artificial-consciousness-component` to use AC v2.1.1. The standalone AC ZIP remains a separate deliverable. See [`docs/TWO_BASE_RELEASE.md`](docs/TWO_BASE_RELEASE.md), [`docs/SOURCE_COMPONENT_INDEX_1.10.57.md`](docs/SOURCE_COMPONENT_INDEX_1.10.57.md), and [`docs/RELEASE_REPORT_1.10.57.md`](docs/RELEASE_REPORT_1.10.57.md).
 
-From the Ocha root, run the unified pipeline with `npm run maintain:two-bases -- --ac-root ../artificial-consciousness-component --out ../two-base-release`. It runs both bases’ automated regression/security/documentation checks, the ACIE local audit, NADI HTTP integration, then emits two separate ZIPs plus QA and checksum manifests. Use `npm run release:two-bases` for packaging only. The Ocha output is a complete local operator bundle and must not be published; the AC package remains a separate base.
+From the Ocha root, run `npm run maintain:two-bases -- --ac-root .private/artificial-consciousness-component --out ../two-base-release` to verify both bases and create separate archives. Automatic Git publication also has two isolated lanes: Ocha → `razzaqinspires/ocha-lidya-whatsapp-bot` using `GITHUB_PAT`; AC → `razzaqinspires/artificial-consciousness-component` using `AC_GITHUB_PAT`. Both watchers start with `npm start` when their local Git checkout is valid. `.private/` is excluded from Ocha Git staging. Owner-only private controls are documented in [`docs/AUTO_PUSH_TWO_REPOSITORIES.md`](docs/AUTO_PUSH_TWO_REPOSITORIES.md). The Ocha operator ZIP is confidential and must not be published; the AC package remains separate.
+
+## Two-repository automatic Git publication (v1.10.57)
+
+Ocha retains its existing `npm run git:setup` and `npm run git:watch` scripts. The new dual-lane runtime watches the Ocha root and the independent nested AC checkout separately. Ocha uses `GITHUB_PAT`; AC uses `AC_GITHUB_PAT`. Configure the nested AC repository once with `npm run ac:git:setup`, then restart Ocha. The owner-only command `.autopush status|on|off|push|setup` is hidden from `.menu` and is accepted only in the owner's private chat. Detailed security boundaries, setup and troubleshooting are in [`docs/AUTO_PUSH_TWO_REPOSITORIES.md`](docs/AUTO_PUSH_TWO_REPOSITORIES.md).
 
 ## ACIE operational audit
 
@@ -56,7 +60,7 @@ flowchart LR
   CHECK --> REGISTRY[Existing plugin registry and dispatcher]
 ```
 
-**Release and verification:** [Paired release report](docs/RELEASE_REPORT_1.10.52.md) · **Audit and registries:** [Repository audit](docs/REPOSITORY_AUDIT_1.10.51.md) · [Source/function index](docs/SOURCE_COMPONENT_INDEX_1.10.52.md) · [Command registry audit](docs/COMMAND_REGISTRY_AUDIT_1.10.51.md) · [Provider registry audit](docs/PROVIDER_REGISTRY_AUDIT_1.10.51.md) · [NADI maintenance report](docs/NADI_MAINTENANCE_REPORT_2.1.0.md) · [Canonical changelog](docs/CHANGE_LOG.md).
+**Release and verification:** [Paired release report](docs/RELEASE_REPORT_1.10.52.md) · **Audit and registries:** [Repository audit](docs/REPOSITORY_AUDIT_1.10.51.md) · [Source/function index](docs/SOURCE_COMPONENT_INDEX_1.10.52.md) · [Command registry audit](docs/COMMAND_REGISTRY_AUDIT_1.10.51.md) · [Provider registry audit](docs/PROVIDER_REGISTRY_AUDIT_1.10.51.md) · [NADI maintenance report](docs/NADI_MAINTENANCE_REPORT_2.1.1.md) · [Canonical changelog](docs/CHANGE_LOG.md).
 
 ## Contribution preservation update (v1.10.49)
 
@@ -88,9 +92,9 @@ The rental dashboard now supports scoped read/write API keys, idempotent member-
 
 ## NADI external operational-state component (v1.10.31)
 
-Ocha Lidya and AC-Kernel NADI are now separate repositories. The bot keeps only the Node.js HTTP integration and a secure GitHub component loader; NADI's Python source is downloaded to an external cache (`~/.ocha/components/nadi/`) and is not bundled under the Ocha source tree. The connection uses Node's built-in `fetch` and a loopback HTTP sidecar. NADI owns its managed heartbeat; the bot reads operational telemetry and adds it to the existing Nexora prompt without creating a second LLM provider chain or duplicating API-key handling.
+Ocha Lidya and AC-Kernel NADI are now separate repositories. The bot keeps only the Node.js HTTP integration and a secure GitHub component loader; NADI's Python source is selected from the configured sibling directory or downloaded to an external cache (`~/.ocha/components/nadi/`) and is not bundled under the Ocha source tree. The connection uses Node's built-in `fetch` and a loopback HTTP sidecar. NADI owns its managed heartbeat; the bot reads operational telemetry and adds it to the existing Nexora prompt without creating a second LLM provider chain or duplicating API-key handling.
 
-The external NADI loader is preconfigured for `https://github.com/razzaqinspires/artificial-consciousness-component` and immutable commit `16c2fa6e1b500745f260bcf091284a6e18726883` (AC-Kernel NADI 2.1.0). On first launch it downloads and validates the repository archive into `~/.ocha/components/nadi/`, outside this repository, then launches the Python sidecar over loopback HTTP. Optional `OCHA_NADI_SHA256` pins the archive checksum. Upgrade only by reviewing and pinning a new immutable commit. See `docs/NADI_RUNTIME.md` for details. The public live telemetry page is available through `.kernel`; see `docs/KERNEL_DASHBOARD.md` for the URL lifecycle, privacy boundary, and metric definitions.
+The external NADI loader uses a local sibling source when `OCHA_NADI_SOURCE_DIR` is set; otherwise it downloads the configured GitHub repository at immutable fallback commit `16c2fa6e1b500745f260bcf091284a6e18726883` (AC-Kernel NADI 2.1.0). The paired v2.1.1 local snapshot has no Git SHA in this workspace. On first launch it downloads and validates the repository archive into `~/.ocha/components/nadi/`, outside this repository, then launches the Python sidecar over loopback HTTP. Optional `OCHA_NADI_SHA256` pins the archive checksum. Upgrade only by reviewing and pinning a new immutable commit. See `docs/NADI_RUNTIME.md` for details. The public live telemetry page is available through `.kernel`; see `docs/KERNEL_DASHBOARD.md` for the URL lifecycle, privacy boundary, and metric definitions.
 
 ## Adaptive conversation intelligence, stateful games, and feature-request workflow (v1.10.28)
 
@@ -158,7 +162,7 @@ cp .env.example .env
 npm start
 ```
 
-`npm start` menjalankan `prestart` otomatis. Dependency Node yang hilang akan dipasang, lalu host preflight mengurus Bash (jika bisa dipasang dengan hak non-interaktif), Git, Python 3, Go, Cloudflared, dan runtime container pada Linux yang didukung. Tidak diperlukan `npm install`, `npm run git:setup`, atau `git config` untuk menjalankan bot dan fitur inti. GitHub auto-push tetap opsional: diperlukan clone/remote yang sesuai serta `GITHUB_PAT`; ZIP source tidak akan diam-diam menginisialisasi atau mendorong kode ke repository pihak lain. Node.js dan npm sendiri adalah prasyarat untuk dapat menjalankan `npm start` dan harus tersedia sebelum langkah ini.
+`npm start` menjalankan `prestart` otomatis. Dependency Node yang hilang akan dipasang, lalu host preflight mengurus Bash (jika bisa dipasang dengan hak non-interaktif), Git, Python 3, Go, Cloudflared, dan runtime container pada Linux yang didukung. Tidak diperlukan `npm install`, `npm run git:setup`, atau `git config` untuk menjalankan bot dan fitur inti. GitHub auto-push tetap opsional: diperlukan clone/remote yang sesuai serta `GITHUB_PAT`; ZIP source tidak akan diam-diam menginisialisasi atau mendorong kode ke repository pihak lain. Node.js dan npm sendiri adalah prasyarat untuk dapat menjalankan `npm start` dan harus tersedia sebelum langkah ini. Sebelum runtime bot berjalan, `prestart` memindai source dengan AST dan menyinkronkan `.env.example` serta `docs/ENVIRONMENT_VARIABLES.md` dalam mode ketat. `npm run dev` melakukan hal yang sama melalui `predev`; `npm test` juga menjalankan sinkronisasi ketat melalui `pretest` sebelum tes. Variabel baru yang ditemukan ditambahkan sebagai placeholder komentar untuk ditinjau, tidak diaktifkan otomatis. Jika ada akses environment dinamis yang tidak dapat dipastikan di source produksi, mode ketat menggagalkan pemeriksaan agar konfigurasi tidak dianggap lengkap secara keliru. Jalankan `npm run env:sync` untuk memperbarui manual atau `npm run env:check` untuk memeriksa sinkronisasi tanpa mengubah file.
 
 `npm install` hanya memasang dependency Node.js; perintah itu tidak menyalakan NADI. NADI dijalankan otomatis saat `npm start` memulai Ocha: loader mengunduh source AC-Kernel pada commit GitHub yang dipatok ke cache eksternal `~/.ocha/components/nadi/`, lalu mencoba menjalankannya sebagai sidecar Python. Python 3.10+ harus tersedia. Bila NADI gagal dimulai atau Python tidak tersedia, proses WhatsApp dan AI Ocha tetap berjalan; status NADI akan tercatat offline dan dapat diperiksa melalui `.nadi status`.
 
@@ -196,13 +200,17 @@ For an existing installation, v1.5.0 through v1.7.1 perform one-time configurati
 
 The syntax checker scans every JavaScript file under `src/`, `test/`, and `scripts/`, including the central configuration module at `src/config.js`.
 
+## Environment variable inventory
+
+The source-of-truth inventory is maintained at [`docs/ENVIRONMENT_VARIABLES.md`](docs/ENVIRONMENT_VARIABLES.md). It separates application settings, secrets, OS-provided variables, internal runtime markers, test-only names, computed accesses, shell expansions, dotenv load points, and child-process environment pass-through. The current scan covers 313 JavaScript files and 3 shell files: 58 unique names, 260 named JavaScript access sites, 9 shell expansion sites, 25 whole-environment pass-through sites, and 4 dotenv load/reload sites. `OCHA_HOST_PREFLIGHT_COMPLETED` is an internal marker written by Ocha after host preflight; it is already documented as a commented marker and must not be set manually in `.env`.
+
 ## 3. Logging
 
 The application logger uses compact, colorized terminal output with WIB timestamps and readable context fields. Its level and color mode are managed in `src/config.js` under `logging` (`level: 'info'`, `color: 'auto'`, `timeZone: 'Asia/Jakarta'`). Baileys receives a separate Pino-compatible no-op logger at `silent`. Structured logs redact Signal/session key fields, and the known raw libsignal `SessionEntry` console dump is suppressed. Incoming user messages are correlated in memory but are not printed; Ocha command/AI responses and delivery states remain traceable. Runtime auth/data/log directories are excluded from recursive filesystem watchers to prevent Linux inotify exhaustion.
 
 ## 4. Environment variables
 
-`.env` stores secrets and credentials only, for example:
+`.env` is loaded by `dotenv` and is intended primarily for secrets plus the explicit environment overrides documented in [`docs/ENVIRONMENT_VARIABLES.md`](docs/ENVIRONMENT_VARIABLES.md). Normal bot settings remain managed through `src/config.js` and the JSONL configuration database. Keep secret values only in the ignored `.env` file or deployment secret manager. Example credentials:
 
 ```dotenv
 OPENAI_API_KEY=
@@ -214,7 +222,7 @@ GITHUB_PAT=
 
 Do not put bot name, owner number, prefixes, bot mode, feature flags, database paths, archive limits, execution switches, or runtime limits in `.env`. Those are managed through `src/config.js` and persisted in the JSONL database. WhatsApp login mode, pairing number, session folder, and connection timeouts are non-secret application settings persisted in the JSONL configuration database. GitHub/provider API keys, an externally supplied `OCHA_ROO_MASTER_KEY`, and an `OCHA_NADI_API_TOKEN` for a deliberately remote NADI service are secrets. Keep them in the private `.env` or deployment secret manager. The User Vault master key is optional: leave it empty and the application generates a protected local key file on first vault use. YouTube executable paths and limits are non-secret application settings stored under `youtube` in the JSONL configuration database; manage them with the owner-only `.ytconfig` command. Public identity fields (`bot.ownerName`, `bot.creatorName`, `bot.organization`, and `bot.publicCreatorDisclosure`) are non-secret application configuration; the AI prompt receives only this explicit allowlist, never the raw config object or secret vault.
 
-Never commit `.env`, WhatsApp sessions, database journals, archives, or runtime logs.
+The source scanner refreshes `.env.example` before `npm start`, `npm run dev`, and `npm test`. It adds newly discovered production names as commented review entries and never copies values from `.env`. Never commit `.env`, WhatsApp sessions, database journals, archives, or runtime logs.
 
 ## 5. Configuration architecture
 
@@ -877,7 +885,7 @@ See [`docs/AUTO_GIT_SYNC.md`](docs/AUTO_GIT_SYNC.md) for the publication firewal
 - [Source/function index](docs/SOURCE_COMPONENT_INDEX_1.10.52.md)
 - [Command registry audit](docs/COMMAND_REGISTRY_AUDIT_1.10.51.md)
 - [Provider registry audit](docs/PROVIDER_REGISTRY_AUDIT_1.10.51.md)
-- [NADI maintenance report](docs/NADI_MAINTENANCE_REPORT_2.1.0.md)
+- [NADI maintenance report](docs/NADI_MAINTENANCE_REPORT_2.1.1.md)
 - [Automatic Git Sync and publication firewall](docs/AUTO_GIT_SYNC.md)
 - [ACIE architecture](docs/ACIE_ARCHITECTURE.md)
 - [NADI runtime integration](docs/NADI_RUNTIME.md)
