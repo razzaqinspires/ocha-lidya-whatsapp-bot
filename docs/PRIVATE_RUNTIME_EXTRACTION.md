@@ -29,7 +29,7 @@ flowchart TD
   FALLBACK --> DISP
 ```
 
-Private runtime startup resolves in this order: explicit `OCHA_PRIVATE_RUNTIME_PATH`, bundled `.private/ocha-private-runtime`, then installed `node_modules` package. A clean public clone omits `.private` through Git and continues in text-first compatibility mode. Set `OCHA_PRIVATE_RUNTIME_REQUIRED=1` only on the private operator VPS to fail closed if its local package is missing or fails verification.
+Private runtime startup resolves in this order: explicit `privateRuntime.path` in `config/runtime.json` (with legacy `OCHA_PRIVATE_RUNTIME_PATH` override), bundled `.private/ocha-private-runtime`, then installed `node_modules` package. A clean public clone omits `.private` through Git and continues in text-first compatibility mode. Set `privateRuntime.required` to `true` in `config/runtime.json` only on the private operator VPS to fail closed if its local package is missing or fails verification.
 
 The private `.test` plugin is inserted into the existing plugin registry only if its descriptor remains `ownerOnly: true` and `privateOnly: true` and canonical name/aliases pass collision checks. It is never added to the public compatibility mode.
 
@@ -45,7 +45,7 @@ npm run private-runtime:verify
 npm run private-runtime:status
 
 # Required private mode on an owner-controlled VPS
-OCHA_PRIVATE_RUNTIME_REQUIRED=1 npm start
+Edit `config/runtime.json` and set `privateRuntime.required` to `true`, then run `npm start`.
 
 # Publication audit before Git staging
 npm run security:publication

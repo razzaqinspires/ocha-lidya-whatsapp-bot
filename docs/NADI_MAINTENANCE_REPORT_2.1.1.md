@@ -17,6 +17,6 @@ The independent Artificial Consciousness Component was advanced to local snapsho
 
 ## Provenance boundary
 
-The AC source workspace did not contain `.git` metadata. The package is identified as a local paired snapshot; no commit SHA or GitHub push is claimed. To use v2.1.1, set `OCHA_NADI_SOURCE_DIR=../artificial-consciousness-component`. If unset, Ocha keeps its prior remote fallback commit for v2.1.0.
+The AC source workspace did not contain `.git` metadata. The package is identified as a local paired snapshot; no commit SHA or GitHub push is claimed. To use v2.1.1 in the current operator bundle, set `nadi.sourceDir` to `.private/artificial-consciousness-component` in `config/runtime.json`. If unset, Ocha keeps its prior remote fallback commit for v2.1.0.
 
 See `ARTIFICIAL_CONSCIOUSNESS_MAINTENANCE_REPORT.md` in the independent Artificial Consciousness Component base of the paired source bundle for subsystem details, experiment baselines, research limits and next objectives.

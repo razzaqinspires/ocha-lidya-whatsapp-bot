@@ -4,6 +4,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { pipeline } from 'node:stream/promises';
 import { createWriteStream } from 'node:fs';
+import { getRuntimeSettings } from '../core/runtime-settings.js';
 
 const MAX_ARCHIVE_BYTES = 24 * 1024 * 1024;
 const MAX_EXTRACTED_BYTES = 96 * 1024 * 1024;
@@ -13,7 +14,13 @@ let installPromise = null;
 
 function cleanRef(value) {
   const ref = String(value || 'main').trim();
-  if (!ref || ref.length > 160 || ref.startsWith('-') || /[\\\0]/.test(ref) || ref.split('/').some(part => part === '..' || part === '.')) {
+  if (
+    !ref ||
+    ref.length > 160 ||
+    ref.startsWith('-') ||
+    /[\\\0]/.test(ref) ||
+    ref.split('/').some(part => part === '..' || part === '.')
+  ) {
     throw new Error('OCHA_NADI_REF tidak valid');
   }
   return ref;
@@ -21,13 +28,19 @@ function cleanRef(value) {
 
 export function parseGitHubRepository(input) {
   let parsed;
-  try { parsed = new URL(String(input || '')); }
-  catch { throw new Error('OCHA_NADI_REPO_URL harus berupa URL repositori GitHub yang valid'); }
+  try {
+    parsed = new URL(String(input || ''));
+  } catch {
+    throw new Error('OCHA_NADI_REPO_URL harus berupa URL repositori GitHub yang valid');
+  }
   if (parsed.protocol !== 'https:' || !['github.com', 'www.github.com'].includes(parsed.hostname.toLowerCase())) {
     throw new Error('NADI hanya dapat diunduh dari URL HTTPS github.com');
   }
   const parts = parsed.pathname.split('/').filter(Boolean);
-  if (parts.length !== 2) throw new Error('Gunakan URL repositori GitHub, misalnya https://github.com/owner/artificial-consciousness-component');
+  if (parts.length !== 2)
+    throw new Error(
+      'Gunakan URL repositori GitHub, misalnya https://github.com/owner/artificial-consciousness-component',
+    );
   const owner = parts[0];
   const repo = parts[1].replace(/\.git$/i, '');
   if (!/^[A-Za-z0-9_.-]+$/.test(owner) || !/^[A-Za-z0-9_.-]+$/.test(repo)) {
@@ -41,8 +54,10 @@ function isValidComponent(root) {
     fs.access(path.join(root, 'ac', '__main__.py')),
     fs.access(path.join(root, 'ac', 'server.py')),
     fs.access(path.join(root, 'ac', 'kernel.py')),
-    fs.access(path.join(root, 'pyproject.toml'))
-  ]).then(() => true).catch(() => false);
+    fs.access(path.join(root, 'pyproject.toml')),
+  ])
+    .then(() => true)
+    .catch(() => false);
 }
 
 async function readPackageVersion(root) {
@@ -57,70 +72,85 @@ async function zipEntries(buffer, destination) {
   const imported = await import('yauzl');
   const yauzl = imported.default || imported;
   return new Promise((resolve, reject) => {
-    yauzl.fromBuffer(buffer, { lazyEntries: true, decodeStrings: true, validateEntrySizes: true }, (openError, zipFile) => {
-      if (openError) return reject(openError);
-      let count = 0;
-      let extracted = 0;
-      let archiveRoot = null;
-      let settled = false;
-      const finish = error => {
-        if (settled) return;
-        settled = true;
-        if (error) {
-          try { zipFile.close(); } catch {}
-          reject(error);
-        } else resolve({ entries: count, bytes: extracted });
-      };
-      zipFile.once('error', finish);
-      zipFile.once('end', () => finish());
-      zipFile.on('entry', entry => {
-        (async () => {
-          count += 1;
-          if (count > MAX_ENTRIES) throw new Error('Arsip NADI melebihi batas jumlah file');
-          const rawName = String(entry.fileName || '').replace(/\\/g, '/');
-          if (!rawName || rawName.startsWith('/') || /^[A-Za-z]:/.test(rawName)) throw new Error('Arsip NADI berisi path yang tidak aman');
-          const segments = rawName.split('/').filter(Boolean);
-          if (!segments.length || segments.some(segment => segment === '.' || segment === '..')) throw new Error('Arsip NADI berisi path traversal');
-          if (!archiveRoot) archiveRoot = segments[0];
-          if (segments[0] !== archiveRoot) throw new Error('Arsip NADI memiliki lebih dari satu root directory');
-          // GitHub zipball wraps the repository in a generated root folder.
-          // NADI's own release ZIP may add AC-Kernel-NADI-vX.Y.Z as another layer.
-          // Strip both wrappers so the installed component root contains ac/ directly.
-          let relativeSegments = segments.slice(1);
-          if (relativeSegments[0] && /^AC-Kernel-NADI-v\d+\.\d+\.\d+$/i.test(relativeSegments[0])) {
-            relativeSegments = relativeSegments.slice(1);
-          }
-          const relative = relativeSegments.join('/');
-          if (!relative) { zipFile.readEntry(); return; }
-          const mode = (entry.externalFileAttributes >>> 16) & 0xffff;
-          const fileType = mode & 0o170000;
-          if (fileType === 0o120000) throw new Error('Arsip NADI tidak boleh berisi symbolic link');
-          if (fileType && fileType !== 0o100000 && fileType !== 0o040000) throw new Error('Arsip NADI berisi tipe file khusus yang tidak diizinkan');
-          const target = path.resolve(destination, ...relative.split('/'));
-          const relativeCheck = path.relative(destination, target);
-          if (relativeCheck.startsWith('..') || path.isAbsolute(relativeCheck)) throw new Error('Arsip NADI keluar dari direktori instalasi');
-          if (rawName.endsWith('/')) {
-            await fs.mkdir(target, { recursive: true });
-            zipFile.readEntry();
-            return;
-          }
-          const size = Number(entry.uncompressedSize || 0);
-          if (!Number.isSafeInteger(size) || size < 0) throw new Error('Ukuran file dalam arsip tidak valid');
-          extracted += size;
-          if (extracted > MAX_EXTRACTED_BYTES) throw new Error('Arsip NADI melebihi batas ukuran hasil ekstraksi');
-          await fs.mkdir(path.dirname(target), { recursive: true });
-          await new Promise((resolveStream, rejectStream) => {
-            zipFile.openReadStream(entry, (streamError, stream) => {
-              if (streamError) return rejectStream(streamError);
-              pipeline(stream, createWriteStream(target, { flags: 'wx', mode: 0o600 }))
-                .then(resolveStream, rejectStream);
+    yauzl.fromBuffer(
+      buffer,
+      { lazyEntries: true, decodeStrings: true, validateEntrySizes: true },
+      (openError, zipFile) => {
+        if (openError) return reject(openError);
+        let count = 0;
+        let extracted = 0;
+        let archiveRoot = null;
+        let settled = false;
+        const finish = error => {
+          if (settled) return;
+          settled = true;
+          if (error) {
+            try {
+              zipFile.close();
+            } catch {}
+            reject(error);
+          } else resolve({ entries: count, bytes: extracted });
+        };
+        zipFile.once('error', finish);
+        zipFile.once('end', () => finish());
+        zipFile.on('entry', entry => {
+          (async () => {
+            count += 1;
+            if (count > MAX_ENTRIES) throw new Error('Arsip NADI melebihi batas jumlah file');
+            const rawName = String(entry.fileName || '').replace(/\\/g, '/');
+            if (!rawName || rawName.startsWith('/') || /^[A-Za-z]:/.test(rawName))
+              throw new Error('Arsip NADI berisi path yang tidak aman');
+            const segments = rawName.split('/').filter(Boolean);
+            if (!segments.length || segments.some(segment => segment === '.' || segment === '..'))
+              throw new Error('Arsip NADI berisi path traversal');
+            if (!archiveRoot) archiveRoot = segments[0];
+            if (segments[0] !== archiveRoot) throw new Error('Arsip NADI memiliki lebih dari satu root directory');
+            // GitHub zipball wraps the repository in a generated root folder.
+            // NADI's own release ZIP may add AC-Kernel-NADI-vX.Y.Z as another layer.
+            // Strip both wrappers so the installed component root contains ac/ directly.
+            let relativeSegments = segments.slice(1);
+            if (relativeSegments[0] && /^AC-Kernel-NADI-v\d+\.\d+\.\d+$/i.test(relativeSegments[0])) {
+              relativeSegments = relativeSegments.slice(1);
+            }
+            const relative = relativeSegments.join('/');
+            if (!relative) {
+              zipFile.readEntry();
+              return;
+            }
+            const mode = (entry.externalFileAttributes >>> 16) & 0xffff;
+            const fileType = mode & 0o170000;
+            if (fileType === 0o120000) throw new Error('Arsip NADI tidak boleh berisi symbolic link');
+            if (fileType && fileType !== 0o100000 && fileType !== 0o040000)
+              throw new Error('Arsip NADI berisi tipe file khusus yang tidak diizinkan');
+            const target = path.resolve(destination, ...relative.split('/'));
+            const relativeCheck = path.relative(destination, target);
+            if (relativeCheck.startsWith('..') || path.isAbsolute(relativeCheck))
+              throw new Error('Arsip NADI keluar dari direktori instalasi');
+            if (rawName.endsWith('/')) {
+              await fs.mkdir(target, { recursive: true });
+              zipFile.readEntry();
+              return;
+            }
+            const size = Number(entry.uncompressedSize || 0);
+            if (!Number.isSafeInteger(size) || size < 0) throw new Error('Ukuran file dalam arsip tidak valid');
+            extracted += size;
+            if (extracted > MAX_EXTRACTED_BYTES) throw new Error('Arsip NADI melebihi batas ukuran hasil ekstraksi');
+            await fs.mkdir(path.dirname(target), { recursive: true });
+            await new Promise((resolveStream, rejectStream) => {
+              zipFile.openReadStream(entry, (streamError, stream) => {
+                if (streamError) return rejectStream(streamError);
+                pipeline(stream, createWriteStream(target, { flags: 'wx', mode: 0o600 })).then(
+                  resolveStream,
+                  rejectStream,
+                );
+              });
             });
-          });
-          zipFile.readEntry();
-        })().catch(finish);
-      });
-      zipFile.readEntry();
-    });
+            zipFile.readEntry();
+          })().catch(finish);
+        });
+        zipFile.readEntry();
+      },
+    );
   });
 }
 
@@ -146,19 +176,34 @@ async function readResponseBounded(response, maxBytes) {
   return Buffer.concat(chunks, total);
 }
 
+let configNadiUpdateConsumed = false;
+
+function nadiUpdateRequested() {
+  return !configNadiUpdateConsumed && getRuntimeSettings().nadi.update;
+}
+
+function consumeNadiUpdateRequest() {
+  configNadiUpdateConsumed = true;
+}
+
 async function downloadAndInstall({ repoUrl, ref, root, logger }) {
   const repository = parseGitHubRepository(repoUrl);
   const safeRef = ref.replace(/[^A-Za-z0-9._-]+/g, '_').slice(0, 100) || 'main';
   const releasesRoot = path.join(root, 'releases');
   const target = path.join(releasesRoot, safeRef);
   await fs.mkdir(releasesRoot, { recursive: true });
-  if (process.env.OCHA_NADI_UPDATE !== '1' && await isValidComponent(target)) {
+  if (!nadiUpdateRequested() && (await isValidComponent(target))) {
     const version = await readPackageVersion(target);
-    const expected = String(process.env.OCHA_NADI_SHA256 || '').trim().toLowerCase();
+    const expected = String(getRuntimeSettings().nadi.sha256 || '')
+      .trim()
+      .toLowerCase();
     if (expected) {
       let metadata = {};
-      try { metadata = JSON.parse(await fs.readFile(path.join(target, 'OCHA_COMPONENT_SOURCE.json'), 'utf8')); } catch {}
-      if (metadata.archiveSha256 !== expected) throw new Error('Cache NADI tidak cocok dengan OCHA_NADI_SHA256; gunakan ref baru atau OCHA_NADI_UPDATE=1');
+      try {
+        metadata = JSON.parse(await fs.readFile(path.join(target, 'OCHA_COMPONENT_SOURCE.json'), 'utf8'));
+      } catch {}
+      if (metadata.archiveSha256 !== expected)
+        throw new Error('Cache NADI tidak cocok dengan OCHA_NADI_SHA256; gunakan ref baru atau OCHA_NADI_UPDATE=1');
     }
     return { root: target, version, source: 'github-cache', repository: repository.canonicalUrl, ref };
   }
@@ -166,19 +211,26 @@ async function downloadAndInstall({ repoUrl, ref, root, logger }) {
   const archiveUrl = `https://api.github.com/repos/${repository.owner}/${repository.repo}/zipball/${encodeURIComponent(ref)}`;
   const headers = {
     Accept: 'application/vnd.github+json',
-    'User-Agent': 'Ocha-Lidya-Bot-NADI-Component-Loader'
+    'User-Agent': 'Ocha-Lidya-Bot-NADI-Component-Loader',
   };
   if (process.env.GITHUB_PAT) headers.Authorization = `Bearer ${process.env.GITHUB_PAT}`;
-  const response = await fetch(archiveUrl, { headers, redirect: 'follow', signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });
+  const response = await fetch(archiveUrl, {
+    headers,
+    redirect: 'follow',
+    signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
+  });
   if (!response.ok) throw new Error(`Unduhan NADI dari GitHub gagal (${response.status})`);
   const finalHost = new URL(response.url).hostname.toLowerCase();
-  if (!['api.github.com', 'codeload.github.com'].includes(finalHost)) throw new Error('GitHub mengalihkan unduhan ke host yang tidak diizinkan');
+  if (!['api.github.com', 'codeload.github.com'].includes(finalHost))
+    throw new Error('GitHub mengalihkan unduhan ke host yang tidak diizinkan');
   const declaredLength = Number(response.headers.get('content-length') || 0);
   if (declaredLength > MAX_ARCHIVE_BYTES) throw new Error('Arsip NADI terlalu besar untuk diunduh');
   const archive = await readResponseBounded(response, MAX_ARCHIVE_BYTES);
   if (!archive.length) throw new Error('Arsip NADI kosong');
   const archiveHash = crypto.createHash('sha256').update(archive).digest('hex');
-  const expectedHash = String(process.env.OCHA_NADI_SHA256 || '').trim().toLowerCase();
+  const expectedHash = String(getRuntimeSettings().nadi.sha256 || '')
+    .trim()
+    .toLowerCase();
   if (expectedHash && (!/^[a-f0-9]{64}$/.test(expectedHash) || archiveHash !== expectedHash)) {
     throw new Error('Checksum SHA-256 arsip NADI tidak cocok; instalasi dibatalkan');
   }
@@ -187,17 +239,36 @@ async function downloadAndInstall({ repoUrl, ref, root, logger }) {
   await fs.mkdir(temporary, { recursive: true });
   try {
     const stats = await zipEntries(archive, temporary);
-    if (!await isValidComponent(temporary)) throw new Error('Arsip GitHub tidak memiliki struktur paket NADI yang diharapkan');
+    if (!(await isValidComponent(temporary)))
+      throw new Error('Arsip GitHub tidak memiliki struktur paket NADI yang diharapkan');
     const version = await readPackageVersion(temporary);
-    await fs.writeFile(path.join(temporary, 'OCHA_COMPONENT_SOURCE.json'), JSON.stringify({
-      component: 'AC-Kernel NADI', version, repository: repository.canonicalUrl,
-      ref, archiveSha256: archiveHash, downloadedAt: new Date().toISOString(),
-      extractedEntries: stats.entries, extractedBytes: stats.bytes
-    }, null, 2), { mode: 0o600 });
+    await fs.writeFile(
+      path.join(temporary, 'OCHA_COMPONENT_SOURCE.json'),
+      JSON.stringify(
+        {
+          component: 'AC-Kernel NADI',
+          version,
+          repository: repository.canonicalUrl,
+          ref,
+          archiveSha256: archiveHash,
+          downloadedAt: new Date().toISOString(),
+          extractedEntries: stats.entries,
+          extractedBytes: stats.bytes,
+        },
+        null,
+        2,
+      ),
+      { mode: 0o600 },
+    );
 
     const backup = `${target}.previous-${Date.now()}`;
     let hadTarget = false;
-    try { await fs.rename(target, backup); hadTarget = true; } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    try {
+      await fs.rename(target, backup);
+      hadTarget = true;
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    }
     try {
       await fs.rename(temporary, target);
       if (hadTarget) await fs.rm(backup, { recursive: true, force: true });
@@ -205,8 +276,18 @@ async function downloadAndInstall({ repoUrl, ref, root, logger }) {
       if (hadTarget) await fs.rename(backup, target).catch(() => {});
       throw error;
     }
-    logger?.info?.({ version, ref, repository: repository.canonicalUrl, sha256: archiveHash }, 'NADI component downloaded and installed outside the Ocha source tree');
-    return { root: target, version, source: 'github', repository: repository.canonicalUrl, ref, archiveSha256: archiveHash };
+    logger?.info?.(
+      { version, ref, repository: repository.canonicalUrl, sha256: archiveHash },
+      'NADI component downloaded and installed outside the Ocha source tree',
+    );
+    return {
+      root: target,
+      version,
+      source: 'github',
+      repository: repository.canonicalUrl,
+      ref,
+      archiveSha256: archiveHash,
+    };
   } catch (error) {
     await fs.rm(temporary, { recursive: true, force: true }).catch(() => {});
     throw error;
@@ -216,34 +297,53 @@ async function downloadAndInstall({ repoUrl, ref, root, logger }) {
 export async function resolveNadiComponent({ logger = console } = {}) {
   if (installPromise) return installPromise;
   installPromise = (async () => {
-    const direct = String(process.env.OCHA_NADI_SOURCE_DIR || '').trim();
+    const settings = getRuntimeSettings().nadi;
+    const direct = String(settings.sourceDir || '').trim();
     if (direct) {
       const root = path.resolve(direct);
-      if (!await isValidComponent(root)) throw new Error(`OCHA_NADI_SOURCE_DIR tidak berisi source NADI valid: ${root}`);
+      if (!(await isValidComponent(root)))
+        throw new Error(`OCHA_NADI_SOURCE_DIR tidak berisi source NADI valid: ${root}`);
       return { root, version: await readPackageVersion(root), source: 'external-directory' };
     }
 
-    const repoUrl = String(process.env.OCHA_NADI_REPO_URL || 'https://github.com/razzaqinspires/artificial-consciousness-component').trim();
-    const ref = cleanRef(process.env.OCHA_NADI_REF || '16c2fa6e1b500745f260bcf091284a6e18726883');
-    const componentHome = path.resolve(process.env.OCHA_NADI_HOME || path.join(os.homedir(), '.ocha', 'components', 'nadi'));
+    const repoUrl = String(settings.repositoryUrl || '').trim();
+    const ref = cleanRef(settings.ref);
+    const componentHome = path.resolve(settings.home || path.join(os.homedir(), '.ocha', 'components', 'nadi'));
     if (!repoUrl) {
-      throw Object.assign(new Error('NADI source belum dikonfigurasi. Isi OCHA_NADI_REPO_URL dengan URL repositori GitHub NADI.'), { code: 'NADI_NOT_CONFIGURED' });
+      throw Object.assign(
+        new Error('NADI source belum dikonfigurasi. Isi OCHA_NADI_REPO_URL dengan URL repositori GitHub NADI.'),
+        { code: 'NADI_NOT_CONFIGURED' },
+      );
     }
     const safeRef = ref.replace(/[^A-Za-z0-9._-]+/g, '_').slice(0, 100) || 'main';
     const cached = path.join(componentHome, 'releases', safeRef);
-    if (process.env.OCHA_NADI_UPDATE !== '1' && await isValidComponent(cached)) {
-      const expected = String(process.env.OCHA_NADI_SHA256 || '').trim().toLowerCase();
+    if (!nadiUpdateRequested() && (await isValidComponent(cached))) {
+      const expected = String(getRuntimeSettings().nadi.sha256 || '')
+        .trim()
+        .toLowerCase();
       if (expected) {
         let metadata = {};
-        try { metadata = JSON.parse(await fs.readFile(path.join(cached, 'OCHA_COMPONENT_SOURCE.json'), 'utf8')); } catch {}
-        if (metadata.archiveSha256 !== expected) throw new Error('Cache NADI tidak cocok dengan OCHA_NADI_SHA256; gunakan ref baru atau OCHA_NADI_UPDATE=1');
+        try {
+          metadata = JSON.parse(await fs.readFile(path.join(cached, 'OCHA_COMPONENT_SOURCE.json'), 'utf8'));
+        } catch {}
+        if (metadata.archiveSha256 !== expected)
+          throw new Error('Cache NADI tidak cocok dengan OCHA_NADI_SHA256; gunakan ref baru atau OCHA_NADI_UPDATE=1');
       }
-      return { root: cached, version: await readPackageVersion(cached), source: 'github-cache', repository: parseGitHubRepository(repoUrl).canonicalUrl, ref };
+      return {
+        root: cached,
+        version: await readPackageVersion(cached),
+        source: 'github-cache',
+        repository: parseGitHubRepository(repoUrl).canonicalUrl,
+        ref,
+      };
     }
     const installed = await downloadAndInstall({ repoUrl, ref, root: componentHome, logger });
-    if (process.env.OCHA_NADI_UPDATE === '1') process.env.OCHA_NADI_UPDATE = '0';
+    consumeNadiUpdateRequest();
     return installed;
   })();
-  try { return await installPromise; }
-  finally { installPromise = null; }
+  try {
+    return await installPromise;
+  } finally {
+    installPromise = null;
+  }
 }

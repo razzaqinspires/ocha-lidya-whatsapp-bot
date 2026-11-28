@@ -7,8 +7,11 @@ import { getConsciousnessStatus } from './consciousness-runtime.js';
 import { OCHA_IDENTITY_MANIFEST } from '../ai/identity-kernel.js';
 import { getKernelTelemetrySnapshot } from './kernel-telemetry.js';
 import { getPublicGatewayUrl, registerKernelDashboardRouteHandler } from './code-lab.js';
+import { getRuntimeSettings } from '../core/runtime-settings.js';
 
-const DATA_DIR = path.resolve(process.env.OCHA_KERNEL_DASHBOARD_DIR || path.join(process.cwd(), 'data', 'kernel'));
+const DATA_DIR = path.resolve(
+  getRuntimeSettings().paths.kernelDashboardDir || path.join(process.cwd(), 'data', 'kernel'),
+);
 const TOKEN_FILE = path.join(DATA_DIR, 'public-dashboard-token');
 const TOKEN_PATTERN = /^[A-Za-z0-9_-]{40,80}$/;
 let dashboardToken = null;
@@ -68,15 +71,16 @@ export function buildPublicKernelSnapshot() {
   const memory = state.memory || {};
   const mem = process.memoryUsage();
   const phase = safeNumber(state.nadi?.phase);
-  const pulseWave = phase === null ? null : Math.round((0.5 * (1 + Math.sin(phase))) * 10_000) / 10_000;
+  const pulseWave = phase === null ? null : Math.round(0.5 * (1 + Math.sin(phase)) * 10_000) / 10_000;
   const evaluations = Array.isArray(state.volition?.evaluations)
     ? state.volition.evaluations.slice(0, 8).map(item => ({
-      policy: String(item.policy || '').slice(0, 48),
-      risk: safeNumber(item.risk),
-      ambiguity: safeNumber(item.ambiguity),
-      epistemicValue: safeNumber(item.epistemic_value),
-      expectedFreeEnergy: safeNumber(item.expected_free_energy)
-    })) : [];
+        policy: String(item.policy || '').slice(0, 48),
+        risk: safeNumber(item.risk),
+        ambiguity: safeNumber(item.ambiguity),
+        epistemicValue: safeNumber(item.epistemic_value),
+        expectedFreeEnergy: safeNumber(item.expected_free_energy),
+      }))
+    : [];
 
   return {
     generatedAt: new Date().toISOString(),
@@ -87,7 +91,7 @@ export function buildPublicKernelSnapshot() {
       intelligenceLayer: OCHA_IDENTITY_MANIFEST.intelligenceLayer,
       organization: OCHA_IDENTITY_MANIFEST.organization,
       identityType: OCHA_IDENTITY_MANIFEST.identityType,
-      nature: OCHA_IDENTITY_MANIFEST.nature
+      nature: OCHA_IDENTITY_MANIFEST.nature,
     },
     connection: {
       whatsapp: telemetry.connection,
@@ -96,21 +100,24 @@ export function buildPublicKernelSnapshot() {
         ready: Boolean(status.ready),
         heartbeatEnabled: Boolean(status.enabled),
         componentVersion: status.componentVersion || null,
-        componentSource: status.componentSource === 'remote-api' ? 'remote-api' : status.componentSource ? 'github-pinned' : null,
+        componentSource:
+          status.componentSource === 'remote-api' ? 'remote-api' : status.componentSource ? 'github-pinned' : null,
         intervalMs: safeNumber(status.heartbeatMs),
         ticks: safeNumber(status.heartbeatCount),
         lastBeatAt: status.lastBeatAt || status.heartbeat?.last_beat_at || null,
-        error: status.lastError ? 'NADI membutuhkan pemeriksaan operasional; detail internal disembunyikan.' : null
-      }
+        error: status.lastError ? 'NADI membutuhkan pemeriksaan operasional; detail internal disembunyikan.' : null,
+      },
     },
     totals: telemetry.counters,
     ai: {
       activeRequests: telemetry.activeAiRequests,
       latency: telemetry.latency,
-      successRatePercent: calculatePercent((telemetry.counters.aiResponses + telemetry.counters.aiFailures)
-        ? telemetry.counters.aiResponses / (telemetry.counters.aiResponses + telemetry.counters.aiFailures)
-        : null),
-      providerCounts: telemetry.providerCounts
+      successRatePercent: calculatePercent(
+        telemetry.counters.aiResponses + telemetry.counters.aiFailures
+          ? telemetry.counters.aiResponses / (telemetry.counters.aiResponses + telemetry.counters.aiFailures)
+          : null,
+      ),
+      providerCounts: telemetry.providerCounts,
     },
     runtime: {
       uptimeSeconds: Math.max(0, Math.floor(process.uptime())),
@@ -124,31 +131,53 @@ export function buildPublicKernelSnapshot() {
         heapUsedBytes: mem.heapUsed,
         heapTotalBytes: mem.heapTotal,
         externalBytes: mem.external,
-        arrayBuffersBytes: mem.arrayBuffers
-      }
+        arrayBuffersBytes: mem.arrayBuffers,
+      },
     },
     circuits: {
       pulse: { ...pickNumbers(state.nadi, ['bpm', 'phase', 'coherence', 'beat_count']), pulse_wave: pulseWave },
-      homeostasis: pickNumbers(state.intero, ['energy', 'thermal_load', 'memory_pressure', 'social_battery', 'allostatic_load']),
-      neuromodulators: pickNumbers(state.neuro, ['dopamine', 'serotonin', 'norepinephrine', 'acetylcholine', 'cortisol', 'oxytocin']),
+      homeostasis: pickNumbers(state.intero, [
+        'energy',
+        'thermal_load',
+        'memory_pressure',
+        'social_battery',
+        'allostatic_load',
+      ]),
+      neuromodulators: pickNumbers(state.neuro, [
+        'dopamine',
+        'serotonin',
+        'norepinephrine',
+        'acetylcholine',
+        'cortisol',
+        'oxytocin',
+      ]),
       syntheticAffect: {
         valence: safeNumber(state.affect?.valence),
         arousal: safeNumber(state.affect?.arousal),
         dominance: safeNumber(state.affect?.dominance),
         empathyResonance: safeNumber(state.affect?.empathy_resonance),
-        dominantLabel: typeof state.affect?.dominant_emotion === 'string' ? state.affect.dominant_emotion.slice(0, 32) : null,
-        occProfile: state.affect?.occ_profile && typeof state.affect.occ_profile === 'object'
-          ? Object.fromEntries(Object.entries(state.affect.occ_profile).slice(0, 12).map(([key, value]) => [String(key).slice(0, 24), safeNumber(value)]))
-          : {}
+        dominantLabel:
+          typeof state.affect?.dominant_emotion === 'string' ? state.affect.dominant_emotion.slice(0, 32) : null,
+        occProfile:
+          state.affect?.occ_profile && typeof state.affect.occ_profile === 'object'
+            ? Object.fromEntries(
+                Object.entries(state.affect.occ_profile)
+                  .slice(0, 12)
+                  .map(([key, value]) => [String(key).slice(0, 24), safeNumber(value)]),
+              )
+            : {},
       },
       predictiveSelfModel: {
         agencyScore: safeNumber(state.diri?.agency_score),
         continuityIndex: safeNumber(state.diri?.continuity_index),
-        coreValues: Array.isArray(state.diri?.core_values) ? state.diri.core_values.slice(0, 12).map(value => String(value).slice(0, 48)) : []
+        coreValues: Array.isArray(state.diri?.core_values)
+          ? state.diri.core_values.slice(0, 12).map(value => String(value).slice(0, 48))
+          : [],
       },
       deliberation: {
-        selectedPolicy: typeof state.volition?.selected_policy === 'string' ? state.volition.selected_policy.slice(0, 64) : null,
-        policyEvaluations: evaluations
+        selectedPolicy:
+          typeof state.volition?.selected_policy === 'string' ? state.volition.selected_policy.slice(0, 64) : null,
+        policyEvaluations: evaluations,
       },
       integration: {
         integrationPhiProxy: safeNumber(metrics.integration_phi),
@@ -158,28 +187,36 @@ export function buildPublicKernelSnapshot() {
         totalPercepts: safeNumber(metrics.total_percepts),
         totalActions: safeNumber(metrics.total_actions),
         totalSleepCycles: safeNumber(metrics.total_sleep_cycles),
-        blockedActions: safeNumber(metrics.blocked_actions)
+        blockedActions: safeNumber(metrics.blocked_actions),
       },
       memoryLedger: {
         chainLength: safeNumber(memory.total_blocks),
         headHashPrefix: safeHashPrefix(memory.head_hash),
-        integrityState: status.ready && memory.chain_valid === true ? 'valid' : status.ready && memory.chain_valid === false ? 'invalid' : 'unavailable'
-      }
+        integrityState:
+          status.ready && memory.chain_valid === true
+            ? 'valid'
+            : status.ready && memory.chain_valid === false
+              ? 'invalid'
+              : 'unavailable',
+      },
     },
     activity: {
       hourly: telemetry.hourly,
       recentEvents: telemetry.recentEvents,
       firstTelemetryAt: telemetry.firstSeenAt,
-      lastTelemetryAt: telemetry.updatedAt
+      lastTelemetryAt: telemetry.updatedAt,
     },
     definitions: {
       responseSuccessRate: 'AI answer deliveries divided by completed AI requests (answers + failures).',
-      responseLatency: 'End-to-end time from the start of an AI request to the completed runtime result; rolling sample of up to 512 answers.',
-      integrationPhi: 'Synthetic functional-integration proxy implemented by NADI; not a measurement of phenomenal consciousness or IIT Phi.',
-      workspaceEntropy: 'Normalized Shannon entropy proxy over positive epistemic values in the current EFE policy evaluations.',
+      responseLatency:
+        'End-to-end time from the start of an AI request to the completed runtime result; rolling sample of up to 512 answers.',
+      integrationPhi:
+        'Synthetic functional-integration proxy implemented by NADI; not a measurement of phenomenal consciousness or IIT Phi.',
+      workspaceEntropy:
+        'Normalized Shannon entropy proxy over positive epistemic values in the current EFE policy evaluations.',
       pulse: 'Software oscillator rate calculated by the NADI model, not a biological heartbeat.',
-      energy: 'Normalized computational homeostasis variable, not physical energy.'
-    }
+      energy: 'Normalized computational homeostasis variable, not physical energy.',
+    },
   };
 }
 
@@ -273,7 +310,7 @@ function writeResponse(response, statusCode, contentType, body, extra = {}) {
     'Referrer-Policy': 'no-referrer',
     'X-Frame-Options': 'DENY',
     'Cross-Origin-Resource-Policy': 'same-origin',
-    ...extra
+    ...extra,
   });
   response.end(payload);
 }
@@ -301,23 +338,32 @@ export async function handleKernelDashboardRoute({ request, response, url }) {
   const parts = url.pathname.split('/').filter(Boolean);
   if (parts[0] !== 'kernel' || !parts[1]) return false;
   const suppliedHash = crypto.createHash('sha256').update(String(parts[1])).digest();
-  if (!dashboardTokenHash || suppliedHash.length !== dashboardTokenHash.length || !crypto.timingSafeEqual(suppliedHash, dashboardTokenHash)) {
+  if (
+    !dashboardTokenHash ||
+    suppliedHash.length !== dashboardTokenHash.length ||
+    !crypto.timingSafeEqual(suppliedHash, dashboardTokenHash)
+  ) {
     writeResponse(response, 404, 'text/plain; charset=utf-8', 'Dashboard tidak ditemukan.');
     return true;
   }
   if (!rateAllowed(request)) {
-    writeResponse(response, 429, 'application/json; charset=utf-8', JSON.stringify({ error: 'rate_limited' }), { 'Retry-After': '60' });
+    writeResponse(response, 429, 'application/json; charset=utf-8', JSON.stringify({ error: 'rate_limited' }), {
+      'Retry-After': '60',
+    });
     return true;
   }
   const suffix = parts.slice(2).join('/');
   if (request.method !== 'GET') {
-    writeResponse(response, 405, 'application/json; charset=utf-8', JSON.stringify({ error: 'method_not_allowed' }), { Allow: 'GET' });
+    writeResponse(response, 405, 'application/json; charset=utf-8', JSON.stringify({ error: 'method_not_allowed' }), {
+      Allow: 'GET',
+    });
     return true;
   }
   if (!suffix) {
     writeResponse(response, 200, 'text/html; charset=utf-8', dashboardHtml(), {
-      'Content-Security-Policy': "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
-      'Permissions-Policy': 'camera=(), microphone=(), geolocation=()'
+      'Content-Security-Policy':
+        "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+      'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
     });
     return true;
   }
@@ -339,6 +385,6 @@ export async function publishKernelDashboard() {
     url,
     created: true,
     public: true,
-    privacy: 'Aggregate operational telemetry only; no chat text, phone numbers, JIDs, or private memory.'
+    privacy: 'Aggregate operational telemetry only; no chat text, phone numbers, JIDs, or private memory.',
   };
 }

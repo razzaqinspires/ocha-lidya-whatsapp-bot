@@ -4,6 +4,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { createReadStream, createWriteStream } from 'node:fs';
 import { finished } from 'node:stream/promises';
+import { getRuntimeSettings } from '../core/runtime-settings.js';
 
 const VERSION = 1;
 const locks = new Map();
@@ -14,7 +15,9 @@ const canonical = value => JSON.stringify(value);
 const monthOf = value => String(value || new Date().toISOString()).slice(0, 7);
 
 function normalizeUserId(userId) {
-  const value = String(userId || '').trim().replace(/:\d+(?=@)/, '');
+  const value = String(userId || '')
+    .trim()
+    .replace(/:\d+(?=@)/, '');
   if (!value || value.length > 160 || /@g\.us$|@broadcast$|@newsletter$/i.test(value)) {
     throw new TypeError('Private User Vault hanya menerima identitas pengguna, bukan grup atau broadcast.');
   }
@@ -24,20 +27,24 @@ function normalizeUserId(userId) {
   return value;
 }
 
-function userKey(userId) { return hash(normalizeUserId(userId)); }
+function userKey(userId) {
+  return hash(normalizeUserId(userId));
+}
 function rootDirectory() {
-  return path.resolve(process.env.OCHA_ROO_ROOT || path.join(process.cwd(), 'data', 'roo'));
+  return path.resolve(getRuntimeSettings().paths.rooRoot || path.join(process.cwd(), 'data', 'roo'));
 }
 function safeChild(parent, child) {
   const resolved = path.resolve(parent, child);
-  if (resolved !== parent && !resolved.startsWith(`${parent}${path.sep}`)) throw new Error('User Vault path traversal ditolak.');
+  if (resolved !== parent && !resolved.startsWith(`${parent}${path.sep}`))
+    throw new Error('User Vault path traversal ditolak.');
   return resolved;
 }
 
 async function ensureDirectory(directory, mode = 0o700) {
   await fs.mkdir(directory, { recursive: true, mode });
   const stat = await fs.lstat(directory);
-  if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error(`User Vault menolak direktori tidak aman: ${path.basename(directory)}`);
+  if (!stat.isDirectory() || stat.isSymbolicLink())
+    throw new Error(`User Vault menolak direktori tidak aman: ${path.basename(directory)}`);
   await fs.chmod(directory, mode).catch(() => {});
 }
 
@@ -48,13 +55,15 @@ async function masterKey() {
     await ensureDirectory(root);
     const configured = String(process.env.OCHA_ROO_MASTER_KEY || '').trim();
     if (configured) {
-      if (!/^[a-f0-9]{64}$/i.test(configured)) throw new Error('OCHA_ROO_MASTER_KEY harus berupa 64 karakter hexadecimal (32 byte).');
+      if (!/^[a-f0-9]{64}$/i.test(configured))
+        throw new Error('OCHA_ROO_MASTER_KEY harus berupa 64 karakter hexadecimal (32 byte).');
       return Buffer.from(configured, 'hex');
     }
     const file = safeChild(root, '.master-key');
     try {
       const stat = await fs.lstat(file);
-      if (!stat.isFile() || stat.isSymbolicLink() || stat.size !== 32) throw new Error('File kunci User Vault tidak valid.');
+      if (!stat.isFile() || stat.isSymbolicLink() || stat.size !== 32)
+        throw new Error('File kunci User Vault tidak valid.');
       await fs.chmod(file, 0o600).catch(() => {});
       return await fs.readFile(file);
     } catch (error) {
@@ -63,19 +72,28 @@ async function masterKey() {
     const generated = crypto.randomBytes(32);
     try {
       const handle = await fs.open(file, 'wx', 0o600);
-      try { await handle.writeFile(generated); await handle.sync(); }
-      finally { await handle.close(); }
+      try {
+        await handle.writeFile(generated);
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
       return generated;
     } catch (error) {
       if (error.code !== 'EEXIST') throw error;
       const existing = await fs.readFile(file);
-      if (existing.length !== 32) throw new Error('Race pembuatan kunci User Vault menghasilkan file yang tidak valid.');
+      if (existing.length !== 32)
+        throw new Error('Race pembuatan kunci User Vault menghasilkan file yang tidak valid.');
       return existing;
     }
   })();
   keyCache.set(root, promise);
-  try { return await promise; }
-  catch (error) { keyCache.delete(root); throw error; }
+  try {
+    return await promise;
+  } catch (error) {
+    keyCache.delete(root);
+    throw error;
+  }
 }
 
 async function userDirectories(userId) {
@@ -91,7 +109,7 @@ async function userDirectories(userId) {
     conversations: safeChild(user, 'conversations'),
     projects: safeChild(user, 'projects'),
     index: safeChild(user, 'index'),
-    journal: safeChild(user, 'journal')
+    journal: safeChild(user, 'journal'),
   };
   for (const directory of Object.values(directories).slice(1)) await ensureDirectory(directory);
   return { ...directories, id };
@@ -102,7 +120,11 @@ function encryptObject(value, key, aad) {
   const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
   cipher.setAAD(Buffer.from(aad));
   const ciphertext = Buffer.concat([cipher.update(Buffer.from(JSON.stringify(value))), cipher.final()]);
-  return { iv: iv.toString('base64'), tag: cipher.getAuthTag().toString('base64'), data: ciphertext.toString('base64') };
+  return {
+    iv: iv.toString('base64'),
+    tag: cipher.getAuthTag().toString('base64'),
+    data: ciphertext.toString('base64'),
+  };
 }
 function decryptObject(envelope, key, aad) {
   try {
@@ -126,8 +148,12 @@ async function userEncryptionKey(userId) {
 async function atomicWrite(file, data) {
   const temporary = `${file}.${process.pid}.${crypto.randomUUID()}.tmp`;
   const handle = await fs.open(temporary, 'wx', 0o600);
-  try { await handle.writeFile(data); await handle.sync(); }
-  finally { await handle.close(); }
+  try {
+    await handle.writeFile(data);
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
   await fs.rename(temporary, file);
   await fs.chmod(file, 0o600).catch(() => {});
 }
@@ -137,18 +163,34 @@ async function withUserLock(id, operation) {
   const current = prior.catch(() => {}).then(operation);
   const marker = current.catch(() => {});
   locks.set(id, marker);
-  try { return await current; }
-  finally { if (locks.get(id) === marker) locks.delete(id); }
+  try {
+    return await current;
+  } finally {
+    if (locks.get(id) === marker) locks.delete(id);
+  }
 }
 
 function rowHash(row) {
-  return hash(canonical({ version: row.version, seq: row.seq, createdAt: row.createdAt, prevHash: row.prevHash, iv: row.iv, tag: row.tag, data: row.data }));
+  return hash(
+    canonical({
+      version: row.version,
+      seq: row.seq,
+      createdAt: row.createdAt,
+      prevHash: row.prevHash,
+      iv: row.iv,
+      tag: row.tag,
+      data: row.data,
+    }),
+  );
 }
 
 async function listJournalFiles(directory) {
   const entries = await fs.readdir(directory, { withFileTypes: true });
-  return entries.filter(entry => entry.isFile() && /^\d{4}-\d{2}\.jsonl$/.test(entry.name))
-    .map(entry => entry.name).sort().map(name => safeChild(directory, name));
+  return entries
+    .filter(entry => entry.isFile() && /^\d{4}-\d{2}\.jsonl$/.test(entry.name))
+    .map(entry => entry.name)
+    .sort()
+    .map(name => safeChild(directory, name));
 }
 
 async function readRowsFromFile(file, { onRow, reverse = false } = {}) {
@@ -172,19 +214,27 @@ async function readRowsFromFile(file, { onRow, reverse = false } = {}) {
           if (!parts[i]) continue;
           lineNo++;
           let row;
-          try { row = JSON.parse(parts[i]); }
-          catch { throw new Error(`JSONL User Vault rusak pada ${path.basename(file)} dekat baris akhir ${lineNo}.`); }
-          if (await onRow(row) === false) return;
+          try {
+            row = JSON.parse(parts[i]);
+          } catch {
+            throw new Error(`JSONL User Vault rusak pada ${path.basename(file)} dekat baris akhir ${lineNo}.`);
+          }
+          if ((await onRow(row)) === false) return;
         }
         position = start;
       }
       if (carry.trim()) {
         let row;
-        try { row = JSON.parse(carry); }
-        catch { throw new Error(`JSONL User Vault rusak pada ${path.basename(file)} baris pertama.`); }
+        try {
+          row = JSON.parse(carry);
+        } catch {
+          throw new Error(`JSONL User Vault rusak pada ${path.basename(file)} baris pertama.`);
+        }
         await onRow(row);
       }
-    } finally { await handle.close(); }
+    } finally {
+      await handle.close();
+    }
     return;
   }
   const input = createReadStream(file, { encoding: 'utf8' });
@@ -194,8 +244,11 @@ async function readRowsFromFile(file, { onRow, reverse = false } = {}) {
     lineNo++;
     if (!line) continue;
     let row;
-    try { row = JSON.parse(line); }
-    catch { throw new Error(`JSONL User Vault rusak pada ${path.basename(file)} baris ${lineNo}.`); }
+    try {
+      row = JSON.parse(line);
+    } catch {
+      throw new Error(`JSONL User Vault rusak pada ${path.basename(file)} baris ${lineNo}.`);
+    }
     await onRow(row);
   }
 }
@@ -217,9 +270,15 @@ async function verifyJournalIntegrity(directories, key) {
   for (const file of files) {
     const stat = await fs.stat(file);
     const cached = previousCache.get(file);
-    const signatureMatches = cached && cached.size === stat.size && cached.mtimeMs === stat.mtimeMs
-      && cached.ino === stat.ino && cached.device === stat.dev && cached.ctimeMs === stat.ctimeMs
-      && cached.startSeq === expectedSeq + 1 && cached.startPrevHash === previousHash;
+    const signatureMatches =
+      cached &&
+      cached.size === stat.size &&
+      cached.mtimeMs === stat.mtimeMs &&
+      cached.ino === stat.ino &&
+      cached.device === stat.dev &&
+      cached.ctimeMs === stat.ctimeMs &&
+      cached.startSeq === expectedSeq + 1 &&
+      cached.startPrevHash === previousHash;
     if (signatureMatches) {
       expectedSeq = cached.lastSeq;
       previousHash = cached.lastHash;
@@ -229,26 +288,40 @@ async function verifyJournalIntegrity(directories, key) {
     const startSeq = expectedSeq + 1;
     const startPrevHash = previousHash;
     let rowCount = 0;
-    await readRowsFromFile(file, { onRow: async row => {
-      if (row.seq !== expectedSeq + 1 || row.prevHash !== previousHash || row.hash !== rowHash(row)) {
-        const error = new Error('Integritas hash-chain User Vault gagal. Konteks AI dihentikan untuk mencegah penggunaan data rusak.');
-        error.code = 'OCHA_VAULT_INTEGRITY_FAILED';
-        throw error;
-      }
-      // Authenticate AES-GCM tags for every row in a changed segment. A local
-      // edit that recomputes the unkeyed row hash must still fail decryption.
-      await decryptRow(row, directories, key);
-      expectedSeq = row.seq;
-      previousHash = row.hash;
-      rowCount++;
-    } });
+    await readRowsFromFile(file, {
+      onRow: async row => {
+        if (row.seq !== expectedSeq + 1 || row.prevHash !== previousHash || row.hash !== rowHash(row)) {
+          const error = new Error(
+            'Integritas hash-chain User Vault gagal. Konteks AI dihentikan untuk mencegah penggunaan data rusak.',
+          );
+          error.code = 'OCHA_VAULT_INTEGRITY_FAILED';
+          throw error;
+        }
+        // Authenticate AES-GCM tags for every row in a changed segment. A local
+        // edit that recomputes the unkeyed row hash must still fail decryption.
+        await decryptRow(row, directories, key);
+        expectedSeq = row.seq;
+        previousHash = row.hash;
+        rowCount++;
+      },
+    });
     currentCache.set(file, {
-      size: stat.size, mtimeMs: stat.mtimeMs, ctimeMs: stat.ctimeMs, ino: stat.ino, device: stat.dev,
-      startSeq, startPrevHash, lastSeq: expectedSeq, lastHash: previousHash, rowCount
+      size: stat.size,
+      mtimeMs: stat.mtimeMs,
+      ctimeMs: stat.ctimeMs,
+      ino: stat.ino,
+      device: stat.dev,
+      startSeq,
+      startPrevHash,
+      lastSeq: expectedSeq,
+      lastHash: previousHash,
+      rowCount,
     });
   }
   if (previousCache.size && [...previousCache.keys()].some(file => !currentCache.has(file))) {
-    const error = new Error('Segmen arsip User Vault hilang atau berubah nama. Operasi dihentikan untuk menjaga integritas.');
+    const error = new Error(
+      'Segmen arsip User Vault hilang atau berubah nama. Operasi dihentikan untuk menjaga integritas.',
+    );
     error.code = 'OCHA_VAULT_INTEGRITY_FAILED';
     throw error;
   }
@@ -257,9 +330,39 @@ async function verifyJournalIntegrity(directories, key) {
 }
 
 function indexTokens(text) {
-  const stop = new Set(['yang','dan','atau','dengan','untuk','dari','pada','ini','itu','aku','saya','kamu','dia','the','and','for','with','was','are','jadi','karena','kalau']);
-  return [...new Set(String(text || '').toLocaleLowerCase('id-ID').match(/[\p{L}]{3,}|[\p{N}]{1,}/gu) || [])]
-    .filter(word => !stop.has(word)).slice(0, 120);
+  const stop = new Set([
+    'yang',
+    'dan',
+    'atau',
+    'dengan',
+    'untuk',
+    'dari',
+    'pada',
+    'ini',
+    'itu',
+    'aku',
+    'saya',
+    'kamu',
+    'dia',
+    'the',
+    'and',
+    'for',
+    'with',
+    'was',
+    'are',
+    'jadi',
+    'karena',
+    'kalau',
+  ]);
+  return [
+    ...new Set(
+      String(text || '')
+        .toLocaleLowerCase('id-ID')
+        .match(/[\p{L}]{3,}|[\p{N}]{1,}/gu) || [],
+    ),
+  ]
+    .filter(word => !stop.has(word))
+    .slice(0, 120);
 }
 function searchIndexFile(directories, month) {
   return safeChild(directories.index, `conversation-${month}.vault`);
@@ -284,34 +387,59 @@ async function buildConversationIndex(file, directories, key, month) {
   for await (const line of lines) {
     if (!line) continue;
     let row;
-    try { row = JSON.parse(line); }
-    catch { throw new Error(`Tidak dapat membangun indeks percakapan: JSONL rusak pada ${path.basename(file)}.`); }
+    try {
+      row = JSON.parse(line);
+    } catch {
+      throw new Error(`Tidak dapat membangun indeks percakapan: JSONL rusak pada ${path.basename(file)}.`);
+    }
     const length = Buffer.byteLength(line) + 1;
-    if (row.version !== VERSION || !Number.isInteger(row.seq)) throw new Error('Schema row tidak valid saat membangun indeks percakapan.');
+    if (row.version !== VERSION || !Number.isInteger(row.seq))
+      throw new Error('Schema row tidak valid saat membangun indeks percakapan.');
     const event = await decryptRow(row, directories, key);
     if (event.type === 'conversation.turn') {
       const tokens = indexTokens(event.payload?.content);
-      if (tokens.length) documents.push({
-        seq: row.seq, createdAt: event.payload?.originalCreatedAt || event.createdAt, offset, length,
-        role: event.payload?.role === 'assistant' ? 'assistant' : 'user', tokens
-      });
+      if (tokens.length)
+        documents.push({
+          seq: row.seq,
+          createdAt: event.payload?.originalCreatedAt || event.createdAt,
+          offset,
+          length,
+          role: event.payload?.role === 'assistant' ? 'assistant' : 'user',
+          tokens,
+        });
     }
     lastSeq = row.seq;
     offset += length;
   }
   return { version: 1, month, journalSize: stat.size, lastSeq, documents };
 }
-async function updateConversationIndex({ directories, key, file, month, sequence, previousSize, line, createdAt, eventType, payload }) {
+async function updateConversationIndex({
+  directories,
+  key,
+  file,
+  month,
+  sequence,
+  previousSize,
+  line,
+  createdAt,
+  eventType,
+  payload,
+}) {
   const indexFile = searchIndexFile(directories, month);
   const stat = await fs.stat(file);
   let index = await readConversationIndex(directories, key, month);
   if (index?.journalSize === previousSize && index.lastSeq === sequence - 1) {
     if (eventType === 'conversation.turn') {
       const tokens = indexTokens(payload?.content);
-      if (tokens.length) index.documents.push({
-        seq: sequence, createdAt: payload?.originalCreatedAt || createdAt, offset: previousSize,
-        length: Buffer.byteLength(line), role: payload?.role === 'assistant' ? 'assistant' : 'user', tokens
-      });
+      if (tokens.length)
+        index.documents.push({
+          seq: sequence,
+          createdAt: payload?.originalCreatedAt || createdAt,
+          offset: previousSize,
+          length: Buffer.byteLength(line),
+          role: payload?.role === 'assistant' ? 'assistant' : 'user',
+          tokens,
+        });
     }
     index.lastSeq = sequence;
     index.journalSize = stat.size;
@@ -330,7 +458,9 @@ async function readIndexedConversationRow(doc, directories, key, month) {
     if (bytesRead !== doc.length) throw new Error('Pointer indeks percakapan tidak lengkap.');
     const row = JSON.parse(buffer.toString('utf8').trim());
     return decryptRow(row, directories, key);
-  } finally { await handle.close(); }
+  } finally {
+    await handle.close();
+  }
 }
 
 export async function appendUserVaultEvent(userId, type, payload = {}) {
@@ -347,11 +477,18 @@ export async function appendUserVaultEvent(userId, type, payload = {}) {
     row.hash = rowHash(row);
     const month = monthOf(createdAt);
     const file = safeChild(directories.journal, `${month}.jsonl`);
-    const previousSize = await fs.stat(file).then(stat => stat.size).catch(error => error.code === 'ENOENT' ? 0 : Promise.reject(error));
+    const previousSize = await fs
+      .stat(file)
+      .then(stat => stat.size)
+      .catch(error => (error.code === 'ENOENT' ? 0 : Promise.reject(error)));
     const line = `${canonical(row)}\n`;
     const handle = await fs.open(file, 'a', 0o600);
-    try { await handle.writeFile(line); await handle.sync(); }
-    finally { await handle.close(); }
+    try {
+      await handle.writeFile(line);
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
     await fs.chmod(file, 0o600).catch(() => {});
     // Retain verification checkpoints for closed monthly segments and advance
     // the active segment checkpoint using the row we just authenticated.
@@ -359,12 +496,30 @@ export async function appendUserVaultEvent(userId, type, payload = {}) {
     const prior = cache?.get(file);
     const stat = await fs.stat(file);
     cache?.set(file, {
-      size: stat.size, mtimeMs: stat.mtimeMs, ctimeMs: stat.ctimeMs, ino: stat.ino, device: stat.dev,
-      startSeq: prior?.startSeq ?? sequence, startPrevHash: prior?.startPrevHash ?? previousHash,
-      lastSeq: sequence, lastHash: row.hash, rowCount: (prior?.rowCount || 0) + 1
+      size: stat.size,
+      mtimeMs: stat.mtimeMs,
+      ctimeMs: stat.ctimeMs,
+      ino: stat.ino,
+      device: stat.dev,
+      startSeq: prior?.startSeq ?? sequence,
+      startPrevHash: prior?.startPrevHash ?? previousHash,
+      lastSeq: sequence,
+      lastHash: row.hash,
+      rowCount: (prior?.rowCount || 0) + 1,
     });
     try {
-      await updateConversationIndex({ directories, key, file, month, sequence, previousSize, line, createdAt, eventType: String(type || 'event'), payload });
+      await updateConversationIndex({
+        directories,
+        key,
+        file,
+        month,
+        sequence,
+        previousSize,
+        line,
+        createdAt,
+        eventType: String(type || 'event'),
+        payload,
+      });
     } catch {
       // The journal remains authoritative. Search lazily rebuilds a missing or
       // stale month index from its authenticated journal segment.
@@ -385,12 +540,18 @@ export async function readUserVaultEvents(userId, { types, limit = Infinity, rev
   const orderedFiles = reverse ? [...files].reverse() : files;
   for (const file of orderedFiles) {
     let reachedLimit = false;
-    await readRowsFromFile(file, { reverse, onRow: async row => {
-      const event = await decryptRow(row, directories, key);
-      if (accepted && !accepted.has(event.type)) return;
-      result.push(event);
-      if (result.length >= keep) { reachedLimit = true; return false; }
-    } });
+    await readRowsFromFile(file, {
+      reverse,
+      onRow: async row => {
+        const event = await decryptRow(row, directories, key);
+        if (accepted && !accepted.has(event.type)) return;
+        result.push(event);
+        if (result.length >= keep) {
+          reachedLimit = true;
+          return false;
+        }
+      },
+    });
     if (reachedLimit) break;
   }
   return result;
@@ -398,7 +559,8 @@ export async function readUserVaultEvents(userId, { types, limit = Infinity, rev
 
 export async function saveUserVaultSnapshot(userId, area, value) {
   const normalized = normalizeUserId(userId);
-  if (!/^(profile|memory|identity|preferences)$/.test(String(area || ''))) throw new TypeError('Area snapshot User Vault tidak dikenal.');
+  if (!/^(profile|memory|identity|preferences)$/.test(String(area || '')))
+    throw new TypeError('Area snapshot User Vault tidak dikenal.');
   const directories = await userDirectories(normalized);
   const key = await userEncryptionKey(normalized);
   const folder = directories[area] || directories.index;
@@ -412,7 +574,8 @@ export async function saveUserVaultSnapshot(userId, area, value) {
 
 export async function loadUserVaultSnapshot(userId, area) {
   const normalized = normalizeUserId(userId);
-  if (!/^(profile|memory|identity|preferences)$/.test(String(area || ''))) throw new TypeError('Area snapshot User Vault tidak dikenal.');
+  if (!/^(profile|memory|identity|preferences)$/.test(String(area || '')))
+    throw new TypeError('Area snapshot User Vault tidak dikenal.');
   const directories = await userDirectories(normalized);
   const key = await userEncryptionKey(normalized);
   const file = safeChild(directories[area] || directories.index, 'snapshot.vault');
@@ -428,28 +591,67 @@ export async function loadUserVaultSnapshot(userId, area) {
 }
 
 export async function getRecentUserConversationTurns(userId, { limit = 20 } = {}) {
-  const rows = await readUserVaultEvents(userId, { types: 'conversation.turn', limit: Math.max(1, Number(limit) || 20), reverse: true });
-  return rows.reverse().map(event => ({
-    role: event.payload?.role,
-    content: String(event.payload?.content || ''),
-    jobId: event.payload?.jobId || null,
-    createdAt: event.payload?.originalCreatedAt || event.createdAt
-  })).filter(turn => ['user', 'assistant'].includes(turn.role) && turn.content);
+  const rows = await readUserVaultEvents(userId, {
+    types: 'conversation.turn',
+    limit: Math.max(1, Number(limit) || 20),
+    reverse: true,
+  });
+  return rows
+    .reverse()
+    .map(event => ({
+      role: event.payload?.role,
+      content: String(event.payload?.content || ''),
+      jobId: event.payload?.jobId || null,
+      createdAt: event.payload?.originalCreatedAt || event.createdAt,
+    }))
+    .filter(turn => ['user', 'assistant'].includes(turn.role) && turn.content);
 }
 
 export async function getUserConversationTurnsForJobs(userId, jobIds = []) {
   const wanted = new Set((Array.isArray(jobIds) ? jobIds : [jobIds]).map(String));
   if (!wanted.size) return [];
   const rows = await readUserVaultEvents(userId, { types: 'conversation.turn' });
-  return rows.filter(event => wanted.has(String(event.payload?.jobId || ''))).map(event => ({
-    role: event.payload.role, content: String(event.payload.content || ''), jobId: event.payload.jobId,
-    createdAt: event.payload?.originalCreatedAt || event.createdAt
-  }));
+  return rows
+    .filter(event => wanted.has(String(event.payload?.jobId || '')))
+    .map(event => ({
+      role: event.payload.role,
+      content: String(event.payload.content || ''),
+      jobId: event.payload.jobId,
+      createdAt: event.payload?.originalCreatedAt || event.createdAt,
+    }));
 }
 
 function words(text) {
-  return [...new Set(String(text || '').toLocaleLowerCase('id-ID').match(/[\p{L}]{3,}|[\p{N}]{1,}/gu) || [])]
-    .filter(word => !new Set(['yang','dan','atau','dengan','untuk','dari','pada','ini','itu','aku','saya','kamu','dia','the','and','for','with','was','are']).has(word));
+  return [
+    ...new Set(
+      String(text || '')
+        .toLocaleLowerCase('id-ID')
+        .match(/[\p{L}]{3,}|[\p{N}]{1,}/gu) || [],
+    ),
+  ].filter(
+    word =>
+      !new Set([
+        'yang',
+        'dan',
+        'atau',
+        'dengan',
+        'untuk',
+        'dari',
+        'pada',
+        'ini',
+        'itu',
+        'aku',
+        'saya',
+        'kamu',
+        'dia',
+        'the',
+        'and',
+        'for',
+        'with',
+        'was',
+        'are',
+      ]).has(word),
+  );
 }
 
 export async function searchUserConversation(userId, query, { limit = 8 } = {}) {
@@ -479,14 +681,21 @@ export async function searchUserConversation(userId, query, { limit = 8 } = {}) 
       if (score >= 1.5) scored.push({ score, doc, month });
     }
   }
-  const selected = scored.sort((a, b) => b.score - a.score || String(b.doc.createdAt).localeCompare(String(a.doc.createdAt)))
+  const selected = scored
+    .sort((a, b) => b.score - a.score || String(b.doc.createdAt).localeCompare(String(a.doc.createdAt)))
     .slice(0, Math.max(1, Number(limit) || 8));
   const results = [];
   for (const item of selected) {
     const event = await readIndexedConversationRow(item.doc, directories, key, item.month);
     const content = String(event.payload?.content || '');
     const exactPhrase = content.toLocaleLowerCase('id-ID').includes(String(query).toLocaleLowerCase('id-ID').trim());
-    results.push({ score: item.score + (exactPhrase ? 2 : 0), role: event.payload?.role, content, jobId: event.payload?.jobId, createdAt: event.payload?.originalCreatedAt || event.createdAt });
+    results.push({
+      score: item.score + (exactPhrase ? 2 : 0),
+      role: event.payload?.role,
+      content,
+      jobId: event.payload?.jobId,
+      createdAt: event.payload?.originalCreatedAt || event.createdAt,
+    });
   }
   return results.sort((a, b) => b.score - a.score || String(b.createdAt).localeCompare(String(a.createdAt)));
 }
@@ -505,13 +714,15 @@ export async function getUserVaultStats(userId) {
   for (const file of files) {
     const stat = await fs.stat(file);
     bytes += stat.size;
-    await readRowsFromFile(file, { onRow: async row => {
-      const event = await decryptRow(row, directories, key);
-      events++;
-      byType[event.type] = (byType[event.type] || 0) + 1;
-      firstAt ||= event.createdAt;
-      lastAt = event.createdAt;
-    } });
+    await readRowsFromFile(file, {
+      onRow: async row => {
+        const event = await decryptRow(row, directories, key);
+        events++;
+        byType[event.type] = (byType[event.type] || 0) + 1;
+        firstAt ||= event.createdAt;
+        lastAt = event.createdAt;
+      },
+    });
   }
   return { events, bytes, firstAt, lastAt, byType, encrypted: true, directoryId: directories.id };
 }
@@ -524,20 +735,28 @@ export async function exportUserVaultTranscript(userId, outputPath) {
   const output = path.resolve(String(outputPath || ''));
   if (!outputPath || !path.isAbsolute(output)) throw new TypeError('Path ekspor User Vault harus absolut.');
   const stream = createWriteStream(output, { flags: 'wx', mode: 0o600 });
-  const waitForDrain = async () => new Promise((resolve, reject) => {
-    stream.once('drain', resolve);
-    stream.once('error', reject);
-  });
+  const waitForDrain = async () =>
+    new Promise((resolve, reject) => {
+      stream.once('drain', resolve);
+      stream.once('error', reject);
+    });
   try {
-    const header = { exportVersion: 1, exportedAt: new Date().toISOString(), scope: 'single-user-private-conversation', encryptedSource: true };
+    const header = {
+      exportVersion: 1,
+      exportedAt: new Date().toISOString(),
+      scope: 'single-user-private-conversation',
+      encryptedSource: true,
+    };
     if (!stream.write(`${canonical({ type: 'export.meta', payload: header })}\n`)) await waitForDrain();
     for (const file of files) {
-      await readRowsFromFile(file, { onRow: async row => {
-        const event = await decryptRow(row, directories, key);
-        if (event.type !== 'conversation.turn') return;
-        const line = canonical({ seq: event.seq, createdAt: event.createdAt, type: event.type, ...event.payload });
-        if (!stream.write(`${line}\n`)) await waitForDrain();
-      } });
+      await readRowsFromFile(file, {
+        onRow: async row => {
+          const event = await decryptRow(row, directories, key);
+          if (event.type !== 'conversation.turn') return;
+          const line = canonical({ seq: event.seq, createdAt: event.createdAt, type: event.type, ...event.payload });
+          if (!stream.write(`${line}\n`)) await waitForDrain();
+        },
+      });
     }
     stream.end();
     await finished(stream);
@@ -550,4 +769,7 @@ export async function exportUserVaultTranscript(userId, outputPath) {
   }
 }
 
-export function clearUserVaultKeyCache() { keyCache.clear(); verifiedJournalCache.clear(); }
+export function clearUserVaultKeyCache() {
+  keyCache.clear();
+  verifiedJournalCache.clear();
+}

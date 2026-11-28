@@ -1,7 +1,10 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { getRuntimeSettings } from '../core/runtime-settings.js';
 
-const DATA_FILE = path.resolve(process.env.OCHA_KERNEL_TELEMETRY_FILE || path.join(process.cwd(), 'data', 'kernel', 'telemetry.json'));
+const DATA_FILE = path.resolve(
+  getRuntimeSettings().paths.kernelTelemetryFile || path.join(process.cwd(), 'data', 'kernel', 'telemetry.json'),
+);
 const MAX_EVENTS = 48;
 const MAX_LATENCY_SAMPLES = 512;
 const MAX_HOURLY_BUCKETS = 24 * 14;
@@ -24,12 +27,12 @@ function emptyData() {
       aiResponses: 0,
       aiFailures: 0,
       aiCommandIntents: 0,
-      responseCharacters: 0
+      responseCharacters: 0,
     },
     providerCounts: {},
     latencySamplesMs: [],
     hourly: {},
-    recentEvents: []
+    recentEvents: [],
   };
 }
 
@@ -44,34 +47,50 @@ function normalizeData(value) {
   const counters = value.counters && typeof value.counters === 'object' ? value.counters : {};
   for (const key of Object.keys(base.counters)) base.counters[key] = finiteCount(counters[key]);
   const providers = value.providerCounts && typeof value.providerCounts === 'object' ? value.providerCounts : {};
-  base.providerCounts = Object.fromEntries(Object.entries(providers)
-    .filter(([key]) => /^[a-z0-9_-]{1,32}$/i.test(key))
-    .map(([key, count]) => [key, finiteCount(count)]));
+  base.providerCounts = Object.fromEntries(
+    Object.entries(providers)
+      .filter(([key]) => /^[a-z0-9_-]{1,32}$/i.test(key))
+      .map(([key, count]) => [key, finiteCount(count)]),
+  );
   base.firstSeenAt = typeof value.firstSeenAt === 'string' ? value.firstSeenAt : base.firstSeenAt;
   base.updatedAt = typeof value.updatedAt === 'string' ? value.updatedAt : base.updatedAt;
   base.latencySamplesMs = Array.isArray(value.latencySamplesMs)
-    ? value.latencySamplesMs.map(Number).filter(number => Number.isFinite(number) && number >= 0).slice(-MAX_LATENCY_SAMPLES)
+    ? value.latencySamplesMs
+        .map(Number)
+        .filter(number => Number.isFinite(number) && number >= 0)
+        .slice(-MAX_LATENCY_SAMPLES)
     : [];
-  base.hourly = value.hourly && typeof value.hourly === 'object' ? Object.fromEntries(
-    Object.entries(value.hourly)
-      .filter(([key, bucket]) => /^\d{4}-\d{2}-\d{2}T\d{2}$/.test(key) && bucket && typeof bucket === 'object')
-      .sort(([a], [b]) => a.localeCompare(b))
-      .slice(-MAX_HOURLY_BUCKETS)
-      .map(([key, bucket]) => [key, {
-        inbound: finiteCount(bucket.inbound),
-        responses: finiteCount(bucket.responses),
-        failures: finiteCount(bucket.failures)
-      }])
-  ) : {};
-  base.recentEvents = Array.isArray(value.recentEvents) ? value.recentEvents.slice(-MAX_EVENTS).filter(item =>
-    item && typeof item === 'object' && typeof item.ts === 'string' && typeof item.kind === 'string'
-  ).map(item => ({
-    ts: item.ts,
-    kind: String(item.kind).slice(0, 32),
-    channel: item.channel === 'group' ? 'group' : item.channel === 'private' ? 'private' : 'system',
-    ...(typeof item.provider === 'string' ? { provider: item.provider.slice(0, 32) } : {}),
-    ...(Number.isFinite(Number(item.latencyMs)) ? { latencyMs: Math.max(0, Number(item.latencyMs)) } : {})
-  })) : [];
+  base.hourly =
+    value.hourly && typeof value.hourly === 'object'
+      ? Object.fromEntries(
+          Object.entries(value.hourly)
+            .filter(([key, bucket]) => /^\d{4}-\d{2}-\d{2}T\d{2}$/.test(key) && bucket && typeof bucket === 'object')
+            .sort(([a], [b]) => a.localeCompare(b))
+            .slice(-MAX_HOURLY_BUCKETS)
+            .map(([key, bucket]) => [
+              key,
+              {
+                inbound: finiteCount(bucket.inbound),
+                responses: finiteCount(bucket.responses),
+                failures: finiteCount(bucket.failures),
+              },
+            ]),
+        )
+      : {};
+  base.recentEvents = Array.isArray(value.recentEvents)
+    ? value.recentEvents
+        .slice(-MAX_EVENTS)
+        .filter(
+          item => item && typeof item === 'object' && typeof item.ts === 'string' && typeof item.kind === 'string',
+        )
+        .map(item => ({
+          ts: item.ts,
+          kind: String(item.kind).slice(0, 32),
+          channel: item.channel === 'group' ? 'group' : item.channel === 'private' ? 'private' : 'system',
+          ...(typeof item.provider === 'string' ? { provider: item.provider.slice(0, 32) } : {}),
+          ...(Number.isFinite(Number(item.latencyMs)) ? { latencyMs: Math.max(0, Number(item.latencyMs)) } : {}),
+        }))
+    : [];
   return base;
 }
 
@@ -82,7 +101,9 @@ let persistQueue = Promise.resolve();
 let activeAiRequests = 0;
 let connection = { status: 'unknown', since: null, reconnects: 0 };
 
-function hourKey(date = new Date()) { return date.toISOString().slice(0, 13); }
+function hourKey(date = new Date()) {
+  return date.toISOString().slice(0, 13);
+}
 
 function ensureBucket(ts = new Date()) {
   const key = hourKey(ts);
@@ -97,8 +118,15 @@ function pushEvent(kind, channel = 'system', extra = {}) {
     ts: new Date().toISOString(),
     kind: String(kind).slice(0, 32),
     channel: ['group', 'private'].includes(channel) ? channel : 'system',
-    ...(extra.provider ? { provider: String(extra.provider).toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 32) } : {}),
-    ...(Number.isFinite(Number(extra.latencyMs)) ? { latencyMs: Math.max(0, Number(extra.latencyMs)) } : {})
+    ...(extra.provider
+      ? {
+          provider: String(extra.provider)
+            .toLowerCase()
+            .replace(/[^a-z0-9_-]/g, '')
+            .slice(0, 32),
+        }
+      : {}),
+    ...(Number.isFinite(Number(extra.latencyMs)) ? { latencyMs: Math.max(0, Number(extra.latencyMs)) } : {}),
   };
   data.recentEvents.push(event);
   if (data.recentEvents.length > MAX_EVENTS) data.recentEvents.splice(0, data.recentEvents.length - MAX_EVENTS);
@@ -109,15 +137,21 @@ function schedulePersist() {
   persistTimer = setTimeout(() => {
     persistTimer = null;
     const snapshot = JSON.stringify(data, null, 2);
-    persistQueue = persistQueue.then(async () => {
-      await fs.mkdir(path.dirname(DATA_FILE), { recursive: true, mode: 0o700 });
-      const temporary = `${DATA_FILE}.${process.pid}.tmp`;
-      await fs.writeFile(temporary, snapshot, { mode: 0o600 });
-      await fs.rename(temporary, DATA_FILE);
-    }).catch(error => {
-      // Telemetry must never interrupt message processing.
-      try { process.stderr.write(`[KERNEL TELEMETRY] persistence unavailable: ${String(error.message || error).slice(0, 180)}\n`); } catch {}
-    });
+    persistQueue = persistQueue
+      .then(async () => {
+        await fs.mkdir(path.dirname(DATA_FILE), { recursive: true, mode: 0o700 });
+        const temporary = `${DATA_FILE}.${process.pid}.tmp`;
+        await fs.writeFile(temporary, snapshot, { mode: 0o600 });
+        await fs.rename(temporary, DATA_FILE);
+      })
+      .catch(error => {
+        // Telemetry must never interrupt message processing.
+        try {
+          process.stderr.write(
+            `[KERNEL TELEMETRY] persistence unavailable: ${String(error.message || error).slice(0, 180)}\n`,
+          );
+        } catch {}
+      });
   }, 350);
   persistTimer.unref?.();
 }
@@ -183,14 +217,20 @@ export function beginAIRequest({ isGroup = false } = {}) {
 }
 
 export function finishAIRequest({
-  outcome = 'failure', isGroup = false, latencyMs = null,
-  provider = null, outputChars = 0
+  outcome = 'failure',
+  isGroup = false,
+  latencyMs = null,
+  provider = null,
+  outputChars = 0,
 } = {}) {
   activeAiRequests = Math.max(0, activeAiRequests - 1);
   const channel = isGroup ? 'group' : 'private';
   const normalizedLatency = Number(latencyMs);
   const hasLatency = Number.isFinite(normalizedLatency) && normalizedLatency >= 0;
-  const cleanProvider = String(provider || '').toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 32);
+  const cleanProvider = String(provider || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, '')
+    .slice(0, 32);
   mutate(() => {
     if (outcome === 'response') {
       data.counters.aiResponses += 1;
@@ -198,10 +238,14 @@ export function finishAIRequest({
       ensureBucket().responses += 1;
       if (hasLatency) {
         data.latencySamplesMs.push(Math.round(normalizedLatency * 100) / 100);
-        if (data.latencySamplesMs.length > MAX_LATENCY_SAMPLES) data.latencySamplesMs.splice(0, data.latencySamplesMs.length - MAX_LATENCY_SAMPLES);
+        if (data.latencySamplesMs.length > MAX_LATENCY_SAMPLES)
+          data.latencySamplesMs.splice(0, data.latencySamplesMs.length - MAX_LATENCY_SAMPLES);
       }
       if (cleanProvider) data.providerCounts[cleanProvider] = finiteCount(data.providerCounts[cleanProvider]) + 1;
-      pushEvent('ai.response_delivered', channel, { provider: cleanProvider, latencyMs: hasLatency ? normalizedLatency : undefined });
+      pushEvent('ai.response_delivered', channel, {
+        provider: cleanProvider,
+        latencyMs: hasLatency ? normalizedLatency : undefined,
+      });
     } else if (outcome === 'command') {
       data.counters.aiCommandIntents += 1;
       pushEvent('ai.command_routed', channel);
@@ -235,7 +279,7 @@ export function getKernelTelemetrySnapshot() {
   const samples = data.latencySamplesMs;
   const averageLatencyMs = samples.length ? samples.reduce((sum, value) => sum + value, 0) / samples.length : null;
   const completed = counters.aiResponses + counters.aiFailures;
-  const successRate = completed ? counters.aiResponses / completed * 100 : null;
+  const successRate = completed ? (counters.aiResponses / completed) * 100 : null;
   const now = new Date();
   const hourly = Array.from({ length: 24 }, (_, index) => {
     const date = new Date(now.getTime() - (23 - index) * 60 * 60 * 1000);
@@ -250,13 +294,13 @@ export function getKernelTelemetrySnapshot() {
       averageMs: averageLatencyMs === null ? null : Math.round(averageLatencyMs * 100) / 100,
       p95Ms: percentile(samples, 0.95),
       minMs: samples.length ? Math.min(...samples) : null,
-      maxMs: samples.length ? Math.max(...samples) : null
+      maxMs: samples.length ? Math.max(...samples) : null,
     },
     providerCounts: { ...data.providerCounts },
     hourly,
     recentEvents: [...data.recentEvents].reverse(),
     firstSeenAt: data.firstSeenAt,
-    updatedAt: data.updatedAt
+    updatedAt: data.updatedAt,
   };
 }
 

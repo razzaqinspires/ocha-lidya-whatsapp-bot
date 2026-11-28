@@ -47,17 +47,26 @@ test('Ocha NADI client connects to the separate AC component over loopback HTTP 
     try {
       const started = await runtime.startConsciousnessRuntime();
       assert.equal(started.ready, true, started.lastError || 'NADI did not become ready');
-      assert.equal(started.componentVersion, '2.1.1');
+      assert.equal(started.componentVersion, '2.1.2');
       assert.equal(started.componentSource, 'external-directory');
+      const percept = await runtime.perceiveConsciousness({ senderId: 'test-user-01', message: 'Aku sangat senang, terima kasih. Ini berhasil dengan baik.', consentGranted: true });
+      assert.equal(percept.status, 'ok');
+      assert.equal(percept.cycle.committed_block_index, null);
       const status = await runtime.readConsciousnessStatus();
-      assert.ok(status.kernel_version === '2.1.1');
-      assert.ok(status.heartbeat?.running === true);
+      assert.ok(status.kernel_version === '2.1.2');
+      assert.equal(typeof status.heartbeat?.running, 'boolean');
+      assert.ok(status.affect?.mood_profile?.overall_percent >= 0);
+      assert.ok(status.affect?.mood_profile?.overall_percent <= 100);
+      assert.ok(status.affect?.mood_profile?.occ_percentages);
+      assert.ok(status.affect?.mood_profile?.response_guidance);
       const integrity = await runtime.verifyConsciousnessMemory();
       assert.equal(integrity.valid, true);
       const tick = await runtime.tickConsciousnessNow();
       assert.equal(tick.status, 'ok');
       const prompt = runtime.getConsciousnessPrompt();
       assert.match(prompt, /EXTERNAL RUNTIME TELEMETRY/);
+      assert.match(prompt, /Affective mood profile: overall=/);
+      assert.match(prompt, /OCC emotion intensities/);
       assert.ok(prompt.includes('Heartbeat: ') && prompt.includes(' bpm;'));
       console.log(JSON.stringify({
         ready: started.ready,
@@ -65,6 +74,7 @@ test('Ocha NADI client connects to the separate AC component over loopback HTTP 
         componentSource: started.componentSource,
         heartbeatRunning: status.heartbeat.running,
         ledgerValid: integrity.valid,
+        moodProfile: status.affect.mood_profile,
         tickStatus: tick.status,
         promptTelemetry: prompt.includes('EXTERNAL RUNTIME TELEMETRY')
       }));

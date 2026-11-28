@@ -28,9 +28,13 @@ The raw key is shown only once. Only SHA-256 hashes are stored in the JSONL repo
 The local API listens on `127.0.0.1:8788` by default. Optional quick tunnel:
 
 ```dotenv
-OCHA_RENTAL_API_HOST=127.0.0.1
-OCHA_RENTAL_API_PORT=8788
-OCHA_RENTAL_API_TUNNEL=1
+{
+  "rentalApi": {
+    "host": "127.0.0.1",
+    "port": 8788,
+    "tunnel": true
+  }
+}
 CLOUDFLARED_BIN=cloudflared
 ```
 

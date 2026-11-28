@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { getRuntimeSettings } from '../core/runtime-settings.js';
 
 const require = createRequire(import.meta.url);
 const PACKAGE_NAME = '@razzaqventures/ocha-private-runtime';
@@ -22,7 +23,7 @@ let runtimeState = {
 let warningLogged = false;
 
 export function isPrivateRuntimeRequired() {
-  return /^(?:1|true|yes|on)$/i.test(String(process.env.OCHA_PRIVATE_RUNTIME_REQUIRED || '').trim());
+  return getRuntimeSettings().privateRuntime.required;
 }
 
 async function resolveDirectoryEntry(directory, source) {
@@ -37,7 +38,7 @@ async function resolveDirectoryEntry(directory, source) {
 }
 
 async function resolvePrivateEntry() {
-  const configured = String(process.env.OCHA_PRIVATE_RUNTIME_PATH || '').trim();
+  const configured = String(getRuntimeSettings().privateRuntime.path || '').trim();
   if (configured) {
     const target = path.resolve(configured);
     const stat = await fs.stat(target);

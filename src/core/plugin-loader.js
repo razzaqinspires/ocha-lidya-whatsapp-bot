@@ -6,6 +6,7 @@ import { pathToFileURL } from 'node:url';
 import { watchFiles } from './file-watcher.js';
 import { logger } from './logger.js';
 import { isRuntimeWatchIgnored } from './watch-policy.js';
+import { isPrivatePluginSourcePath } from './private-source-policy.js';
 import { canCommitSourceBatch, classifySourceBatch, DEPENDENCY_MANIFESTS, validateJsonFile } from './source-batch.js';
 import { loadGeneratedCommandPlugins } from '../acie/command-engine/runtime-commands.js';
 import { isPrivateRuntimeRequired, loadPrivateRuntime } from '../private-runtime/loader.js';
@@ -44,7 +45,12 @@ async function walkJavaScript(directory, files = []) {
     if (entry.name === 'node_modules' || entry.name === '.git') continue;
     const full = path.join(directory, entry.name);
     if (entry.isDirectory()) await walkJavaScript(full, files);
-    else if (entry.isFile() && entry.name.endsWith('.js')) files.push(full);
+    else if (
+      entry.isFile() &&
+      entry.name.endsWith('.js') &&
+      !isPrivatePluginSourcePath(path.relative(PROJECT_ROOT, full))
+    )
+      files.push(full);
   }
   return files.sort();
 }

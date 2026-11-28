@@ -49,7 +49,7 @@ No `CHANGELOG.md`, `PROJECT_STRUCTURE.md`, or `OPERATOR_BUNDLE.json` file is kep
 ├── src/                                # Public application source and compatibility facades
 │   ├── acie/
 │   ├── ai/
-│   ├── core/
+│   ├── core/                           # Includes shared private-source policy + plugin loader
 │   ├── lib/
 │   ├── plugins/
 │   ├── private-runtime/                # Public optional loader and compatibility adapters
@@ -62,8 +62,8 @@ No `CHANGELOG.md`, `PROJECT_STRUCTURE.md`, or `OPERATOR_BUNDLE.json` file is kep
 
 - Four owner-designated original modules remain byte-identical under `.private/ocha-private-runtime/`. Their SHA-256 values and byte sizes are recorded in the private manifest.
 - Public source contains only compatibility facades, the optional loader, and host adapters. Public installation can run without the private package.
-- When `OCHA_PRIVATE_RUNTIME_REQUIRED=1`, startup fails closed if the private runtime is missing or invalid.
-- The `.test` message test command is supplied only through the private runtime and must satisfy the owner-only/private-only contract and command collision checks.
+- When `privateRuntime.required` is `true` in `config/runtime.json`, startup fails closed if the private runtime is missing or invalid.
+- The `.test` message test command is supplied only through the private runtime and must satisfy the owner-only/private-only contract and command collision checks. `src/core/private-source-policy.js` excludes its private source path from public plugin traversal, ACIE static command discovery, and operator release packaging; `src/plugins/owner/message-test-catalog.js` remains a permitted host bridge.
 - The Python Artificial Consciousness Component remains a separate sibling base. Ocha consumes it through the versioned HTTP API; Python source is not copied into `src/`.
 
 ## Documentation and release metadata locations
@@ -108,3 +108,29 @@ flowchart TD
 ```
 
 Relevant source: `src/core/menu-renderer.js`, `src/plugins/general/menu.js`, `src/plugins/owner/setmenu.js`, `src/config.js`, and `test/menu-design-settings.test.js`.
+
+## Private source traversal policy — v1.10.59
+
+`src/core/private-source-policy.js` is the single exact-path exclusion used by `src/core/plugin-loader.js`, `src/acie/command-engine/command-generation.js`, and `scripts/release-policy.js`. It prevents a private-runtime plugin source copy from becoming a public plugin descriptor, ACIE collision candidate, or operator-bundle file. The `.test` plugin is registered only by the private runtime after integrity and owner/private/collision checks. The policy is path-specific; it does not mask the public message-test catalog bridge. Regression coverage is in `test/private-source-policy.test.js`.
+
+## Local Llama final fallback (v1.10.61)
+
+- `scripts/bootstrap/llama-runtime.js`: prestart/predev runtime detection and optional official Ollama installation. It must not start inference server or download model weights.
+- `src/ai/llama-runtime.js`: lazy detached Ollama server lifecycle, model pull-on-demand, `/api/chat` request, output validation and owner notification.
+- `src/ai/providers.js`: invokes `llama-local` only after the complete configured remote chain and ChatNivo have failed.
+- `config/runtime.json#/llama`: non-secret runtime settings. Local endpoint defaults to loopback.
+- `src/runtime/consciousness-runtime.js`: reads AC mood profile and builds response-style guidance.
+- `.private/artificial-consciousness-component/ac/rasa.py`: derived mood percentages and OCC intensity map; serialized in NADI v1 status.
+
+## Runtime fallback and mood flow
+
+```mermaid
+flowchart TD
+  A[AI request] --> B[Primary provider chain]
+  B --> C[ChatNivo adapter]
+  C -->|all unavailable| D[Ollama local runtime]
+  D --> E[Lazy detached server + on-demand model pull]
+  E --> F[Validated local completion]
+```
+
+`src/ai/llama-runtime.js` owns only local runtime lifecycle and inference. `scripts/bootstrap/llama-runtime.js` prepares the runtime without starting it. Ocha calls the existing NADI `/v1/perceive` endpoint per AI turn with sender-scoped processing and raw-text persistence disabled. The AC mood profile is derived in `.private/artificial-consciousness-component/ac/rasa.py`, returned as part of the existing NADI v1 affect object, and translated to response-style guidance by `src/runtime/consciousness-runtime.js`.

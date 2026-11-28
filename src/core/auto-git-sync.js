@@ -16,12 +16,13 @@ import {
   isPrivatePublicationPath,
   scanSecrets,
 } from './publication-policy.js';
+import { getRuntimeSettings } from './runtime-settings.js';
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const REPOSITORY = 'razzaqinspires/ocha-lidya-whatsapp-bot';
 const BRANCH = 'main';
 const QUIET_WINDOW_MS = 2200;
-const PRETTIER_COMMAND = process.env.OCHA_PRETTIER_BIN || 'npx';
+const PRETTIER_COMMAND = getRuntimeSettings().tooling.prettierBin || 'npx';
 
 function run(command, args, options = {}) {
   return new Promise((resolve, reject) => {
@@ -426,7 +427,6 @@ export async function startAutoGitSync({ root = PROJECT_ROOT, enabled = true, wa
       if (relative === '.env') {
         if (event === 'unlink') {
           delete process.env.GITHUB_PAT;
-          delete process.env.AC_GITHUB_PAT;
           logger.warn('.env dihapus; auto-push dihentikan sampai token disediakan kembali');
         } else {
           dotenv.config({ path: path.join(PROJECT_ROOT, '.env'), override: true });

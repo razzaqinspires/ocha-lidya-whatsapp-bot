@@ -9,7 +9,7 @@ This roadmap follows Ocha v1.10.57 and AC v2.1.1. Items are proposals, not claim
 3. **Retry policy.** Add bounded exponential backoff for transient network failures, while not retrying auth, policy, non-fast-forward, branch mismatch, or secret-scan failures. Preserve local commits on failure.
 4. **Preflight and health.** Surface `READY`, `TOKEN_MISSING`, `REMOTE_UNREACHABLE`, `AUTH_FAILED`, `DIRTY`, `DIVERGED`, and `BLOCKED_PRIVATE_INDEX` separately. A `READY` state must not be interpreted as successful GitHub publication.
 5. **Release attestation.** Produce signed/hashed manifests for both operator ZIPs, source provenance, ignore-policy results, test results, and whether a remote write was actually confirmed.
-6. **Environment scanner.** After dependencies are installed, regenerate `.env.example` and `docs/ENVIRONMENT_VARIABLES.md`, confirm `AC_GITHUB_PAT` appears as a secret, and run `npm run env:check`, `npm test` and docs/security checks.
+6. **Environment scanner.** After dependencies are installed, regenerate `.env.example` and `docs/ENVIRONMENT_VARIABLES.md`, confirm the shared `GITHUB_PAT` appears once as a secret for both repository lanes, and run `npm run env:check`, `npm test` and docs/security checks.
 
 ## Artificial Consciousness — continuous maintenance
 

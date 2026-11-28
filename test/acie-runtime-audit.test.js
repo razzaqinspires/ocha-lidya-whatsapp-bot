@@ -111,6 +111,6 @@ test('runtime audit CLI emits machine-readable JSON without plugin log contamina
   assert.equal(result.status, 0, result.stderr || result.stdout);
   const audit = JSON.parse(result.stdout);
   assert.equal(audit.project, 'Ocha Lidya AI');
-  assert.equal(audit.projectVersion, '1.10.58');
+  assert.equal(audit.projectVersion, '1.10.61');
   assert.ok(['NO_RUNTIME_DATA', 'WARN', 'PASS', 'FAIL'].includes(audit.audit.status));
 });

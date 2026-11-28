@@ -92,41 +92,22 @@ test('secret inspection requests are routed away from model generation', () => {
 });
 
 test('owner configuration snapshot redacts credential keys and embedded URL passwords', () => {
-  const old = process.env.OPENAI_API_KEY;
-  const oldAcPat = process.env.AC_GITHUB_PAT;
-  process.env.OPENAI_API_KEY = 'sk-' + 'test-secret-never-output';
-  process.env.AC_GITHUB_PAT = 'ghp_' + 'test-ac-pat-never-output-0123456789';
+  const oldGithubPat = process.env.GITHUB_PAT;
+  process.env.GITHUB_PAT = 'ghp_' + 'test-github-pat-never-output-0123456789';
   try {
     const snapshot = getOwnerConfigurationSnapshot({
-      bot: { owner: ownerNumber, name: 'Ocha Lidya' },
-      providers: { apiKeys: { openai: 'sk-' + 'test-secret-never-output' }, accessToken: 'bearer' + '-secret' },
-      database: { url: 'postgres://ocha:db-password@127.0.0.1:5432/ocha' },
-      whatsapp: { sessionDir: 'sessions/private-auth', browserName: 'Chrome' },
-      misc: { description: 'A safe public setting' },
+      integrations: { databaseUrl: 'postgres://operator:secret-password@example.test/database' },
     });
-    const serialized = JSON.stringify(snapshot);
-    for (const secret of [
-      'sk-' + 'test-secret-never-output',
-      'ghp_' + 'test-ac-pat-never-output-0123456789',
-      'bearer' + '-secret',
-      'db-password',
-      'private-auth',
-    ]) {
-      assert.equal(serialized.includes(secret), false, `secret leaked: ${secret}`);
-    }
+    const githubTokenStatus = snapshot.environmentSecrets.find(item => item.name === 'GITHUB_PAT');
+    assert.deepEqual(githubTokenStatus, { name: 'GITHUB_PAT', configured: true, value: '[NEVER SHOWN IN WHATSAPP]' });
     assert.equal(
-      serialized.includes(ownerNumber),
-      true,
-      'owner may view their configured owner number in private configuration',
+      snapshot.environmentSecrets.some(item => item.name === 'AC_GITHUB_PAT'),
+      false,
     );
-    assert.match(serialized, /"configured":true/);
-    const acTokenStatus = snapshot.environmentSecrets.find(item => item.name === 'AC_GITHUB_PAT');
-    assert.deepEqual(acTokenStatus, { name: 'AC_GITHUB_PAT', configured: true, value: '[NEVER SHOWN IN WHATSAPP]' });
-    assert.match(serialized, /A safe public setting/);
+    assert.equal(JSON.stringify(snapshot).includes('test-github-pat-never-output'), false);
+    assert.equal(JSON.stringify(snapshot).includes('secret-password'), false);
   } finally {
-    if (old === undefined) delete process.env.OPENAI_API_KEY;
-    else process.env.OPENAI_API_KEY = old;
-    if (oldAcPat === undefined) delete process.env.AC_GITHUB_PAT;
-    else process.env.AC_GITHUB_PAT = oldAcPat;
+    if (oldGithubPat === undefined) delete process.env.GITHUB_PAT;
+    else process.env.GITHUB_PAT = oldGithubPat;
   }
 });

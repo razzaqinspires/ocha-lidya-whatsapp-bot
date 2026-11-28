@@ -4,7 +4,10 @@ const SENSITIVE_PROPERTY =
   /(?:api.?key|access.?token|refresh.?token|token|secret|password|passwd|credential|authorization|cookie|private.?key|session|auth|github.?pat|signing.?key)/i;
 const SECRET_ENV_NAMES = Object.freeze([
   'GITHUB_PAT',
-  'AC_GITHUB_PAT',
+  'OCHA_ROO_MASTER_KEY',
+  'OCHA_NADI_API_TOKEN',
+  'CHATNIVO_EMAIL',
+  'CHATNIVO_PASSWORD',
   'OPENAI_API_KEY',
   'GEMINI_API_KEY',
   'GROQ_API_KEY',

@@ -4,7 +4,7 @@ import { startAcAutoGitSync } from '../src/core/ac-auto-git-sync.js';
 const watcher = await startAcAutoGitSync({ enabled: true });
 if (!watcher.ready) {
   console.error(
-    'AC Git watcher tidak berjalan: nested repository belum siap. Jalankan npm run ac:git:setup setelah mengisi AC_GITHUB_PAT.',
+    'AC Git watcher tidak berjalan: nested repository belum siap. Jalankan npm run ac:git:setup setelah mengisi GITHUB_PAT.',
   );
   process.exitCode = 1;
 } else {

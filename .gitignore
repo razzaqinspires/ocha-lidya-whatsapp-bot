@@ -51,6 +51,10 @@ instances/
 data/roo/
 **/data/roo/
 
+# Local Llama runtime binaries, model weights, logs and caches (never commit)
+data/llama/
+**/data/llama/
+
 # NADI operational consciousness runtime state (never commit live state)
 data/consciousness/
 **/data/consciousness/
@@ -116,3 +120,6 @@ artificial-consciousness-component/
 
 # Independent AC repository checkout. It must never enter the Ocha Git index.
 .private/artificial-consciousness-component/
+
+# Personal ChatNivo chat exports contain private account conversations.
+data/private/chatnivo-exports/

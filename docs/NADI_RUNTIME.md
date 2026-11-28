@@ -1,100 +1,92 @@
-# Ocha NADI External Runtime — v1.10.33
+# Ocha NADI External Runtime — Ocha v1.10.60 / AC v2.1.1
 
 ## Architecture
 
-Ocha Lidya and AC-Kernel NADI are separate projects. The Ocha repository contains only a small Node.js integration client and component loader; it does **not** contain the NADI Python package. NADI is downloaded from the user's GitHub repository into an external component directory (`~/.ocha/components/nadi/` by default), then launched as an isolated Python sidecar. Ocha calls its loopback HTTP API using Node's native `fetch`; Axios is not required.
+Ocha Lidya and Artificial Consciousness Component (AC-Kernel NADI) are independent source bases. Ocha owns a Node.js loader, lifecycle manager and HTTP client. The AC Python package remains under its own base at `.private/artificial-consciousness-component` in the confidential operator bundle; it is not copied into `src/`. Ocha communicates with the Python sidecar over the versioned NADI HTTP API v1.
 
 ```text
-Ocha Lidya Bot (Node.js)
-  ├── Existing WhatsApp, plugins, Nexora AI providers, vault, database, rental, games
-  ├── NADI component loader (native fetch + archive validation + atomic install)
-  └── HTTP client ── 127.0.0.1:<port> ──> External AC-Kernel NADI (Python)
-                                               ├── managed heartbeat
-                                               ├── homeostasis / synthetic affect / self-model
-                                               ├── hash-chain ledger and scoped memory
-                                               └── secured /v1 HTTP API
+Ocha Lidya (Node.js)
+  ├── WhatsApp, plugins, Nexora AI, vault, data stores and rental API
+  ├── AC component loader and lifecycle supervisor
+  └── loopback HTTP client ──> AC-Kernel NADI (Python)
+                                  ├── managed heartbeat
+                                  ├── operational state / metrics
+                                  ├── scoped memory and hash-chain ledger
+                                  └── secured /v1 HTTP API
 ```
 
-The Python package is cached outside the Ocha source tree. The persistent NADI state remains in the configured `OCHA_NADI_DATA_DIR` (default `data/consciousness/`) to preserve the current operational history from v1.10.30. Do not remove that data directory when updating bot code. The NADI component can be replaced independently by changing its Git ref and setting `OCHA_NADI_UPDATE=1`; the component source is never merged into `src/`.
+The sidecar binds to loopback by default. NADI provides operational state and telemetry; it is not an additional chat-completion model. Nexora's ChatNivo fallback is a separate integration with its own adapter and health gate.
 
-## GitHub source settings
+## Current non-secret configuration
 
-The default Ocha v1.10.33 configuration points to the verified repository `razzaqinspires/artificial-consciousness-component` and locks source ref `16c2fa6e1b500745f260bcf091284a6e18726883` (NADI 2.1.0). These defaults are used automatically; no extra environment variables are required. Override them only for a controlled release change:
+Operational settings belong in `config/runtime.json`, not `.env`. The current paired operator config is:
 
-```dotenv
-OCHA_NADI_REPO_URL=https://github.com/razzaqinspires/artificial-consciousness-component
-OCHA_NADI_REF=16c2fa6e1b500745f260bcf091284a6e18726883
-OCHA_NADI_PORT=18765
-OCHA_AC_HEARTBEAT_MS=1000
-# Optional: pin the downloaded GitHub archive SHA-256 (64 hexadecimal chars)
-OCHA_NADI_SHA256=
-# Optional: custom external installation and persistent state paths
-# OCHA_NADI_HOME=/path/outside/ocha-repository/nadi
-# OCHA_NADI_DATA_DIR=/path/to/persistent/nadi-state
-# OCHA_PYTHON_BIN=python3
+```json
+{
+  "schemaVersion": 1,
+  "nadi": {
+    "repositoryUrl": "https://github.com/razzaqinspires/artificial-consciousness-component",
+    "ref": "16c2fa6e1b500745f260bcf091284a6e18726883",
+    "sourceDir": ".private/artificial-consciousness-component",
+    "update": false,
+    "port": 18765,
+    "heartbeatMs": 1000
+  }
+}
 ```
 
-Only point the loader at a repository you control and trust because the downloaded Python component is executable code. The shipped default uses the immutable commit SHA above, not a moving branch. Keep that SHA pinned until a deliberate NADI release upgrade is reviewed. The bot downloads a GitHub archive over HTTPS, applies size/path/symlink/entry-count limits, validates the package layout and `pyproject.toml`, computes SHA-256, and installs it atomically under the external component cache. If `OCHA_NADI_SHA256` is provided, the archive must match it. If an already installed ref is present, the cache is reused. For a controlled refresh, change `OCHA_NADI_REF` to a reviewed immutable commit SHA (the cache key changes automatically); `OCHA_NADI_UPDATE=1` forces a reinstall of the currently pinned ref. `GITHUB_PAT` may be used for a private GitHub repository and must remain secret.
+Other optional NADI fields are `home`, `sha256`, `baseUrl`, `dataDir`, and `pythonBin`. Leave them omitted or empty to use documented defaults. `paths.kernelDashboardDir`, `paths.kernelTelemetryFile`, `paths.rooRoot`, `privateRuntime.required`, `privateRuntime.path`, `rentalApi.*`, and `tooling.*` are also configured in this file. See `config/runtime.json` for the complete active settings.
 
-Manual/local workspace integration is also supported by setting `OCHA_NADI_SOURCE_DIR=../artificial-consciousness-component` when the two independent base folders are siblings. The Python source still remains in the separate component directory and is never copied into the Ocha source tree.
+The current `sourceDir` selects the co-located AC v2.1.1 source. The supplied source archive has no `.git` metadata, so no new upstream commit SHA is claimed for that snapshot. The `ref` remains the pinned remote fallback if `sourceDir` is cleared. Do not enable `nadi.update` or change the pin without reviewing the new component source and compatibility marker.
 
-## Runtime lifecycle
+Legacy environment overrides such as `OCHA_NADI_SOURCE_DIR`, `OCHA_NADI_REF`, and `OCHA_NADI_PORT` remain accepted for compatibility with old deployments and tests. They are not standard `.env` settings and the recommended deployment configuration is `config/runtime.json`.
 
-`npm install` hanya memasang dependency Node.js dan tidak menjalankan NADI. Sidecar NADI baru dimulai ketika `npm start` menjalankan `src/index.js`; loader mengambil source yang dipatok pada commit GitHub ke cache eksternal, lalu mencoba meluncurkannya dengan Python 3.10+. Jika Python atau komponen tidak tersedia, Ocha mencatat NADI offline dan tetap melanjutkan layanan WhatsApp serta AI utama. Tidak ada `postinstall` NADI.
+## Secrets
 
-- Ocha starts NADI after provider-key initialization.
-- It launches `python -m ac --config <external-config> serve --host 127.0.0.1 --port <port>`.
-- NADI owns its drift-corrected heartbeat; Node polls status but does not generate duplicate ticks.
-- `.nadi on|off` starts/stops the NADI heartbeat through `/v1/heartbeat`.
-- `.nadi pulse` invokes one explicit `/v1/tick`; `.nadi sleep` uses `/v1/sleep`; `.nadi verify` uses `/v1/verify`.
-- On Ocha shutdown, Node stops the heartbeat, requests a checkpoint, and terminates the sidecar.
-- Process restart uses capped backoff. If the NADI source is not configured or Python is unavailable, Ocha's WhatsApp and AI runtime continue without it.
+`GITHUB_PAT` is used only when a private GitHub repository must be fetched or published. Keep it in `.env`; it is never stored in `config/runtime.json` or embedded in the component URL.
 
-## API and provider boundary
+`OCHA_NADI_API_TOKEN` is an optional Bearer secret for connecting to a remote NADI HTTP API. It is not needed for the default local loopback sidecar. When remote access is deliberately enabled, use HTTPS and private networking/TLS, configure the token in `.env`, and do not expose it in logs, status messages, process arguments or runtime JSON.
 
-The integration uses `/v1/health`, `/v1/status`, `/v1/heartbeat`, `/v1/tick`, `/v1/sleep`, `/v1/verify`, and `/v1/checkpoint`. NADI does not receive Ocha provider API keys and does not generate chat replies through a second LLM. The existing Ocha Groq/Gemini/DeepSeek/OpenAI chain remains the only production response-generation path.
+The Python child receives a minimal environment allowlist. Ocha provider API keys and the GitHub PAT are not inherited by NADI unless a narrowly scoped Git operation explicitly requires the PAT.
 
-The current prompt integration uses global operational telemetry only. Raw WhatsApp messages, JIDs, profiles, relationship records, and encrypted User Vault content are not sent to the global heartbeat kernel. NADI v2.1's sender-scoped `/v1/perceive` capability remains available for a future explicitly enabled integration, but this release does not silently route user messages into that API.
+## Loader and runtime lifecycle
 
-## Security and data preservation
+- `npm install` installs Node dependencies; it does not run NADI.
+- `npm start` resolves and validates the configured component, then starts the Python sidecar when available.
+- Local `nadi.sourceDir` is preferred when configured. Otherwise the loader uses the pinned GitHub archive and its external component cache.
+- Remote archives are fetched over HTTPS, checked for path traversal, symlinks, size and entry limits, validated for Python package structure and `pyproject.toml`, hashed and installed atomically.
+- NADI owns its heartbeat. Node monitors health but does not create duplicate ticks.
+- `.nadi on|off` controls heartbeat, `.nadi pulse` performs a manual tick, `.nadi sleep` consolidates memory, and `.nadi verify` checks the hash chain.
+- Ocha shutdown asks NADI to checkpoint and stops the sidecar. Restart uses bounded backoff.
+- If Python or a valid component is unavailable, Ocha continues WhatsApp and primary AI functions without NADI.
 
-- The service binds to loopback by default. No public listener is opened.
-- The NADI repo URL and ref are configuration, not credentials. `GITHUB_PAT` and any API token are secrets.
-- Archive extraction rejects path traversal, absolute paths, symlinks, oversized archives, and excessive entries.
-- The sidecar API is only addressed through loopback unless an operator deliberately configures `OCHA_NADI_BASE_URL`. For a remote service, `OCHA_NADI_BASE_URL` must use HTTPS (plain HTTP is accepted only for loopback), use private networking/TLS and a Bearer token. The Python process receives only a minimal environment allowlist; Ocha provider keys and GitHub credentials are not inherited by NADI.
-- NADI's global heartbeat ledger is not a user memory store. The existing encrypted User Vault remains authoritative for conversations.
-- `data/consciousness/` and its `.scope-salt` must be backed up. Do not delete them during code updates.
-- Artificial-consciousness terminology is architectural; the system does not establish subjective consciousness or human emotion.
+## API and privacy boundary
 
-## Public kernel dashboard
+The client uses `/v1/health`, `/v1/status`, `/v1/heartbeat`, `/v1/tick`, `/v1/sleep`, `/v1/verify` and `/v1/checkpoint`. Sender-scoped `/v1/perceive` and `/v1/commit` contracts remain explicit and must not be used to send raw chat content into global operational telemetry. The global heartbeat ledger is not a user chat-history store. The encrypted Roo User Vault remains the authoritative private memory store.
 
-The general `.kernel` command (aliases `.kernelstatus`, `.nadiweb`) publishes a public read-only WebView through the shared Code Lab Quick Tunnel. It displays aggregate inbound/output/reply counts, AI response totals and latency, and sanitized NADI operational circuits. It does not expose chat text, phone numbers, JIDs, profiles, private memory, or the loopback NADI API. See `docs/KERNEL_DASHBOARD.md` for setup, formulas, URL rotation, and data retention.
+For a remote API, `nadi.baseUrl` must use HTTPS; plain HTTP is accepted only for loopback. Remote access requires private networking/TLS and the optional Bearer token. The default bind is `127.0.0.1` and no public listener is opened.
 
-## Owner controls
+Persisted NADI data must be backed up before upgrades. Do not delete the configured `nadi.dataDir` or its scope salt during code updates. The default local state path is controlled by the component configuration; if you override it, document and back up that exact directory.
 
-- `.nadi status` — inspect component, heartbeat, telemetry, and connection state.
+## Paired release status
+
+- Ocha: v1.10.60.
+- AC component: v2.1.1.
+- HTTP API: v1.
+- Local source: `.private/artificial-consciousness-component`.
+- Git commit for the supplied local AC snapshot: unavailable because the archive contains no `.git` metadata.
+- Python source: unchanged during Ocha v1.10.60 pairing; only compatibility metadata is updated.
+
+Run the component checks from the AC root with `python -m py_compile ac/*.py`, `python selftest.py`, and `python test_prime.py`. The Ocha HTTP client integration is tested separately with `node --test test/nadi-runtime.integration.test.js`.
+
+## Owner controls and dashboard
+
+- `.nadi status` — inspect component, heartbeat, telemetry and connection state.
 - `.nadi on` — start/enable heartbeat.
 - `.nadi off` — pause heartbeat while preserving state.
 - `.nadi pulse` — perform one manual tick.
 - `.nadi sleep` — run memory consolidation.
 - `.nadi verify` — verify the SHA-256 chain.
+- `.kernel` — open the public read-only aggregate kernel dashboard; it does not expose chat text, phone numbers, JIDs, user profiles, private memories or the loopback NADI API.
 
-## Two-base compatibility pin
-
-The companion base supplied with Ocha v1.10.52 is `ac-kernel-nadi@2.1.0`, repository `razzaqinspires/artificial-consciousness-component`, commit `16c2fa6e1b500745f260bcf091284a6e18726883`, API contract `v1`. Ocha's default loader is pinned to this commit. Run the independent component checks with `python -m py_compile ac/*.py`, `python selftest.py`, and `python test_prime.py` from the component root.
-
-## Paired local source snapshot — Ocha v1.10.56 / AC v2.1.1
-
-The paired workspace snapshot distributed with Ocha v1.10.56 contains `ac-kernel-nadi@2.1.1`. It was produced from an extracted source workspace without Git metadata, so it has no new upstream commit SHA. To use this exact tested component package, extract both source ZIPs as sibling directories and set the following in the Ocha operator `.env`:
-
-```dotenv
-OCHA_NADI_SOURCE_DIR=../artificial-consciousness-component
-```
-
-The local directory is validated for the expected Python package structure before launch. When this variable is empty, Ocha deliberately retains its existing remote immutable fallback commit `16c2fa6e1b500745f260bcf091284a6e18726883` (NADI 2.1.0); it does not silently substitute an uncommitted local snapshot. HTTP API v1 remains unchanged.
-
-The v2.1.1 source adds MIMPI repeat-window idempotency and bounded INTEROCEPTION numerical integration. See [`NADI_MAINTENANCE_REPORT_2.1.1.md`](NADI_MAINTENANCE_REPORT_2.1.1.md) for results and limitations.
-
-## Current paired operator path — Ocha v1.10.57 / AC v2.1.1
-
-The current operator bundle co-locates the AC source at `.private/artificial-consciousness-component`. Set `OCHA_NADI_SOURCE_DIR=.private/artificial-consciousness-component` in the Ocha `.env`. The AC source remains a separate base and has its own nested Git root after `npm run ac:git:setup`; the parent Ocha Git root excludes the entire `.private/` tree. The standalone AC release ZIP remains independently deliverable. The Ocha operator ZIP is confidential and must not be published to the public Ocha repository. See [`AUTO_PUSH_TWO_REPOSITORIES.md`](AUTO_PUSH_TWO_REPOSITORIES.md).
+Artificial-consciousness terminology is architectural. These modules do not establish subjective consciousness or human emotion.

@@ -5,7 +5,8 @@
 Selectable menus must be built through the existing socket helper installed by `src/lib/serializ_simple.js`:
 
 ```js
-sock.buttonBuilder()
+sock
+  .buttonBuilder()
   .setTitle(title)
   .setBody(body)
   .addSelection(selectionTitle)
@@ -61,4 +62,4 @@ Warning OFF deliberately removes an interactive safety checkpoint. It does not m
 
 ## Separate local ports
 
-Nexora Code Lab owns `127.0.0.1:8787`. Rental Dashboard API defaults to `127.0.0.1:8788` to prevent `EADDRINUSE`. If a private `.env` still sets `OCHA_RENTAL_API_PORT=8787`, change it to `8788` or remove the override.
+Nexora Code Lab owns `127.0.0.1:8787`. Rental Dashboard API defaults to `127.0.0.1:8788` to prevent `EADDRINUSE`. Set `rentalApi.port` to `8788` in `config/runtime.json`; legacy `OCHA_RENTAL_API_PORT` overrides are supported only for compatibility.

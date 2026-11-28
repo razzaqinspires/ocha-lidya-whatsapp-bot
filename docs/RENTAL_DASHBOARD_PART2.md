@@ -8,15 +8,15 @@ The existing Nexora Code Lab gateway is reused. This avoids starting a second Cl
 
 ## 2. Seven website templates
 
-| ID | Template | Typical use |
-|---|---|---|
-| `business` | Business Profile | Professional services, local businesses, UMKM |
-| `portfolio` | Creative Portfolio | Designers, photographers, developers, artists |
-| `agency` | Digital Agency | Studios, website builders, service agencies |
-| `storefront` | Product Storefront | Product catalogues and brands |
-| `creator` | Creator Link | Creators, influencers and social profiles |
-| `restaurant` | Restaurant & Cafe | Restaurants, cafes and food businesses |
-| `event` | Event & Campaign | Events, communities and campaigns |
+| ID           | Template           | Typical use                                   |
+| ------------ | ------------------ | --------------------------------------------- |
+| `business`   | Business Profile   | Professional services, local businesses, UMKM |
+| `portfolio`  | Creative Portfolio | Designers, photographers, developers, artists |
+| `agency`     | Digital Agency     | Studios, website builders, service agencies   |
+| `storefront` | Product Storefront | Product catalogues and brands                 |
+| `creator`    | Creator Link       | Creators, influencers and social profiles     |
+| `restaurant` | Restaurant & Cafe  | Restaurants, cafes and food businesses        |
+| `event`      | Event & Campaign   | Events, communities and campaigns             |
 
 Templates use responsive, server-rendered HTML. Text values are HTML-escaped. The page editor supports title, tagline, description, about, CTA, WhatsApp, email, Instagram, location, primary/secondary colors, and up to six custom sections.
 
@@ -71,21 +71,21 @@ The following routes are served through the existing Code Lab gateway:
 
 Use `.sewaapi gateway` in private chat to request the current base URL. The URL is ephemeral and can change after a bot restart or tunnel recovery. The application sets the shared gateway to keep running while public access is requested. It does not turn the public Quick Tunnel hostname into a guaranteed stable production domain.
 
-The local API also continues to listen on loopback (default `127.0.0.1:8788`). Keep `OCHA_RENTAL_API_TUNNEL=0` when using the shared gateway. The dedicated API tunnel is an optional legacy/isolated mode, not required by Part 2.
+The local API also continues to listen on loopback (default `127.0.0.1:8788`). Keep `rentalApi.tunnel` set to `false` in `config/runtime.json` when using the shared gateway. The dedicated API tunnel is an optional legacy/isolated mode, not required by Part 2.
 
 ## 5. Rental API contract
 
 Create a `rental` key with `.sewaapi buat rental`. It has `rental:read` and `rental:write` scopes and is tied to the selected rental group. The API accepts the key in the `x-api-key` header. The raw value is shown once; SHA-256 only is stored. Each key is limited to 60 requests/minute. Mutating routes require an `Idempotency-Key` header with 8–100 safe characters; a repeated key with an identical request replays its recorded response, while a different payload returns HTTP 409.
 
-| Method | Shared gateway route | Purpose |
-|---|---|---|
-| GET | `/api/v1/rental/overview` | Package, status, member count/limit, quota, expiry |
-| PATCH | `/api/v1/rental/member-limit` | Change the tenant's internal allowed member limit |
-| POST | `/api/v1/rental/membership/actions` | Queue `remove`, `promote` or `demote` for a group member |
-| GET | `/api/v1/rental/membership/actions` | Read recent membership-action results |
-| GET | `/api/v1/rental/commands` | Read command allowlist/denylist policy |
-| PATCH | `/api/v1/rental/commands` | Update command allowlist/denylist policy |
-| GET | `/api/v1/profile` | Read the profile of the WhatsApp account bound to a profile key |
+| Method | Shared gateway route                | Purpose                                                         |
+| ------ | ----------------------------------- | --------------------------------------------------------------- |
+| GET    | `/api/v1/rental/overview`           | Package, status, member count/limit, quota, expiry              |
+| PATCH  | `/api/v1/rental/member-limit`       | Change the tenant's internal allowed member limit               |
+| POST   | `/api/v1/rental/membership/actions` | Queue `remove`, `promote` or `demote` for a group member        |
+| GET    | `/api/v1/rental/membership/actions` | Read recent membership-action results                           |
+| GET    | `/api/v1/rental/commands`           | Read command allowlist/denylist policy                          |
+| PATCH  | `/api/v1/rental/commands`           | Update command allowlist/denylist policy                        |
+| GET    | `/api/v1/profile`                   | Read the profile of the WhatsApp account bound to a profile key |
 
 A profile key is created with `.sewaapi buat profile` and has only `profile:read` scope. It does not have write access.
 

@@ -24,7 +24,7 @@ data/roo/<sha256-normalized-user-id>/
   .tmp/                      # temporary export archives
 ```
 
-The default path now matches the User Vault's normalized SHA-256 identity key. Existing legacy repositories under `/root/ocha-project-library` (root service) or `$HOME/.local/share/ocha-lidya/projects` (non-root service) are copied into the new per-user root on first access without overwriting an existing destination. The legacy source is retained. An administrator can override the root with `codeLab.projectLibraryRoot` or `OCHA_PROJECT_LIBRARY_ROOT`. Directories/files use restrictive permissions. The user-facing assistant does not reveal the host path by default.
+The default path now matches the User Vault's normalized SHA-256 identity key. Existing legacy repositories under `/root/ocha-project-library` (root service) or `$HOME/.local/share/ocha-lidya/projects` (non-root service) are copied into the new per-user root on first access without overwriting an existing destination. The legacy source is retained. An administrator can override the root with `paths.projectLibraryRoot` in `config/runtime.json` or the existing application-level `codeLab.projectLibraryRoot` setting. Directories/files use restrictive permissions. The user-facing assistant does not reveal the host path by default.
 
 This is a **logical per-user filesystem workspace**, not a dedicated long-lived Docker/Podman container. Website generation writes static source files directly into the bounded library. Actual code execution remains in Code Lab's isolated, temporary runtime workers. Do not describe Project Library as a stronger OS/container security boundary.
 

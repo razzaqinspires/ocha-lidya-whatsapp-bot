@@ -4,7 +4,7 @@
 
 ## Repository map and verified snapshot status
 
-The current local operator source snapshot is **v1.10.58**, based on the previous v1.10.57 local package. The independent Artificial Consciousness Component remains **v2.1.1** and was not modified by the menu-design update. Neither extracted workspace contains `.git` metadata, so no new commit SHA or remote push is claimed. The previously observed public Ocha `main` version is historical context only; the local package is not a Git checkout and must be reconciled through a reviewed Git diff and authenticated clone before any upstream push.
+The current local operator source snapshot is **v1.10.60**, based on the supplied v1.10.59 workspace. The independent Artificial Consciousness Component remains **v2.1.1**; its Python runtime source is unchanged and only its paired compatibility metadata is advanced to Ocha v1.10.60. Neither extracted workspace contains `.git` metadata, so no new commit SHA or remote push is claimed. The previously observed public Ocha `main` version is historical context only; the local package is not a Git checkout and must be reconciled through a reviewed Git diff and authenticated clone before any upstream push.
 
 ```mermaid
 flowchart TD
@@ -14,6 +14,7 @@ flowchart TD
   DIS --> AI[Nexora AI engine]
   AI --> VAULT[Per-user context and encrypted vault]
   AI --> LLM[Groq / Gemini / DeepSeek / OpenAI]
+  LLM -. final fallback after chain exhaustion .-> CN[ChatNivo optional inference adapter]
   PL --> ACIE[ACIE virtual command integration]
   ACIE --> INTAKE[Immutable intake + static analysis]
   INTAKE --> GOV[Governance and approval gates]
@@ -31,23 +32,39 @@ The two provider systems are intentionally separate: Nexora owns chat generation
 
 The four owner-designated private modules are preserved byte-identically under the ignored local path `.private/ocha-private-runtime/`. Public source paths contain only compatibility facades (`src/lib/helpers.js`, `src/lib/freply.js`, `src/lib/serializ_simple.js`); the private `.test` Message Test Lab is inserted into the existing plugin registry only after owner/private policy checks and command/alias collision validation.
 
-The complete Ocha operator ZIP includes `.private/ocha-private-runtime/` so the local deployment has all four modules in one base folder. This archive is confidential operator distribution, not a public GitHub release; never upload it to a public release page or attach it to a public workflow artifact. `.gitignore`, publication policy, Auto Git Sync, the source watcher and Prettier ignore rules keep that directory out of future public Git staging. A clean public Git clone does not include `.private` and therefore continues in text-first compatibility mode. Set `OCHA_PRIVATE_RUNTIME_REQUIRED=1` on an operator VPS to fail closed if local private source is absent or fails integrity verification. Check it with `npm run private-runtime:verify` and `npm run private-runtime:status`.
+The complete Ocha operator ZIP includes `.private/ocha-private-runtime/` so the local deployment has all four modules in one base folder. This archive is confidential operator distribution, not a public GitHub release; never upload it to a public release page or attach it to a public workflow artifact. `.gitignore`, publication policy, Auto Git Sync, the source watcher and Prettier ignore rules keep that directory out of future public Git staging. A clean public Git clone does not include `.private` and therefore continues in text-first compatibility mode. Set `privateRuntime.required` to `true` in `config/runtime.json` on an operator VPS to fail closed if local private source is absent or fails integrity verification. Check it with `npm run private-runtime:verify` and `npm run private-runtime:status`.
 
 The private package manifest retains the four SHA-256 values and `original-source/` receipts. The formatter target list and `.prettierignore` exclude the private source. See [`docs/PRIVATE_RUNTIME_EXTRACTION.md`](docs/PRIVATE_RUNTIME_EXTRACTION.md).
 
 ## Two independent base projects and one release command
 
-Paired releases produce two independent source bases: `ocha-lidya-bot` (Node.js) and `artificial-consciousness-component` (Python), connected through NADI HTTP API v1. On an operator host, the AC source is co-located at `.private/artificial-consciousness-component` and has its own nested Git root; the parent Ocha Git repository must never track `.private/`. The Ocha operator ZIP includes this private source for deployment convenience, while the public Ocha Git repository excludes it. Set `OCHA_NADI_SOURCE_DIR=.private/artificial-consciousness-component` to use AC v2.1.1. The standalone AC ZIP remains a separate deliverable. See [`docs/TWO_BASE_RELEASE.md`](docs/TWO_BASE_RELEASE.md), [`docs/SOURCE_COMPONENT_INDEX_1.10.58.md`](docs/SOURCE_COMPONENT_INDEX_1.10.58.md), and [`docs/RELEASE_REPORT_1.10.58.md`](docs/RELEASE_REPORT_1.10.58.md).
+Paired releases produce two independent source bases: `ocha-lidya-bot` (Node.js) and `artificial-consciousness-component` (Python), connected through NADI HTTP API v1. On an operator host, the AC source is co-located at `.private/artificial-consciousness-component` and has its own nested Git root; the parent Ocha Git repository must never track `.private/`. The Ocha operator ZIP includes this private source for deployment convenience, while the public Ocha Git repository excludes it. The current `config/runtime.json` selects AC v2.1.1 with `nadi.sourceDir: ".private/artificial-consciousness-component"`. The standalone AC ZIP remains a separate deliverable. See [`docs/TWO_BASE_RELEASE.md`](docs/TWO_BASE_RELEASE.md), [`docs/SOURCE_COMPONENT_INDEX_1.10.60.md`](docs/SOURCE_COMPONENT_INDEX_1.10.60.md), and [`docs/RELEASE_REPORT_1.10.60.md`](docs/RELEASE_REPORT_1.10.60.md).
 
-From the Ocha root, run `npm run maintain:two-bases -- --ac-root .private/artificial-consciousness-component --out ../two-base-release` to verify both bases and create separate archives. Automatic Git publication also has two isolated lanes: Ocha → `razzaqinspires/ocha-lidya-whatsapp-bot` using `GITHUB_PAT`; AC → `razzaqinspires/artificial-consciousness-component` using `AC_GITHUB_PAT`. Both watchers start with `npm start` when their local Git checkout is valid. `.private/` is excluded from Ocha Git staging. Owner-only private controls are documented in [`docs/AUTO_PUSH_TWO_REPOSITORIES.md`](docs/AUTO_PUSH_TWO_REPOSITORIES.md). The Ocha operator ZIP is confidential and must not be published; the AC package remains separate.
+From the Ocha root, run `npm run maintain:two-bases -- --ac-root .private/artificial-consciousness-component --out ../two-base-release` to verify both bases and create separate archives. Automatic Git publication also has two isolated lanes: Ocha → `razzaqinspires/ocha-lidya-whatsapp-bot` using `GITHUB_PAT`; AC → `razzaqinspires/artificial-consciousness-component` using the same `GITHUB_PAT`. Both watchers start with `npm start` when their local Git checkout is valid. `.private/` is excluded from Ocha Git staging. Owner-only private controls are documented in [`docs/AUTO_PUSH_TWO_REPOSITORIES.md`](docs/AUTO_PUSH_TWO_REPOSITORIES.md). The Ocha operator ZIP is confidential and must not be published; the AC package remains separate.
 
 ## Two-repository automatic Git publication (v1.10.57)
 
-Ocha retains its existing `npm run git:setup` and `npm run git:watch` scripts. The new dual-lane runtime watches the Ocha root and the independent nested AC checkout separately. Ocha uses `GITHUB_PAT`; AC uses `AC_GITHUB_PAT`. Configure the nested AC repository once with `npm run ac:git:setup`, then restart Ocha. The owner-only command `.autopush status|on|off|push|setup` is hidden from `.menu` and is accepted only in the owner's private chat. Detailed security boundaries, setup and troubleshooting are in [`docs/AUTO_PUSH_TWO_REPOSITORIES.md`](docs/AUTO_PUSH_TWO_REPOSITORIES.md).
+Ocha retains its existing `npm run git:setup` and `npm run git:watch` scripts. The new dual-lane runtime watches the Ocha root and the independent nested AC checkout separately. Both Ocha and AC use the shared `GITHUB_PAT`, which must have least-privilege Contents access to both repositories. Configure the nested AC repository once with `npm run ac:git:setup`, then restart Ocha. The owner-only command `.autopush status|on|off|push|setup` is hidden from `.menu` and is accepted only in the owner's private chat. Detailed security boundaries, setup and troubleshooting are in [`docs/AUTO_PUSH_TWO_REPOSITORIES.md`](docs/AUTO_PUSH_TWO_REPOSITORIES.md).
 
 ## Menu design and owner settings (v1.10.58)
 
 The live `.menu` directory now supports 16 visual themes, 12 typography presets, category/A–Z/Z–A ordering, optional command descriptions, adjustable spacing, and independent top/bottom borders. `.setmenu` opens an interactive owner-only settings directory and also accepts direct commands such as `.setmenu template sakura`, `.setmenu font mono`, `.setmenu order az`, `.setmenu descriptions on`, `.setmenu spacing 1`, and `.setmenu border top off`. Settings are persisted in Ocha's existing config event store; the command list itself continues to come from the live plugin registry. See [`docs/MENU_AND_COMMAND_REGISTRY.md`](docs/MENU_AND_COMMAND_REGISTRY.md), [`docs/SOURCE_COMPONENT_INDEX_1.10.58.md`](docs/SOURCE_COMPONENT_INDEX_1.10.58.md), and [`docs/RELEASE_REPORT_1.10.58.md`](docs/RELEASE_REPORT_1.10.58.md).
+
+## ChatNivo owner integration — v1.10.60
+
+The team contribution is preserved unchanged under `.private/contributions/chatnivo-personal-exporter-v1/original/` with its SHA-256 intake manifest. The owner-private command `.chatnivo status|models|model <id>|fallback on|off|export` manages the personal exporter and the optional final AI fallback. Chat history exports are stored under `data/private/chatnivo-exports` and are never sent back to WhatsApp.
+
+ChatNivo is appended after Groq, Gemini, DeepSeek and OpenAI have been exhausted. Its separate adapter uses the Open WebUI-compatible `/api/chat/completions` shape; the contributed exporter itself does **not** implement inference. Remote ChatNivo compatibility is not yet live-verified. Add `CHATNIVO_EMAIL` and `CHATNIVO_PASSWORD` to the private `.env`, choose a model with `.chatnivo models` / `.chatnivo model <id>`, then use `.chatnivo fallback on` when ready. The default model auto-selection is allowed only when exactly one model is returned.
+
+Non-secret operational settings live in `config/runtime.json`; `.env` is reserved for API keys, passwords, PATs and cryptographic/Bearer secrets. `OCHA_ROO_MASTER_KEY` and `OCHA_NADI_API_TOKEN` remain optional secrets. The shared `GITHUB_PAT` replaces the old separate AC token variable and must be authorized for both repositories.
+
+## Private plugin source boundary — v1.10.59
+
+A supplied workspace contained a second `src/plugins/owner/message-lab.js` copy of the private Message Test Lab. This copy was byte-identical to the private runtime package source, but its public-tree location bypassed the intended package boundary: the general plugin walker and ACIE static command scan could see `.test` before the private loader performed its integrity and permission checks. The duplicate public-tree file has been removed after SHA-256 comparison; the immutable private runtime and `original-source/` copies remain intact.
+
+The shared policy in `src/core/private-source-policy.js` now excludes that exact private path from three independent surfaces: public plugin discovery, ACIE static command collision discovery, and Ocha operator ZIP packaging. The public loader therefore registers `.test` only through the validated private runtime package, where owner/private flags and collision checks apply. This policy does not disable `src/plugins/owner/message-test-catalog.js`, which remains a public host bridge dependency and is not itself a command.
+
+The current static public command inventory is 48 descriptors, 89 aliases, 137 normalized identifiers, zero collisions, and two `menu: false` descriptors across 49 JavaScript plugin files. It is a source scan, not a live VPS registry. See [`docs/COMMAND_REGISTRY_AUDIT_1.10.60.md`](docs/COMMAND_REGISTRY_AUDIT_1.10.60.md), [`docs/PROVIDER_REGISTRY_AUDIT_1.10.60.md`](docs/PROVIDER_REGISTRY_AUDIT_1.10.60.md), and [`docs/RELEASE_REPORT_1.10.60.md`](docs/RELEASE_REPORT_1.10.60.md).
 
 ## ACIE operational audit
 
@@ -64,7 +81,7 @@ flowchart LR
   CHECK --> REGISTRY[Existing plugin registry and dispatcher]
 ```
 
-**Release and verification:** [v1.10.58 release report](docs/RELEASE_REPORT_1.10.58.md) · [Source/function index](docs/SOURCE_COMPONENT_INDEX_1.10.58.md) · [Paired release details](docs/TWO_BASE_RELEASE.md) · **Audit and registries:** [Repository audit](docs/REPOSITORY_AUDIT_1.10.51.md) · [Command registry audit](docs/COMMAND_REGISTRY_AUDIT_1.10.58.md) · [Provider registry audit](docs/PROVIDER_REGISTRY_AUDIT_1.10.51.md) · [NADI maintenance report](docs/NADI_MAINTENANCE_REPORT_2.1.1.md) · [Canonical changelog](docs/CHANGE_LOG.md).
+**Release and verification:** [v1.10.60 release report](docs/RELEASE_REPORT_1.10.60.md) · [Source/function index](docs/SOURCE_COMPONENT_INDEX_1.10.60.md) · [Paired release details](docs/TWO_BASE_RELEASE.md) · **Audit and registries:** [Repository audit](docs/REPOSITORY_AUDIT_1.10.51.md) · [Command registry audit](docs/COMMAND_REGISTRY_AUDIT_1.10.60.md) · [Provider registry audit](docs/PROVIDER_REGISTRY_AUDIT_1.10.60.md) · [NADI maintenance report](docs/NADI_MAINTENANCE_REPORT_2.1.1.md) · [Canonical changelog](docs/CHANGE_LOG.md).
 
 ## Contribution preservation update (v1.10.49)
 
@@ -98,7 +115,7 @@ The rental dashboard now supports scoped read/write API keys, idempotent member-
 
 Ocha Lidya and AC-Kernel NADI are now separate repositories. The bot keeps only the Node.js HTTP integration and a secure GitHub component loader; NADI's Python source is selected from the configured sibling directory or downloaded to an external cache (`~/.ocha/components/nadi/`) and is not bundled under the Ocha source tree. The connection uses Node's built-in `fetch` and a loopback HTTP sidecar. NADI owns its managed heartbeat; the bot reads operational telemetry and adds it to the existing Nexora prompt without creating a second LLM provider chain or duplicating API-key handling.
 
-The external NADI loader uses a local sibling source when `OCHA_NADI_SOURCE_DIR` is set; otherwise it downloads the configured GitHub repository at immutable fallback commit `16c2fa6e1b500745f260bcf091284a6e18726883` (AC-Kernel NADI 2.1.0). The paired v2.1.1 local snapshot has no Git SHA in this workspace. On first launch it downloads and validates the repository archive into `~/.ocha/components/nadi/`, outside this repository, then launches the Python sidecar over loopback HTTP. Optional `OCHA_NADI_SHA256` pins the archive checksum. Upgrade only by reviewing and pinning a new immutable commit. See `docs/NADI_RUNTIME.md` for details. The public live telemetry page is available through `.kernel`; see `docs/KERNEL_DASHBOARD.md` for the URL lifecycle, privacy boundary, and metric definitions.
+The external NADI loader reads repository/ref/source paths from `config/runtime.json`. The paired AC v2.1.1 source is selected locally through `nadi.sourceDir: ".private/artificial-consciousness-component"`; the supplied source snapshot has no Git SHA. When `nadi.sourceDir` is empty, the loader uses the immutable remote commit pin. On first remote launch it downloads and validates the archive into `~/.ocha/components/nadi/`, outside this repository, then launches the Python sidecar over loopback HTTP. Optional `nadi.sha256` pins the archive checksum. Upgrade only by reviewing and pinning a new immutable commit. See `docs/NADI_RUNTIME.md` for details. The public live telemetry page is available through `.kernel`; see `docs/KERNEL_DASHBOARD.md` for the URL lifecycle, privacy boundary, and metric definitions.
 
 ## Adaptive conversation intelligence, stateful games, and feature-request workflow (v1.10.28)
 
@@ -843,7 +860,7 @@ Owner-only `.master warning` controls compact/detailed/off warning delivery, `.m
 
 Renters can create separate private API keys with `.sewaapi`: `rental:read` exposes the selected rental group's status, member count/limit, quota and expiry; `profile:read` exposes only the issuing account's profile. Secrets are shown once and only SHA-256 hashes are stored. Use `.sewaapi list` and `.sewaapi revoke <id>` to manage keys. API endpoints are `GET /v1/rental/overview` and `GET /v1/profile`, authenticated with `x-api-key`.
 
-The local dashboard API binds to `127.0.0.1:8788`. Set `OCHA_RENTAL_API_TUNNEL=1` to start an optional temporary TryCloudflare quick tunnel (requires `cloudflared`). The URL is ephemeral; use a stable domain and production gateway for permanent customer dashboards. Part 1 endpoints are read-only.
+The local dashboard API binds to `127.0.0.1:8788`. Set `rentalApi.tunnel` to `true` in `config/runtime.json` to start an optional temporary TryCloudflare quick tunnel (requires `cloudflared`). The URL is ephemeral; use a stable domain and production gateway for permanent customer dashboards. Part 1 endpoints are read-only.
 
 `.website verify` starts a one-time Rp10.000 verification request. `.website paid <invoice>` reports payment; `.website bukti <invoice>` sends private image evidence. Owner reviews with `.webverify list|approve|reject`. Approval grants a blue-check badge and one website slot. Part 2 now includes seven templates, the editor, sharing workflow, and write-capable tenant dashboard actions; Android source is included but a compiled APK is not.
 
@@ -908,3 +925,42 @@ flowchart LR
   RESCAN --> STAGE[Audited Git index]
   STAGE --> PUSH[GitHub public repository]
 ```
+
+## Local Llama final fallback (v1.10.61)
+
+The AI provider chain is Groq → Gemini → DeepSeek → OpenAI → ChatNivo → local Llama via Ollama. The prestart hook checks whether the Ollama runtime exists and, when `llama.autoInstallRuntime` is enabled, invokes the official platform installer. It does not start the model server or download model weights during `npm start`.
+
+Only after every remote provider and ChatNivo has failed does `src/ai/llama-runtime.js` start `ollama serve` as a detached background process, wait for its loopback API, pull the configured model if absent, and call `/api/chat`. The default model is `llama3.2:3b`; model size and latency depend on host RAM/GPU. The model is pulled on first actual fallback, not during startup. Owner notification uses `bot.owner` from the existing Ocha configuration.
+
+Operational settings are in `config/runtime.json` under `llama`. The service binds to `127.0.0.1`; do not expose port 11434 publicly. Disable the integration with `llama.enabled=false`, or disable only final routing with `llama.fallbackEnabled=false`.
+
+For each AI turn, Ocha sends the stimulus to NADI `/v1/perceive` with an isolated sender scope; the sidecar does not persist raw message text. AC v2.1.2 serializes a derived `mood_profile`: overall index, valence, arousal, regulation, empathy, stability and OCC emotion intensity percentages, plus a dominant status and response-style guidance. These are bounded computational indicators, not clinical measurements or evidence of subjective feelings. Mood may adjust tone and pacing only; it must never alter facts, permissions, privacy or safety.
+
+### Provider routing diagram
+
+```mermaid
+flowchart TD
+  A[Incoming AI request] --> B[Groq]
+  B -->|failed / exhausted| C[Gemini]
+  C -->|failed / exhausted| D[DeepSeek]
+  D -->|failed / exhausted| E[OpenAI]
+  E -->|failed / exhausted| F[ChatNivo]
+  F -->|failed / unavailable| G[Ocha local Llama]
+  G -->|lazy activation| H[Start detached Ollama server]
+  H --> I[Pull configured model if missing]
+  I --> J[Validate local completion]
+```
+
+### Mood telemetry and response adaptation
+
+```mermaid
+flowchart LR
+  A[User stimulus] --> B[AC Rasa OCC appraisal]
+  B --> C[AffectState dimensions + OCC profile]
+  C --> D[Derived mood profile percentages]
+  D --> E[NADI HTTP API v1 status]
+  E --> F[Ocha consciousness prompt]
+  F --> G[Response tone and pacing]
+```
+
+The model server remains dormant during startup. AC mood values are derived operational indicators; they are not clinical scales or evidence of subjective experience.

@@ -58,10 +58,10 @@ test('npm prestart dependency checker supports a non-mutating dry-run', () => {
 
 test('npm lifecycle invokes dependency preflight before the main start command', () => {
   const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
-  const expectedPreflight = 'node scripts/bootstrap/npm-deps.js && node scripts/sync-env-example.js --strict';
-  assert.equal(packageJson.scripts.prestart, expectedPreflight);
-  assert.equal(packageJson.scripts.predev, expectedPreflight);
-  assert.equal(packageJson.scripts.pretest, expectedPreflight);
+  const basePreflight = 'node scripts/bootstrap/npm-deps.js && node scripts/sync-env-example.js --strict';
+  assert.equal(packageJson.scripts.prestart, `${basePreflight} && node scripts/bootstrap/llama-runtime.js`);
+  assert.equal(packageJson.scripts.predev, `${basePreflight} && node scripts/bootstrap/llama-runtime.js`);
+  assert.equal(packageJson.scripts.pretest, basePreflight);
   assert.equal(packageJson.scripts.start, 'node src/index.js');
   assert.equal(packageJson.scripts.dev, 'node src/index.js');
 });

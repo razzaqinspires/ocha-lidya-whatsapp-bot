@@ -20,7 +20,7 @@ ocha-lidya-bot/                         # Git root 1
         └── pyproject.toml
 ```
 
-Repository 1 is fixed to `razzaqinspires/ocha-lidya-whatsapp-bot`, branch `main`, authenticated by `GITHUB_PAT`. Repository 2 is fixed to `razzaqinspires/artificial-consciousness-component`, branch `main`, authenticated by `AC_GITHUB_PAT`. The root Ocha watcher and publication firewall exclude `.private/`; the AC watcher starts at the nested AC root and never stages outside it. The nested `.git` directory is excluded from both operator ZIPs.
+Repository 1 is fixed to `razzaqinspires/ocha-lidya-whatsapp-bot`, branch `main`, authenticated by the shared `GITHUB_PAT`. Repository 2 is fixed to `razzaqinspires/artificial-consciousness-component`, branch `main`, authenticated by that same `GITHUB_PAT`. The root Ocha watcher and publication firewall exclude `.private/`; the AC watcher starts at the nested AC root and never stages outside it. The nested `.git` directory is excluded from both operator ZIPs.
 
 **Critical:** `.gitignore` does not untrack files already committed in Ocha history. Before enabling publication on an existing Ocha clone, inspect `git ls-files -- .private`. If it lists private paths, stop and review them. Use `git rm -r --cached -- .private` only after confirming the intended removal from the Ocha repository index; this leaves local files in place but stages deletions in Ocha. Old GitHub commits, forks and clones are not erased by this action.
 
@@ -34,24 +34,23 @@ Persistent enable/disable state is stored in `.private/automation/auto-push.json
 
 ## Environment credentials
 
-```dotenv
-# Ocha repository only
-GITHUB_PAT=
+The only credential required by these two lanes is the shared `GITHUB_PAT` in `.env`. The non-secret local AC source path is configured separately in `config/runtime.json`:
 
-# AC repository only; use a separate fine-grained token
-AC_GITHUB_PAT=
-
-# NADI loads the local component from the nested private path
-OCHA_NADI_SOURCE_DIR=.private/artificial-consciousness-component
+```json
+{
+  "nadi": {
+    "sourceDir": ".private/artificial-consciousness-component"
+  }
+}
 ```
 
-Recommended fine-grained token scope: grant **Contents: read and write** (and repository metadata read) only for its corresponding repository. Do not reuse a broad organization token. Tokens are supplied to Git through a temporary `GIT_ASKPASS` script in the OS temporary directory; they are not written into remote URLs, source files, configuration JSON, commit messages or logs. The temporary helper is removed after the operation.
+Recommended fine-grained token scope: grant **Contents: read and write** (and repository metadata read) only for the two named repositories. A single shared token now authenticates both lanes; do not grant unrelated organization-wide access. Tokens are supplied to Git through a temporary `GIT_ASKPASS` script in the OS temporary directory; they are not written into remote URLs, source files, configuration JSON, commit messages or logs. The temporary helper is removed after the operation.
 
 The AC repository must be private on GitHub when its source is intended to remain confidential. Encryption of the Git payload is not a substitute for repository access control: a client that must execute the decrypted source necessarily needs access to the plaintext. Keep the code in the private repository and protect credentials with least privilege.
 
 ## One-time AC nested-repository setup
 
-Extract the Ocha operator archive. It contains the AC source under `.private/artificial-consciousness-component` but intentionally does not contain Git metadata. Add `AC_GITHUB_PAT` to the local `.env`, then run:
+Extract the Ocha operator archive. It contains the AC source under `.private/artificial-consciousness-component` but intentionally does not contain Git metadata. Ensure `GITHUB_PAT` in the local `.env` has access to both repositories, then run:
 
 ```bash
 npm run ac:git:setup
@@ -75,7 +74,7 @@ The command descriptor is `src/plugins/owner/autopush.js`:
 | `.autopush push ocha\|ac\|all` | Requests an immediate audited push for selected lane(s)                                         |
 | `.autopush setup`              | Prints one-time setup instructions                                                              |
 
-Aliases `gitpush` and `autogit` remain available for compatibility. The descriptor has `ownerOnly: true`, `privateOnly: true` and `menu: false`: it is not shown in `.menu`, cannot be called by non-owners, and cannot be called from a group. The command registry collision check found 47 source plugins, 136 command identifiers and zero collisions in this snapshot.
+Aliases `gitpush` and `autogit` remain available for compatibility. The descriptor has `ownerOnly: true`, `privateOnly: true` and `menu: false`: it is not shown in `.menu`, cannot be called by non-owners, and cannot be called from a group. The v1.10.60 static source audit found 48 command descriptors, 89 aliases, 137 normalized identifiers and zero collisions (49 JavaScript plugin files scanned).
 
 ## Existing script compatibility
 

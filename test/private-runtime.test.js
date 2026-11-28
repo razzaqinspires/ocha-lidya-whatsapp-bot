@@ -157,7 +157,7 @@ test('bundled private runtime loads immutable source and registers the owner-onl
   process.env.OCHA_PRIVATE_RUNTIME_REQUIRED = '1';
   const runtime = await loadPrivateRuntime();
   assert.equal(runtime.available, true);
-  assert.equal(runtime.version, '1.10.58');
+  assert.equal(runtime.version, '1.10.59');
   assert.equal(runtime.plugins.length, 1);
   assert.equal(runtime.plugins[0].name, 'test');
   assert.equal(runtime.plugins[0].ownerOnly, true);

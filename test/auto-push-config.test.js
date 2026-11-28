@@ -24,7 +24,6 @@ test('auto-push config persists target toggles under the private operator direct
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ocha-autopush-config-'));
   try {
     const initial = await loadAutoPushConfig({ root });
-    initial.AC_GITHUB_PAT = 'must-never-be-written';
     initial.targets.ac.enabled = false;
     await saveAutoPushConfig(initial, { root });
     const changed = await setAutoPushTargetEnabled('ocha', false, { root });

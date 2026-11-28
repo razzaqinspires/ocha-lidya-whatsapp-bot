@@ -47,15 +47,43 @@ const INTERNAL_ENV = new Set([
   'OCHA_BOOTSTRAP_HANDOFF_CONSUMED',
   'OCHA_HOST_BOOTSTRAP_FORCE',
 ]);
+const RUNTIME_CONFIG_OVERRIDES = new Set([
+  'OCHA_NADI_REPO_URL',
+  'OCHA_NADI_REF',
+  'OCHA_NADI_HOME',
+  'OCHA_NADI_SOURCE_DIR',
+  'OCHA_NADI_SHA256',
+  'OCHA_NADI_UPDATE',
+  'OCHA_NADI_BASE_URL',
+  'OCHA_NADI_PORT',
+  'OCHA_NADI_DATA_DIR',
+  'OCHA_AC_HEARTBEAT_MS',
+  'OCHA_PYTHON_BIN',
+  'OCHA_KERNEL_DASHBOARD_DIR',
+  'OCHA_KERNEL_TELEMETRY_FILE',
+  'OCHA_PROJECT_LIBRARY_ROOT',
+  'OCHA_ROO_ROOT',
+  'OCHA_PRIVATE_RUNTIME_REQUIRED',
+  'OCHA_PRIVATE_RUNTIME_PATH',
+  'OCHA_RENTAL_API_HOST',
+  'OCHA_RENTAL_API_PORT',
+  'OCHA_RENTAL_API_TUNNEL',
+  'CLOUDFLARED_BIN',
+  'OCHA_PRETTIER_BIN',
+  'NEXORA_BOOTSTRAP_DRY_RUN',
+  'CHATNIVO_URL',
+  'CHATNIVO_EXPORT_DIR',
+]);
 const SECRET_ENV = new Set([
   'GITHUB_PAT',
-  'AC_GITHUB_PAT',
   'GROQ_API_KEY',
   'GEMINI_API_KEY',
   'DEEPSEEK_API_KEY',
   'OPENAI_API_KEY',
   'OCHA_ROO_MASTER_KEY',
   'OCHA_NADI_API_TOKEN',
+  'CHATNIVO_PASSWORD',
+  'CHATNIVO_EMAIL',
 ]);
 const SHELL_BUILTINS = new Set([
   'BASH',
@@ -461,6 +489,7 @@ function scanShellEnvironment(source, relativePath, shellVariables) {
 function classifyEnvironmentKey(key, scopes) {
   if (INTERNAL_ENV.has(key)) return 'internal-runtime';
   if (AMBIENT_ENV.has(key)) return 'host-environment';
+  if (RUNTIME_CONFIG_OVERRIDES.has(key)) return 'runtime-config-override';
   if (!scopes.has('production') && scopes.has('test')) return 'test-only';
   if (
     SECRET_ENV.has(key) ||
@@ -602,11 +631,13 @@ function renderInventoryMarkdown(inventory) {
           ? 'Host / OS environment'
           : entry.category === 'secret'
             ? 'Secret / credential'
-            : entry.category === 'test-only'
-              ? 'Test only'
-              : entry.category === 'preserved-source'
-                ? 'Preserved source only'
-                : 'Application configuration';
+            : entry.category === 'runtime-config-override'
+              ? 'Legacy config-file override (do not add to .env)'
+              : entry.category === 'test-only'
+                ? 'Test only'
+                : entry.category === 'preserved-source'
+                  ? 'Preserved source only'
+                  : 'Application configuration';
     return `| \`${entry.key}\` | ${classification} | ${entry.production ? 'Yes' : 'No'} | ${entry.test ? 'Yes' : 'No'} | ${locations} |`;
   });
 
@@ -626,6 +657,7 @@ function renderInventoryMarkdown(inventory) {
   const categoryLabels = [
     ['application-config', 'Application configuration', 'Yes'],
     ['secret', 'Secret / credential', 'Yes, empty placeholder'],
+    ['runtime-config-override', 'Legacy config-file override', 'No; use config/runtime.json'],
     ['host-environment', 'Host / OS environment', 'No'],
     ['internal-runtime', 'Internal runtime marker', 'No; commented for reference'],
     ['test-only', 'Test only', 'No'],
@@ -714,6 +746,7 @@ function renderInventoryMarkdown(inventory) {
     '- `Internal runtime marker`: assigned or consumed by Ocha during startup/handoff; do not set manually in `.env`.',
     '- `Host / OS environment`: inherited from the host operating system or Node/npm; do not copy into `.env` unless deliberately overriding a host default.',
     '- `Secret / credential`: keep the value only in ignored `.env` or the deployment secret manager. `.env.example` must contain empty placeholders only.',
+    '- `Legacy config-file override`: compatibility input for deployments that still inject old non-secret OCHA_* values; normal configuration belongs in `config/runtime.json`, not `.env`.',
     '- `Test only`: referenced by tests but not by the production runtime; it is not added to `.env.example`.',
     '- `Preserved source only`: found only in preserved contribution material; not considered an active runtime setting.',
     '- New production keys not already curated in `.env.example` are added to its generated block as commented review items.',
@@ -767,5 +800,6 @@ export const environmentInventoryConstants = Object.freeze({
   ambient: [...AMBIENT_ENV],
   internal: [...INTERNAL_ENV],
   secret: [...SECRET_ENV],
+  runtimeConfigOverrides: [...RUNTIME_CONFIG_OVERRIDES],
   shellBuiltins: [...SHELL_BUILTINS],
 });

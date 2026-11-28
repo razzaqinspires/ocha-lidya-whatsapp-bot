@@ -38,7 +38,7 @@ data/roo/
 
 Private vault events use AES-256-GCM with a per-user key derived through HKDF-SHA256 from the root master key. Each journal row is sequenced and SHA-256 hash-chained. Search indexes are encrypted and rebuildable from authenticated journal data. Files use restrictive permissions (directories 0700, files 0600 where supported). The `projects` directory shares the exact normalized identity hash with the conversation vault.
 
-`OCHA_ROO_ROOT` changes the root directory. `OCHA_ROO_MASTER_KEY` is an optional secret override, not a key obtained from GitHub, WhatsApp, or an AI provider. When it is unset/empty, the application creates a cryptographically random 32-byte key at `<OCHA_ROO_ROOT>/.master-key` (default `data/roo/.master-key`) on the first private-vault operation, with owner-only file permissions. This generated file is the master key; it should be backed up together with the entire `data/roo/` directory and kept out of Git, public archives, and shared chat.
+`paths.rooRoot` in `config/runtime.json` changes the root directory. `OCHA_ROO_MASTER_KEY` is an optional secret override, not a key obtained from GitHub, WhatsApp, or an AI provider. When it is unset/empty, the application creates a cryptographically random 32-byte key at `<paths.rooRoot>/.master-key` (default `data/roo/.master-key`) on the first private-vault operation, with owner-only file permissions. This generated file is the master key; it should be backed up together with the entire `data/roo/` directory and kept out of Git, public archives, and shared chat.
 
 For the normal installation, leave `OCHA_ROO_MASTER_KEY=` empty in `.env`. No manual setup is required. If a deployment deliberately wants to inject the key from a secret manager instead of relying on the local file, generate 32 random bytes as 64 hex characters:
 
@@ -81,7 +81,6 @@ AI provider context windows, output-token limits, request timeouts, WhatsApp mes
 ## Calibration from Ocha Lidya conversation export
 
 The current persona contract is based on the owner's written description: reserved with new contacts; warm and affectionate with the verified owner in private chat; professional in public/group contexts. Exact phrase cadence, vocabulary, humor, conflict style, and affectionate patterns must be calibrated from a user-provided export. The export has not yet been provided to this release, so no exact private dialogue traits are asserted here. Future calibration should extract style traits and owner-private interaction rules only; it must not copy private personal facts into a global persona or another user vault.
-
 
 ## Expanded runtime envelope (v1.10.25)
 

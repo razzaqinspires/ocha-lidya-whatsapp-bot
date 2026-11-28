@@ -1,3 +1,45 @@
+## v1.10.61 — Local Llama final fallback and affect mood profile
+
+- Add Ollama runtime preflight to `npm start`/`npm run dev`: detect the local runtime and invoke the official platform installer when enabled and missing; the model server is never started during startup.
+- Add dormant local Llama provider as the final fallback after Groq, Gemini, DeepSeek, OpenAI and ChatNivo. Start the Ollama server detached only after the remote chain is exhausted, pull the configured model on demand, validate the completion, and notify the configured owner over WhatsApp.
+- Add `config/runtime.json` Llama settings with local loopback binding, configurable model, context, timeouts, lazy model pull, and owner notification. No Llama API key is required. Ignore `data/llama/` in Git and exclude it from release bundles.
+- Upgrade independent AC/NADI base to v2.1.2 with derived mood index, OCC percentages, status labels, dimensional percentages and response-style guidance. Preserve NADI HTTP API v1 and backward compatibility with older snapshots.
+- Mood influences response style only; it cannot alter factuality, permissions, privacy, or safety. Mood readings are computational indicators, not subjective emotions.
+- Add regression tests for provider ordering, dormant startup, local fallback lifecycle and mood profile serialization.
+- Regression excluding the external Quick Tunnel integration: 436 tests, 435 passed, 0 failed, 1 skipped. JavaScript syntax 316 files; documentation 100+ Markdown files; publication audit passed; private runtime 4 immutable modules verified; AC selftest 8/8 and extended test 10/10.
+- Runtime installation, model download, hardware suitability and live WhatsApp owner notification require validation on the target host; no live host installation is claimed by this source build.
+
+## v1.10.60 — ChatNivo final fallback, owner command and secrets-only environment — 2026-11-28
+
+- Preserve the `chatnivo-personal-exporter` contribution byte-for-byte in the private contribution vault with its source ZIP and per-file SHA-256 manifest. Its original script remains a personal chat-history exporter; it does not contain an inference implementation.
+- Add an isolated ChatNivo integration layer: owner-private `.chatnivo status|models|model <id>|fallback on|off|export`, private export storage, bounded HTTPS requests, explicit MFA refusal, no token persistence, and no export-content relay to WhatsApp.
+- Add ChatNivo as the last AI fallback after Ocha's primary Groq, Gemini, DeepSeek and OpenAI chain. The separate inference adapter uses an Open WebUI-compatible endpoint contract and validates the returned completion; remote deployment/model access remains unverified until owner credentials are tested.
+- Consolidate `AC_GITHUB_PAT` into the shared `GITHUB_PAT` after confirming the existing values were identical. The shared PAT must have least-privilege access to both Ocha and AC repositories.
+- Move non-secret NADI, kernel, private-runtime-path, rental HTTP API, cloudflared, formatting and bootstrap settings into `config/runtime.json`. Legacy environment overrides remain supported for compatibility but are no longer listed as standard `.env` settings. Keep API keys, `GITHUB_PAT`, ChatNivo credentials, optional Roo master key and optional NADI Bearer token in `.env`.
+- Pair Ocha/private-runtime metadata at v1.10.60 with unchanged AC v2.1.1; update only `compatibleOchaVersion`, not AC model algorithms or NADI HTTP API v1.
+
+### Validation
+
+- Focused ChatNivo and provider-fallback tests: 8/8 at first pass; final rate-limit-chain tests: 6/6 in `test/ai-provider-fallback.test.js`.
+- The contribution manifest checksum test, owner-private command descriptor test, and missing-credential gate passed. Remote ChatNivo authentication, model catalogue and inference are not live-verified because credentials are not configured in this workspace.
+- Broader test, syntax, environment, docs and publication-audit results are recorded in `docs/RELEASE_REPORT_1.10.60.md`. Full npm lifecycle may remain blocked by absent dependencies in the extracted ZIP.
+
+## Private plugin source boundary — v1.10.59 (2026-11-28)
+
+- Remove the unintended public-tree duplicate `src/plugins/owner/message-lab.js` only after matching its SHA-256 to the immutable private runtime and `original-source/` copies (`c47883b8cf6d6c3de18085d4e43a82c543768edd0df6782f52a97770fdd068c6`). The private copies are unchanged.
+- Add `src/core/private-source-policy.js` as the shared path policy used by `src/core/plugin-loader.js`, `src/acie/command-engine/command-generation.js`, and `scripts/release-policy.js`.
+- Keep `.test` out of public source discovery, ACIE static command discovery, and operator bundle file inventory. `.test` remains a private-runtime capability and is admitted only through private package integrity, owner/private, and collision gates. The public `message-test-catalog.js` bridge remains intact.
+- Advance Ocha and private-runtime package metadata to v1.10.59. Keep AC component v2.1.1 and its Python runtime source unchanged; advance only paired `compatibleOchaVersion` metadata.
+- Add regression tests for path normalization, shared loader/ACIE policy, release filtering, public menu inventory, and root layout.
+
+### Validation
+
+- Focused boundary test set: 23 tests, 22 passed, 0 failed, 1 skipped (private package import requires the absent Baileys peer dependency). Expanded ACIE/provider/serializer/native-flow regression: 91 tests, 90 passed, 0 failed, 1 skipped; NADI integration: 1/1.
+- JavaScript syntax scan: 308 files passed.
+- AC v2.1.1: Python bytecode compile passed; selftest 6/6; isolation/bridge 5/5; extended numerical/stability tests 10/10.
+- Command inventory: 48 plugin JavaScript files scanned, 47 descriptors, 89 aliases, 136 unique normalized IDs, 0 collisions, 2 hidden descriptors.
+- Full Ocha test suite, live NADI host/VPS health, WhatsApp transport, live provider probes, formatter, and remote Git synchronization were not verified in this source-only workspace.
+
 ## Menu design and owner setmenu — v1.10.58 (2026-11-28)
 
 - Add 16 display templates and 12 Unicode font presets in `src/core/menu-renderer.js`; retain plain ASCII command names for copying and command dispatch.

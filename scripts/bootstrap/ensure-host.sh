@@ -6,8 +6,14 @@ set -Eeuo pipefail
 RUNTIME="${1:-docker}"
 PYTHON_IMAGE="${2:-python:3.12-alpine}"
 NODE_IMAGE="${3:-node:22-alpine}"
-CLOUDFLARED_BIN="${4:-cloudflared}"
-DRY_RUN="${NEXORA_BOOTSTRAP_DRY_RUN:-0}"
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+RUNTIME_CONFIG="${PROJECT_ROOT}/config/runtime.json"
+read_runtime_setting() {
+  node -e 'const fs=require("node:fs");const c=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));const [section,key]=process.argv[2].split(".");const v=c?.[section]?.[key];process.stdout.write(String(v ?? ""));' "$RUNTIME_CONFIG" "$1"
+}
+CLOUDFLARED_BIN="${4:-$(read_runtime_setting rentalApi.cloudflaredBin)}"
+DRY_RUN="$(read_runtime_setting tooling.bootstrapDryRun)"
+if [[ "${NEXORA_BOOTSTRAP_DRY_RUN:-$DRY_RUN}" == "1" || "${NEXORA_BOOTSTRAP_DRY_RUN:-$DRY_RUN}" == "true" ]]; then DRY_RUN=1; else DRY_RUN=0; fi
 
 log() { printf '[NEXORA BOOTSTRAP] %s\n' "$*"; }
 warn() { printf '[NEXORA BOOTSTRAP] WARNING: %s\n' "$*" >&2; }
@@ -21,6 +27,9 @@ done
 
 if [[ "$DRY_RUN" == "1" ]]; then
   log "DRY RUN aktif; tidak ada perubahan host yang dilakukan."
+  log "DRY RUN runtime=${RUNTIME} images=${PYTHON_IMAGE},${NODE_IMAGE} cloudflared=${CLOUDFLARED_BIN}. Ini bukan konfirmasi bahwa dependensi sudah terpasang."
+  log "DRY RUN: pemeriksaan daemon, image pull, package manager, service, dan tunnel dilewati agar preflight tidak menunggu host eksternal."
+  exit 0
 fi
 
 ADMIN=()

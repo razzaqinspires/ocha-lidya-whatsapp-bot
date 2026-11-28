@@ -58,4 +58,13 @@ test('release inventory includes docs/releases but excludes local .release metad
   assert.equal(shouldIncludeOchaFile('.release/OPERATOR_BUNDLE.json'), false);
   assert.equal(shouldIncludeOchaFile('release-staging/operator.json'), false);
   assert.equal(shouldIncludeOchaFile('sessions/auth.json'), false);
+  assert.equal(shouldIncludeOchaFile('src/plugins/owner/message-lab.js'), false);
+});
+
+test('local Llama runtime and model weights are Git-ignored and excluded from release data', async () => {
+  const gitignore = await fs.readFile(path.join(root, '.gitignore'), 'utf8');
+  assert.match(gitignore, /^data\/llama\/$/m);
+  assert.match(gitignore, /^\*\*\/data\/llama\/$/m);
+  assert.equal(shouldIncludeOchaFile('data/llama/models/llama3.2-3b.gguf'), false);
+  assert.equal(shouldIncludeOchaFile('data/llama/runtime/bin/ollama'), false);
 });

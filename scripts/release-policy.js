@@ -1,4 +1,5 @@
 import { isAcRuntimeIgnored } from '../src/core/ac-git-policy.js';
+import { isPrivatePluginSourcePath } from '../src/core/private-source-policy.js';
 
 const EXCLUDED_COMPONENTS = new Set(['.git', 'node_modules', 'sessions', 'coverage', 'dist', 'build', 'logs']);
 
@@ -8,6 +9,7 @@ const PRIVATE_ROOTS = new Set([
   '.private/contributions',
   '.private/contributions/rizkyrohan-text-canvas-v1',
   '.private/contributions/rizkyrohan-text-canvas-v1/original',
+  '.private/contributions/chatnivo-personal-exporter-v1',
   '.private/project',
   '.private/policies',
 ]);
@@ -20,6 +22,7 @@ const PRIVATE_ROOTS = new Set([
  */
 export function shouldIncludeOchaFile(relative) {
   const normalized = String(relative || '').replaceAll('\\', '/');
+  if (isPrivatePluginSourcePath(normalized)) return false;
   const parts = normalized.split('/');
   if (parts.some(part => EXCLUDED_COMPONENTS.has(part))) return false;
   if (parts[0] === '.release' || parts[0] === 'release' || parts[0] === 'releases' || parts[0] === 'release-staging')
@@ -37,6 +40,7 @@ export function shouldIncludeOchaFile(relative) {
       PRIVATE_ROOTS.has(normalized) ||
       normalized.startsWith('.private/ocha-private-runtime/') ||
       normalized.startsWith('.private/contributions/rizkyrohan-text-canvas-v1/') ||
+      normalized.startsWith('.private/contributions/chatnivo-personal-exporter-v1/') ||
       normalized === '.private/project/AI_CONTEXT.md' ||
       normalized === '.private/project/AI_WORKFLOW.md' ||
       normalized === '.private/policies/PRIVATE_SOURCE_HANDLING.md'

@@ -69,6 +69,7 @@ import {
 } from './runtime/kernel-telemetry.js';
 import { classifyReactionTarget, dispatchWithAutoReaction } from './core/auto-reactions.js';
 import { initializeACIE } from './acie/index.js';
+import { checkLlamaInstallation, setLlamaOwnerNotifier } from './ai/llama-runtime.js';
 
 setOutgoingMessageObserver(observeOutgoingMessage);
 
@@ -110,6 +111,18 @@ applyHostPreflightResult(hostPreflightResult || {});
 await initializeContacts();
 await initializeGroupMetadata();
 await initializeProviderKeys();
+try {
+  const llama = await checkLlamaInstallation();
+  logger.info(
+    { installed: llama.installed, model: llama.model || null, serverStarted: false },
+    'Ocha Llama final-fallback runtime preflight completed; inference remains dormant',
+  );
+} catch (error) {
+  logger.warn(
+    { message: String(error.message || error).slice(0, 180) },
+    'Ocha Llama preflight unavailable; remote AI providers remain independent',
+  );
+}
 try {
   const consciousness = await startConsciousnessRuntime({ logger });
   logger.info(
@@ -537,6 +550,13 @@ async function start() {
 
       if (connection === 'open') {
         if (activeSocket !== sock || restarting || shutdownInProgress) return;
+        setLlamaOwnerNotifier(async text => {
+          if (activeSocket !== sock || restarting || shutdownInProgress)
+            throw new Error('WhatsApp owner notification socket is unavailable');
+          const owner = String(getConfig().bot.owner || '').replace(/\D/g, '');
+          if (!owner) throw new Error('Owner number is not configured in config.js');
+          await sock.sendMessage(`${owner}@s.whatsapp.net`, { text });
+        });
         clearTimeout(reconnectTimer);
         reconnectTimer = undefined;
         reconnectAttempt = 0;

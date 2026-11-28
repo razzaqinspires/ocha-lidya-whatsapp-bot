@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { getRuntimeSettings } from '../src/core/runtime-settings.js';
 
 const OCHA_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DEFAULT_AC_ROOT = path.resolve(OCHA_ROOT, '.private', 'artificial-consciousness-component');
@@ -13,7 +14,7 @@ function arg(name, fallback) {
 const AC_ROOT = path.resolve(arg('--ac-root', DEFAULT_AC_ROOT));
 const OUTPUT_ROOT = path.resolve(arg('--out', path.join(OCHA_ROOT, '..', 'two-base-release')));
 const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-const python = process.env.OCHA_PYTHON_BIN || (process.platform === 'win32' ? 'python' : 'python3');
+const python = getRuntimeSettings().nadi.pythonBin || (process.platform === 'win32' ? 'python' : 'python3');
 const results = [];
 
 function tail(value, lines = 12) {

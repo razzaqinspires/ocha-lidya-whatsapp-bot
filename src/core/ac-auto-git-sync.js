@@ -127,13 +127,13 @@ async function prepareAskPass(token) {
     '#!/bin/sh',
     'case "$1" in',
     '  *Username*) printf "%s\\n" "x-access-token" ;;',
-    '  *Password*) printf "%s\\n" "$AC_GITHUB_PAT" ;;',
+    '  *Password*) printf "%s\\n" "$GITHUB_PAT" ;;',
     '  *) exit 1 ;;',
     'esac',
     '',
   ].join('\n');
   await fs.writeFile(file, content, { mode: 0o700, flag: 'wx' });
-  return { file, env: { ...process.env, AC_GITHUB_PAT: token, GIT_ASKPASS: file, GIT_TERMINAL_PROMPT: '0' } };
+  return { file, env: { ...process.env, GITHUB_PAT: token, GIT_ASKPASS: file, GIT_TERMINAL_PROMPT: '0' } };
 }
 
 async function stageEligibleChanges(root) {
@@ -202,8 +202,8 @@ async function syncOnce(root) {
   const result = await stageEligibleChanges(root);
   const head = await run('git', ['rev-parse', '--verify', 'HEAD'], { cwd: root, allowFailure: true });
   if (head.code !== 0) return { ok: false, reason: 'initial_commit_required', staged: result.staged };
-  const token = process.env.AC_GITHUB_PAT;
-  if (!token) return { ok: false, reason: 'AC_GITHUB_PAT_missing', staged: result.staged };
+  const token = process.env.GITHUB_PAT;
+  if (!token) return { ok: false, reason: 'GITHUB_PAT_missing', staged: result.staged };
   const askpass = await prepareAskPass(token);
   try {
     await reconcileRemote(root, askpass.env);
@@ -250,7 +250,7 @@ function unavailableHandle(reason, enabled) {
         reason,
         repository: AC_REPOSITORY,
         branch: AC_BRANCH,
-        tokenAvailable: Boolean(process.env.AC_GITHUB_PAT),
+        tokenAvailable: Boolean(process.env.GITHUB_PAT),
       };
     },
     pause() {},
@@ -392,7 +392,7 @@ export async function startAcAutoGitSync({ root = AC_ROOT, enabled = true, watch
         ready: true,
         repository: AC_REPOSITORY,
         branch: AC_BRANCH,
-        tokenAvailable: Boolean(process.env.AC_GITHUB_PAT),
+        tokenAvailable: Boolean(process.env.GITHUB_PAT),
         pendingChanges: pending,
         lastResult,
       };

@@ -22,7 +22,7 @@ The commit body includes a localized Indonesian weekday, date, and time in `Asia
 
 The only token variable consumed by the sync service is `GITHUB_PAT`. It belongs in the untracked `.env` file and must not be copied into configuration JSONL, source, the Git remote URL, or logs. The temporary askpass helper is stored under the operating system temporary directory and removed after network operations.
 
-Recommended token settings: fine-grained PAT scoped only to `razzaqinspires/ocha-lidya-whatsapp-bot`, with repository Contents read/write permission. GitHub documents PATs as the password for HTTPS Git operations and recommends fine-grained PATs when possible. The remote must be the HTTPS URL `https://github.com/razzaqinspires/ocha-lidya-whatsapp-bot.git` under the name `origin`. The branch must be `main`.
+Recommended token settings: one fine-grained PAT with repository Contents read/write permission for both `razzaqinspires/ocha-lidya-whatsapp-bot` and `razzaqinspires/artificial-consciousness-component`. GitHub documents PATs as the password for HTTPS Git operations and recommends fine-grained PATs when possible. The remote must be the HTTPS URL `https://github.com/razzaqinspires/ocha-lidya-whatsapp-bot.git` under the name `origin`. The branch must be `main`.
 
 ## Ordering and conflict handling
 
@@ -64,7 +64,7 @@ The public repository is retained, but the following locally maintained source m
 
 Before staging, Auto Git Sync audits changed paths, scans eligible text files for common GitHub/OpenAI/Google/AWS/private-key and generic credential patterns, formats eligible public files with Prettier, scans again, stages eligible paths only, then audits the complete Git index. Secret values are never included in logs. If Prettier is not installed or a secret pattern is found, publication stops; no automatic source rewriting/redaction is attempted because changing a credential-bearing source file without knowing its intended configuration contract can break runtime behavior.
 
-Run `npm run security:publication` for a local inventory and secret scan. Install Prettier with `npm install` after updating package metadata. `OCHA_PRETTIER_BIN` may override the `npx` executable path.
+Run `npm run security:publication` for a local inventory and secret scan. Install Prettier with `npm install` after updating package metadata. `tooling.prettierBin` in `config/runtime.json` may override the `npx` executable path.
 
 ### Important existing-history limitation
 
@@ -107,6 +107,6 @@ flowchart TD
 
 ## v1.10.57 dual-repository extension
 
-Ocha's normal startup now uses `src/core/auto-push-runtime.js` to start two independent publication lanes: the existing Ocha root watcher (`GITHUB_PAT`) and a second watcher rooted exclusively at `.private/artificial-consciousness-component` (`AC_GITHUB_PAT`). The root Ocha watcher retains its original path-scoped staging and publication firewall, and `.private/` remains ignored before traversal. The AC lane has its own exact allowlisted `origin`, `main` branch, path policy, token and Git index. It cannot add files to the parent Ocha index. See [`AUTO_PUSH_TWO_REPOSITORIES.md`](AUTO_PUSH_TWO_REPOSITORIES.md) for setup, credentials, hidden owner controls, exclusions and troubleshooting.
+Ocha's normal startup now uses `src/core/auto-push-runtime.js` to start two independent publication lanes: the existing Ocha root watcher and a second watcher rooted exclusively at `.private/artificial-consciousness-component`. Both lanes use the same `GITHUB_PAT`, which must have Contents read/write permission for both repositories. The AC lane retains its exact allowlisted `origin`, `main` branch, path policy and isolated Git index. It cannot add files to the parent Ocha index. See [`AUTO_PUSH_TWO_REPOSITORIES.md`](AUTO_PUSH_TWO_REPOSITORIES.md) for setup, credentials, hidden owner controls, exclusions and troubleshooting.
 
 The prior `npm run git:setup` and `npm run git:watch` scripts are retained for compatibility. The standard `npm start` lifecycle launches both lanes when both Git roots are ready. The old `git:watch` remains Ocha-only.

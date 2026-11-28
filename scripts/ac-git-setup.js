@@ -55,13 +55,13 @@ async function makeAskPass(token) {
     '#!/bin/sh',
     'case "$1" in',
     '  *Username*) printf "%s\\n" "x-access-token" ;;',
-    '  *Password*) printf "%s\\n" "$AC_GITHUB_PAT" ;;',
+    '  *Password*) printf "%s\\n" "$GITHUB_PAT" ;;',
     '  *) exit 1 ;;',
     'esac',
     '',
   ].join('\n');
   await fs.writeFile(file, script, { mode: 0o700, flag: 'wx' });
-  return { file, env: { ...process.env, AC_GITHUB_PAT: token, GIT_ASKPASS: file, GIT_TERMINAL_PROMPT: '0' } };
+  return { file, env: { ...process.env, GITHUB_PAT: token, GIT_ASKPASS: file, GIT_TERMINAL_PROMPT: '0' } };
 }
 
 function shouldCopy(relative) {
@@ -159,10 +159,10 @@ async function main() {
   }
 
   if (await verifyExistingRepository()) return;
-  const token = process.env.AC_GITHUB_PAT;
+  const token = process.env.GITHUB_PAT;
   if (!token)
     throw new Error(
-      'AC_GITHUB_PAT belum tersedia. Isi token terpisah untuk repository artificial-consciousness-component di .env, lalu ulangi npm run ac:git:setup.',
+      'GITHUB_PAT belum tersedia. Pastikan GITHUB_PAT memiliki Contents read/write untuk repository artificial-consciousness-component, lalu ulangi npm run ac:git:setup.',
     );
 
   await fs.mkdir(AUTOMATION_DIR, { recursive: true, mode: 0o700 });
@@ -179,7 +179,7 @@ async function main() {
     });
     if (remoteBranch.code !== 0)
       throw new Error(
-        'Akses repository AC gagal. Periksa nama repository, AC_GITHUB_PAT, dan izin Contents read/write. Snapshot lokal tidak diubah.',
+        'Akses repository AC gagal. Periksa nama repository, GITHUB_PAT, dan izin Contents read/write. Snapshot lokal tidak diubah.',
       );
     const allRemoteBranches = await run('git', ['-c', 'credential.helper=', 'ls-remote', '--heads', AC_REMOTE], {
       cwd: PROJECT_ROOT,
@@ -251,7 +251,7 @@ async function main() {
         : 'Snapshot identik dengan remote; tidak ada perubahan yang perlu dipush.',
     );
     console.log(
-      'Jalankan ulang `npm start`. Auto-push AC akan berjalan hanya jika target AC aktif dan AC_GITHUB_PAT tersedia.',
+      'Jalankan ulang `npm start`. Auto-push AC akan berjalan hanya jika target AC aktif dan GITHUB_PAT tersedia.',
     );
   } finally {
     await fs.rm(askpass.file, { force: true }).catch(() => {});

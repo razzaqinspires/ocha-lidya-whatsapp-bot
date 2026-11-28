@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "nadi": {
+    "repositoryUrl": "https://github.com/razzaqinspires/artificial-consciousness-component",
+    "ref": "16c2fa6e1b500745f260bcf091284a6e18726883",
+    "sourceDir": ".private/artificial-consciousness-component",
+    "update": false,
+    "port": 18765,
+    "heartbeatMs": 1000
+  },
+  "paths": {
+    "kernelDashboardDir": "data/kernel",
+    "kernelTelemetryFile": "data/kernel/telemetry.json",
+    "rooRoot": "data/roo"
+  },
+  "privateRuntime": {
+    "required": false
+  },
+  "rentalApi": {
+    "host": "127.0.0.1",
+    "port": 8788,
+    "tunnel": false,
+    "cloudflaredBin": "cloudflared"
+  },
+  "tooling": {
+    "prettierBin": "npx",
+    "bootstrapDryRun": false
+  },
+  "chatnivo": {
+    "baseUrl": "https://app.chatnivo.com",
+    "exportDirectory": "data/private/chatnivo-exports",
+    "modelId": "",
+    "fallbackEnabled": true
+  },
+  "llama": {
+    "enabled": true,
+    "autoInstallRuntime": true,
+    "binary": "ollama",
+    "baseUrl": "http://127.0.0.1:11434",
+    "model": "llama3.2:3b",
+    "contextTokens": 8192,
+    "timeoutMs": 120000,
+    "pullTimeoutMs": 1800000,
+    "startupTimeoutMs": 90000,
+    "installTimeoutMs": 1200000,
+    "keepAlive": "5m",
+    "notifyOwner": true,
+    "fallbackEnabled": true
+  }
+}

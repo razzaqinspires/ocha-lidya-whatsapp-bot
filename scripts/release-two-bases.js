@@ -7,6 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { shouldIncludeOchaFile } from './release-policy.js';
 import { isAcRuntimeIgnored } from '../src/core/ac-git-policy.js';
+import { getRuntimeSettings } from '../src/core/runtime-settings.js';
 
 const require = createRequire(import.meta.url);
 let archiver = null;
@@ -114,7 +115,7 @@ async function createZip({ root, name, output, files, generatedEntries = [] }) {
   } else {
     // Python's standard-library zipfile is a dependency-free fallback for operator hosts
     // where npm dependencies have not yet been installed. No shell interpolation is used.
-    const python = process.env.OCHA_PYTHON_BIN || (process.platform === 'win32' ? 'python' : 'python3');
+    const python = getRuntimeSettings().nadi.pythonBin || (process.platform === 'win32' ? 'python' : 'python3');
     const script = [
       'import json, os, sys, zipfile',
       'payload = json.load(sys.stdin)',
@@ -227,7 +228,7 @@ const manifest = {
     acVersion,
     nadiCommit: componentPin,
     sourceSnapshot: acReleaseMarker.sourceSnapshot || null,
-    sourceMode: componentPin ? 'git-commit-pinned' : 'local-snapshot-requires-OCHA_NADI_SOURCE_DIR',
+    sourceMode: componentPin ? 'git-commit-pinned' : 'local-snapshot-selected-by-config-runtime-json',
     defaultRemoteRef: acReleaseMarker.defaultRemoteRef || componentPin,
     httpApi: 'v1',
   },

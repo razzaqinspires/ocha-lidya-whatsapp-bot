@@ -3,18 +3,20 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { getRuntimeSettings } from '../src/core/runtime-settings.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const bundledRoot = path.join(root, '.private', 'ocha-private-runtime');
 const verifyOnly = process.argv[2] === '--verify-only';
-const sourceArg = (verifyOnly ? process.argv[3] : process.argv[2]) || process.env.OCHA_PRIVATE_RUNTIME_PATH || '';
+const runtime = getRuntimeSettings();
+const sourceArg = (verifyOnly ? process.argv[3] : process.argv[2]) || runtime.privateRuntime.path || '';
 const sourceCandidate = sourceArg.trim() ? path.resolve(sourceArg) : bundledRoot;
 
 let source;
 try {
   source = await fs.realpath(sourceCandidate);
 } catch (error) {
-  if (error.code === 'ENOENT' && !process.env.OCHA_PRIVATE_RUNTIME_REQUIRED) {
+  if (error.code === 'ENOENT' && !runtime.privateRuntime.required) {
     console.log('Private runtime tidak ditemukan. Public compatibility mode tetap tersedia.');
     process.exit(0);
   }

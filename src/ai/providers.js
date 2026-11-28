@@ -3,13 +3,36 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { appendRecord, getRecords } from '../core/database.js';
 import { logger } from '../core/logger.js';
+import { getRuntimeSettings } from '../core/runtime-settings.js';
+import { generateWithChatNivo, getChatNivoInferenceStatus } from '../integrations/chatnivo/inference.js';
+import { generateWithLlama, getLlamaRuntimeStatus } from './llama-runtime.js';
 
 const VAULT = path.resolve('data/secrets/provider-keys.json');
 const PROVIDERS = {
-  groq: { env: 'GROQ_API_KEY', baseURL: 'https://api.groq.com/openai/v1/chat/completions', model: 'openai/gpt-oss-120b', protocol: 'openai-compatible' },
-  gemini: { env: 'GEMINI_API_KEY', baseURL: 'https://generativelanguage.googleapis.com/v1beta/models', model: 'gemini-3.8-flash', protocol: 'gemini' },
-  deepseek: { env: 'DEEPSEEK_API_KEY', baseURL: 'https://api.deepseek.com/chat/completions', model: 'deepseek-flash', protocol: 'openai-compatible' },
-  openai: { env: 'OPENAI_API_KEY', baseURL: 'https://api.openai.com/v1/chat/completions', model: 'gpt-6.2-sol', protocol: 'openai-compatible' }
+  groq: {
+    env: 'GROQ_API_KEY',
+    baseURL: 'https://api.groq.com/openai/v1/chat/completions',
+    model: 'openai/gpt-oss-120b',
+    protocol: 'openai-compatible',
+  },
+  gemini: {
+    env: 'GEMINI_API_KEY',
+    baseURL: 'https://generativelanguage.googleapis.com/v1beta/models',
+    model: 'gemini-3.8-flash',
+    protocol: 'gemini',
+  },
+  deepseek: {
+    env: 'DEEPSEEK_API_KEY',
+    baseURL: 'https://api.deepseek.com/chat/completions',
+    model: 'deepseek-flash',
+    protocol: 'openai-compatible',
+  },
+  openai: {
+    env: 'OPENAI_API_KEY',
+    baseURL: 'https://api.openai.com/v1/chat/completions',
+    model: 'gpt-6.2-sol',
+    protocol: 'openai-compatible',
+  },
 };
 const transientStatus = new Set([408, 409, 425, 429, 500, 502, 503, 504]);
 const keyStats = new Map();
@@ -21,7 +44,7 @@ let initialized = false;
 let saveQueue = Promise.resolve();
 let maintenance = { active: false, since: null, notifiedAt: null, reason: null };
 const fingerprint = key => crypto.createHash('sha256').update(key).digest('hex').slice(0, 12);
-const mask = key => key.length < 10 ? `${key.slice(0, 2)}••••` : `${key.slice(0, 5)}••••••${key.slice(-4)}`;
+const mask = key => (key.length < 10 ? `${key.slice(0, 2)}••••` : `${key.slice(0, 5)}••••••${key.slice(-4)}`);
 
 function errorWithMetadata(error, metadata = {}) {
   // Never mutate provider/native errors: some runtimes expose read-only accessors
@@ -37,8 +60,14 @@ function errorWithMetadata(error, metadata = {}) {
 }
 
 export const providerNames = Object.freeze(Object.keys(PROVIDERS));
-export function normalizeProvider(value) { return String(value || '').trim().toLowerCase(); }
-export function isProvider(value) { return Object.hasOwn(PROVIDERS, normalizeProvider(value)); }
+export function normalizeProvider(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase();
+}
+export function isProvider(value) {
+  return Object.hasOwn(PROVIDERS, normalizeProvider(value));
+}
 
 async function persistVault() {
   saveQueue = saveQueue.then(async () => {
@@ -53,17 +82,23 @@ async function persistVault() {
 }
 export async function reloadProviderKeyVault() {
   let nextVault = {};
-  try { nextVault = JSON.parse(await fs.readFile(VAULT, 'utf8')); }
-  catch (error) {
+  try {
+    nextVault = JSON.parse(await fs.readFile(VAULT, 'utf8'));
+  } catch (error) {
     if (error.code !== 'ENOENT') {
       logger.error({ err: error }, 'Provider key vault unreadable during model catalog refresh');
       throw error;
     }
   }
   const parsedVault = nextVault && typeof nextVault === 'object' && !Array.isArray(nextVault) ? nextVault : {};
-  vault = Object.fromEntries(providerNames.map(provider => [
-    provider, Array.isArray(parsedVault[provider]) ? parsedVault[provider].filter(value => typeof value === 'string' && value.trim()) : []
-  ]));
+  vault = Object.fromEntries(
+    providerNames.map(provider => [
+      provider,
+      Array.isArray(parsedVault[provider])
+        ? parsedVault[provider].filter(value => typeof value === 'string' && value.trim())
+        : [],
+    ]),
+  );
   for (const provider of providerNames) {
     for (const item of allKeysAfterVaultReload(provider)) statsFor(item.value).source = item.source;
   }
@@ -71,8 +106,14 @@ export async function reloadProviderKeyVault() {
 }
 
 function allKeysAfterVaultReload(provider) {
-  const env = (process.env[PROVIDERS[provider].env] || '').split(/[;,\n]/).map(value => value.trim()).filter(Boolean).map(value => ({ value, source: 'env' }));
-  const stored = (Array.isArray(vault[provider]) ? vault[provider] : []).filter(value => typeof value === 'string').map(value => ({ value, source: 'vault' }));
+  const env = (process.env[PROVIDERS[provider].env] || '')
+    .split(/[;,\n]/)
+    .map(value => value.trim())
+    .filter(Boolean)
+    .map(value => ({ value, source: 'env' }));
+  const stored = (Array.isArray(vault[provider]) ? vault[provider] : [])
+    .filter(value => typeof value === 'string')
+    .map(value => ({ value, source: 'vault' }));
   const seen = new Set();
   return [...env, ...stored].filter(item => {
     const id = fingerprint(item.value);
@@ -89,10 +130,41 @@ export async function initializeProviderKeys({ skipTelemetry = false } = {}) {
   for (const row of keyEvents) {
     const event = row.payload || {};
     if (!event.fingerprint) continue;
-    const stat = keyStats.get(event.fingerprint) || { fingerprint: event.fingerprint, hits: 0, successes: 0, failures: 0, tokens: 0, status: 'untested', lastHitAt: null, lastSuccessAt: null, lastErrorAt: null, lastHttpStatus: null, reason: null, retryAt: 0, source: 'unknown' };
-    if (event.event === 'hit') { stat.hits = Math.max(stat.hits, Number(event.hit || 0)); stat.lastHitAt = row.ts; }
-    if (event.event === 'success') { stat.successes++; stat.status = 'active'; stat.reason = null; stat.retryAt = 0; stat.lastSuccessAt = row.ts; stat.tokens += Number(event.tokens || 0); }
-    if (event.event === 'failure') { stat.failures++; stat.status = event.status || 'error'; stat.reason = event.reason || null; stat.retryAt = Date.parse(event.retryAt || '') || 0; stat.lastErrorAt = row.ts; stat.lastHttpStatus = event.httpStatus || null; }
+    const stat = keyStats.get(event.fingerprint) || {
+      fingerprint: event.fingerprint,
+      hits: 0,
+      successes: 0,
+      failures: 0,
+      tokens: 0,
+      status: 'untested',
+      lastHitAt: null,
+      lastSuccessAt: null,
+      lastErrorAt: null,
+      lastHttpStatus: null,
+      reason: null,
+      retryAt: 0,
+      source: 'unknown',
+    };
+    if (event.event === 'hit') {
+      stat.hits = Math.max(stat.hits, Number(event.hit || 0));
+      stat.lastHitAt = row.ts;
+    }
+    if (event.event === 'success') {
+      stat.successes++;
+      stat.status = 'active';
+      stat.reason = null;
+      stat.retryAt = 0;
+      stat.lastSuccessAt = row.ts;
+      stat.tokens += Number(event.tokens || 0);
+    }
+    if (event.event === 'failure') {
+      stat.failures++;
+      stat.status = event.status || 'error';
+      stat.reason = event.reason || null;
+      stat.retryAt = Date.parse(event.retryAt || '') || 0;
+      stat.lastErrorAt = row.ts;
+      stat.lastHttpStatus = event.httpStatus || null;
+    }
     keyStats.set(event.fingerprint, stat);
   }
   const records = skipTelemetry ? [] : await getRecords({ type: 'ai.maintenance' });
@@ -101,17 +173,43 @@ export async function initializeProviderKeys({ skipTelemetry = false } = {}) {
   initialized = true;
   for (const provider of providerNames) for (const item of allKeys(provider)) statsFor(item.value).source = item.source;
 }
-function ensureInit() { if (!initialized) throw new Error('Provider key manager belum diinisialisasi'); }
+function ensureInit() {
+  if (!initialized) throw new Error('Provider key manager belum diinisialisasi');
+}
 function allKeys(provider) {
   ensureInit();
-  const env = (process.env[PROVIDERS[provider].env] || '').split(/[;,\n]/).map(x => x.trim()).filter(Boolean).map(value => ({ value, source: 'env' }));
+  const env = (process.env[PROVIDERS[provider].env] || '')
+    .split(/[;,\n]/)
+    .map(x => x.trim())
+    .filter(Boolean)
+    .map(value => ({ value, source: 'env' }));
   const stored = (vault[provider] || []).map(value => ({ value, source: 'vault' }));
   const seen = new Set();
-  return [...env, ...stored].filter(item => { const id = fingerprint(item.value); if (seen.has(id)) return false; seen.add(id); return true; });
+  return [...env, ...stored].filter(item => {
+    const id = fingerprint(item.value);
+    if (seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
 }
 function statsFor(key) {
   const id = fingerprint(key);
-  if (!keyStats.has(id)) keyStats.set(id, { fingerprint: id, hits: 0, successes: 0, failures: 0, tokens: 0, status: 'untested', lastHitAt: null, lastSuccessAt: null, lastErrorAt: null, lastHttpStatus: null, reason: null, retryAt: 0, source: 'unknown' });
+  if (!keyStats.has(id))
+    keyStats.set(id, {
+      fingerprint: id,
+      hits: 0,
+      successes: 0,
+      failures: 0,
+      tokens: 0,
+      status: 'untested',
+      lastHitAt: null,
+      lastSuccessAt: null,
+      lastErrorAt: null,
+      lastHttpStatus: null,
+      reason: null,
+      retryAt: 0,
+      source: 'unknown',
+    });
   return keyStats.get(id);
 }
 function retryAtFromProvider(error, fallback) {
@@ -126,63 +224,144 @@ export function classifyProviderFailure(error) {
   const message = String(error?.message || '').toLowerCase();
   if (status === 401) {
     const expired = /expired|expiration/.test(message);
-    return { status: expired ? 'expired' : 'invalid', permanent: true, retryAt: Date.now() + 6 * 60 * 60_000, reason: expired ? 'provider explicitly reported an expired key' : 'unauthorized / key invalid or revoked' };
+    return {
+      status: expired ? 'expired' : 'invalid',
+      permanent: true,
+      retryAt: Date.now() + 6 * 60 * 60_000,
+      reason: expired ? 'provider explicitly reported an expired key' : 'unauthorized / key invalid or revoked',
+    };
   }
   if (status === 403) {
-    if (/expired|expiration/.test(message)) return { status: 'expired', permanent: true, retryAt: Date.now() + 6 * 60 * 60_000, reason: 'provider explicitly reported an expired key' };
-    if (/revoked|invalid api.?key|api.?key.*invalid/.test(message)) return { status: 'invalid', permanent: true, retryAt: Date.now() + 6 * 60 * 60_000, reason: 'key revoked or rejected' };
+    if (/expired|expiration/.test(message))
+      return {
+        status: 'expired',
+        permanent: true,
+        retryAt: Date.now() + 6 * 60 * 60_000,
+        reason: 'provider explicitly reported an expired key',
+      };
+    if (/revoked|invalid api.?key|api.?key.*invalid/.test(message))
+      return {
+        status: 'invalid',
+        permanent: true,
+        retryAt: Date.now() + 6 * 60 * 60_000,
+        reason: 'key revoked or rejected',
+      };
     const quota = /quota|daily|billing|limit|exhausted|resource_exhausted/.test(message);
     return quota
-      ? { status: 'daily_limit', permanent: false, retryAt: retryAtFromProvider(error, nextUtcDay()), reason: 'provider quota / daily limit' }
-      : { status: 'forbidden', permanent: true, retryAt: Date.now() + 60 * 60_000, reason: 'forbidden / permission or project restriction' };
+      ? {
+          status: 'daily_limit',
+          permanent: false,
+          retryAt: retryAtFromProvider(error, nextUtcDay()),
+          reason: 'provider quota / daily limit',
+        }
+      : {
+          status: 'forbidden',
+          permanent: true,
+          retryAt: Date.now() + 60 * 60_000,
+          reason: 'forbidden / permission or project restriction',
+        };
   }
   if (status === 429) {
     // Groq and other OpenAI-compatible gateways distinguish per-minute token
     // pressure from daily quota exhaustion in the response body. Do not turn a
     // TPM/RPM incident into a 24-hour daily-limit cooldown.
-    const perMinute = /tokens? per minute|\btpm\b|requests? per minute|\brpm\b|rate limit reached|try again in [0-9.]+s/.test(message);
-    const daily = !perMinute && /daily|per.day|requests? per day|tokens? per day|resource_exhausted|billing|quota.*exceed|exceed.*quota/.test(message);
-    if (daily) return { status: 'daily_limit', permanent: false, retryAt: retryAtFromProvider(error, nextUtcDay()), reason: 'daily/account quota exhausted' };
+    const perMinute =
+      /tokens? per minute|\btpm\b|requests? per minute|\brpm\b|rate limit reached|try again in [0-9.]+s/.test(message);
+    const daily =
+      !perMinute &&
+      /daily|per.day|requests? per day|tokens? per day|resource_exhausted|billing|quota.*exceed|exceed.*quota/.test(
+        message,
+      );
+    if (daily)
+      return {
+        status: 'daily_limit',
+        permanent: false,
+        retryAt: retryAtFromProvider(error, nextUtcDay()),
+        reason: 'daily/account quota exhausted',
+      };
     const retryAt = retryAtFromProvider(error, Date.now() + (perMinute ? 15_000 : 30_000));
-    return { status: 'rate_limited', permanent: false, retryAt, reason: perMinute ? 'per-minute token/request rate limit' : 'temporary rate limit' };
+    return {
+      status: 'rate_limited',
+      permanent: false,
+      retryAt,
+      reason: perMinute ? 'per-minute token/request rate limit' : 'temporary rate limit',
+    };
   }
-  if (status === 402) return { status: 'insufficient_balance', permanent: true, retryAt: Date.now() + 6 * 60 * 60_000, reason: 'provider account balance / billing credit insufficient' };
-  if (status === 400 || status === 404 || status === 422) return { status: 'request_or_model_error', permanent: false, retryAt: Date.now() + 5 * 60_000, reason: 'request or model unsupported; key validity not proven' };
+  if (status === 402)
+    return {
+      status: 'insufficient_balance',
+      permanent: true,
+      retryAt: Date.now() + 6 * 60 * 60_000,
+      reason: 'provider account balance / billing credit insufficient',
+    };
+  if (status === 400 || status === 404 || status === 422)
+    return {
+      status: 'request_or_model_error',
+      permanent: false,
+      retryAt: Date.now() + 5 * 60_000,
+      reason: 'request or model unsupported; key validity not proven',
+    };
   const networkCode = String(error?.code || error?.cause?.code || '').toUpperCase();
-  const networkFailure = /NETWORK|TIMEOUT|ETIMEDOUT|ECONN|ENOTFOUND|EAI_AGAIN|UND_ERR|SOCKET/.test(networkCode) || /fetch failed|network.*unavailable|could not resolve host|connection reset/.test(message);
-  if (status >= 500 || networkFailure || error?.retryable || error?.code === 'ETIMEDOUT') return { status: 'provider_error', permanent: false, retryAt: Date.now() + 15_000, reason: 'provider/network temporarily unavailable' };
+  const networkFailure =
+    /NETWORK|TIMEOUT|ETIMEDOUT|ECONN|ENOTFOUND|EAI_AGAIN|UND_ERR|SOCKET/.test(networkCode) ||
+    /fetch failed|network.*unavailable|could not resolve host|connection reset/.test(message);
+  if (status >= 500 || networkFailure || error?.retryable || error?.code === 'ETIMEDOUT')
+    return {
+      status: 'provider_error',
+      permanent: false,
+      retryAt: Date.now() + 15_000,
+      reason: 'provider/network temporarily unavailable',
+    };
   return { status: 'error', permanent: false, retryAt: Date.now() + 60_000, reason: 'unclassified error' };
 }
-function nextUtcDay() { const d = new Date(); return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1, 0, 5); }
-function isEligible(stat) { return !stat.retryAt || stat.retryAt <= Date.now(); }
+function nextUtcDay() {
+  const d = new Date();
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1, 0, 5);
+}
+function isEligible(stat) {
+  return !stat.retryAt || stat.retryAt <= Date.now();
+}
 function publicKeyInfo(provider, item) {
   const stat = statsFor(item.value);
-  return { provider, fingerprint: stat.fingerprint, masked: mask(item.value), source: item.source, ...stat, usableNow: isEligible(stat), probeDue: isEligible(stat) && ['invalid', 'forbidden', 'daily_limit', 'rate_limited', 'provider_error'].includes(stat.status) };
+  return {
+    provider,
+    fingerprint: stat.fingerprint,
+    masked: mask(item.value),
+    source: item.source,
+    ...stat,
+    usableNow: isEligible(stat),
+    probeDue:
+      isEligible(stat) &&
+      ['invalid', 'forbidden', 'daily_limit', 'rate_limited', 'provider_error'].includes(stat.status),
+  };
 }
 const MODEL_LIST_ENDPOINTS = Object.freeze({
   groq: 'https://api.groq.com/openai/v1/models',
   deepseek: 'https://api.deepseek.com/models',
-  openai: 'https://api.openai.com/v1/models'
+  openai: 'https://api.openai.com/v1/models',
 });
 
 function normalizeListedModel(provider, model) {
   if (!model || typeof model !== 'object') return null;
-  const id = provider === 'gemini'
-    ? String(model.baseModelId || model.name || '').replace(/^models\//, '')
-    : String(model.id || '').trim();
+  const id =
+    provider === 'gemini'
+      ? String(model.baseModelId || model.name || '').replace(/^models\//, '')
+      : String(model.id || '').trim();
   if (!id || id.length > 160) return null;
   const methods = Array.isArray(model.supportedGenerationMethods) ? model.supportedGenerationMethods : null;
-  const supportsChat = provider === 'gemini'
-    ? Boolean(methods?.includes('generateContent'))
-    : true;
+  const supportsChat = provider === 'gemini' ? Boolean(methods?.includes('generateContent')) : true;
   return {
     id,
     name: String(model.displayName || model.name || id).slice(0, 180),
     owner: String(model.owned_by || model.publisher || '').slice(0, 100) || null,
-    contextWindow: Number.isFinite(Number(model.inputTokenLimit || model.context_window)) ? Number(model.inputTokenLimit || model.context_window) : null,
-    maxOutputTokens: Number.isFinite(Number(model.outputTokenLimit || model.max_output_tokens)) ? Number(model.outputTokenLimit || model.max_output_tokens) : null,
+    contextWindow: Number.isFinite(Number(model.inputTokenLimit || model.context_window))
+      ? Number(model.inputTokenLimit || model.context_window)
+      : null,
+    maxOutputTokens: Number.isFinite(Number(model.outputTokenLimit || model.max_output_tokens))
+      ? Number(model.outputTokenLimit || model.max_output_tokens)
+      : null,
     supportsChat,
-    methods: methods ? methods.slice(0, 20).map(value => String(value).slice(0, 80)) : null
+    methods: methods ? methods.slice(0, 20).map(value => String(value).slice(0, 80)) : null,
   };
 }
 
@@ -204,10 +383,15 @@ async function fetchModelListPage(provider, key, pageToken, timeoutMs) {
     const response = await fetch(url, { method: 'GET', headers, signal: controller.signal });
     const raw = await response.text();
     let data;
-    try { data = raw ? JSON.parse(raw) : {}; }
-    catch { data = { raw: raw.slice(0, 500) }; }
+    try {
+      data = raw ? JSON.parse(raw) : {};
+    } catch {
+      data = { raw: raw.slice(0, 500) };
+    }
     if (!response.ok) {
-      const message = String(data.error?.message || data.message || data.raw || response.statusText || 'Model catalog request failed').slice(0, 500);
+      const message = String(
+        data.error?.message || data.message || data.raw || response.statusText || 'Model catalog request failed',
+      ).slice(0, 500);
       const error = new Error(`${provider} model catalog HTTP ${response.status}: ${message}`);
       error.provider = provider;
       error.status = response.status;
@@ -220,7 +404,8 @@ async function fetchModelListPage(provider, key, pageToken, timeoutMs) {
     if (error.name === 'AbortError' || controller.signal.aborted) {
       throw errorWithMetadata(error, { provider, retryable: true, code: 'ETIMEDOUT' });
     }
-    if (error instanceof TypeError) throw errorWithMetadata(error, { provider, retryable: true, code: 'NETWORK_ERROR' });
+    if (error instanceof TypeError)
+      throw errorWithMetadata(error, { provider, retryable: true, code: 'NETWORK_ERROR' });
     throw error;
   } finally {
     clearTimeout(timer);
@@ -247,19 +432,22 @@ export async function listProviderModels(provider, { timeoutMs = 10000, maxPages
       let pageToken = null;
       for (let page = 0; page < maxPages; page++) {
         const data = await fetchModelListPage(provider, item.value, pageToken, timeoutMs);
-        const rows = provider === 'gemini' ? (data.models || []) : (data.data || []);
+        const rows = provider === 'gemini' ? data.models || [] : data.data || [];
         for (const row of rows) {
           const normalized = normalizeListedModel(provider, row);
           if (normalized) models.push(normalized);
         }
-        pageToken = provider === 'gemini' ? (data.nextPageToken || null) : null;
+        pageToken = provider === 'gemini' ? data.nextPageToken || null : null;
         if (!pageToken) break;
       }
       const unique = [...new Map(models.map(model => [model.id, model])).values()];
       return {
-        provider, status: 'ok', models: unique.slice(0, 1000),
-        modelCount: unique.length, keyFingerprint: fingerprint(item.value),
-        listedAt: new Date().toISOString()
+        provider,
+        status: 'ok',
+        models: unique.slice(0, 1000),
+        modelCount: unique.length,
+        keyFingerprint: fingerprint(item.value),
+        listedAt: new Date().toISOString(),
       };
     } catch (error) {
       lastError = error;
@@ -270,24 +458,33 @@ export async function listProviderModels(provider, { timeoutMs = 10000, maxPages
   }
   return {
     provider,
-    status: Number(lastError?.status) === 401 ? 'unauthorized' : Number(lastError?.status) === 403 ? 'forbidden' : 'unreachable',
-    models: [], keyFingerprint: null,
+    status:
+      Number(lastError?.status) === 401
+        ? 'unauthorized'
+        : Number(lastError?.status) === 403
+          ? 'forbidden'
+          : 'unreachable',
+    models: [],
+    keyFingerprint: null,
     error: {
       code: String(lastError?.code || 'MODEL_CATALOG_FAILED').slice(0, 80),
       httpStatus: Number.isFinite(Number(lastError?.status)) ? Number(lastError.status) : null,
-      message: String(lastError?.message || 'Model catalog unavailable').slice(0, 300)
-    }
+      message: String(lastError?.message || 'Model catalog unavailable').slice(0, 300),
+    },
   };
 }
 
 export function getProviderInventory(config = {}) {
-  return providerNames.map(name => {
+  const inventory = providerNames.map(name => {
     const keys = allKeys(name).map(item => publicKeyInfo(name, item));
     const metrics = providerMetrics.get(name) || {};
     const usable = keys.filter(item => item.usableNow).length;
     return {
-      name, model: config.models?.[name] || PROVIDERS[name].model,
-      configured: keys.length > 0, keys: keys.length, usableKeys: usable,
+      name,
+      model: config.models?.[name] || PROVIDERS[name].model,
+      configured: keys.length > 0,
+      keys: keys.length,
+      usableKeys: usable,
       invalidKeys: keys.filter(k => ['invalid', 'expired', 'forbidden'].includes(k.status)).length,
       dailyLimitedKeys: keys.filter(k => k.status === 'daily_limit' && !k.usableNow).length,
       totalHits: keys.reduce((sum, key) => sum + key.hits, 0),
@@ -295,18 +492,68 @@ export function getProviderInventory(config = {}) {
       totalFailures: keys.reduce((sum, key) => sum + key.failures, 0),
       totalTokens: keys.reduce((sum, key) => sum + key.tokens, 0),
       keyDetails: keys,
-      averageLatencyMs: metrics.averageLatencyMs ?? null, lastLatencyMs: metrics.lastLatencyMs ?? null,
-      successes: metrics.successes || 0, failures: metrics.failures || 0, lastStatus: metrics.lastStatus || null,
-      circuitOpen: (providerCircuit.get(name)?.openUntil || 0) > Date.now()
+      averageLatencyMs: metrics.averageLatencyMs ?? null,
+      lastLatencyMs: metrics.lastLatencyMs ?? null,
+      successes: metrics.successes || 0,
+      failures: metrics.failures || 0,
+      lastStatus: metrics.lastStatus || null,
+      circuitOpen: (providerCircuit.get(name)?.openUntil || 0) > Date.now(),
     };
   });
+  let chatnivo = null;
+  try {
+    const status = getChatNivoInferenceStatus();
+    const metrics = providerMetrics.get('chatnivo') || {};
+    chatnivo = {
+      name: 'chatnivo',
+      model: status.modelId,
+      configured: status.credentialsConfigured,
+      keys: status.credentialsConfigured ? 1 : 0,
+      usableKeys: status.ready ? 1 : 0,
+      invalidKeys: 0,
+      dailyLimitedKeys: 0,
+      totalHits: metrics.hits || 0,
+      totalSuccesses: metrics.successes || 0,
+      totalFailures: metrics.failures || 0,
+      totalTokens: metrics.tokens || 0,
+      keyDetails: [],
+      averageLatencyMs: metrics.averageLatencyMs ?? null,
+      lastLatencyMs: metrics.lastLatencyMs ?? null,
+      successes: metrics.successes || 0,
+      failures: metrics.failures || 0,
+      lastStatus: metrics.lastStatus || null,
+      circuitOpen: false,
+      fallback: true,
+      fallbackEnabled: status.enabled,
+      modelConfigured: status.modelConfigured,
+      ready: status.ready,
+      missingCredentials: status.missingCredentials,
+    };
+  } catch (error) {
+    chatnivo = {
+      name: 'chatnivo',
+      configured: false,
+      keys: 0,
+      usableKeys: 0,
+      fallback: true,
+      fallbackEnabled: false,
+      ready: false,
+      statusError: String(error.message || error).slice(0, 160),
+    };
+  }
+  return [...inventory, chatnivo];
 }
 async function persistKeyEvent(provider, key, event, details = {}) {
   const stat = statsFor(key);
-  await appendRecord('ai.key.event', { provider, fingerprint: stat.fingerprint, event, ...details }, { source: 'provider-key-manager' });
+  await appendRecord(
+    'ai.key.event',
+    { provider, fingerprint: stat.fingerprint, event, ...details },
+    { source: 'provider-key-manager' },
+  );
 }
 export async function manageApiKeys(action, provider, values = []) {
-  ensureInit(); provider = normalizeProvider(provider);
+  ensureInit();
+  provider = normalizeProvider(provider);
   if (!isProvider(provider)) throw new Error(`Provider tidak valid. Pilihan: ${providerNames.join(', ')}`);
   const keys = Array.isArray(values) ? values : [values];
   if (action === 'add') {
@@ -316,7 +563,10 @@ export async function manageApiKeys(action, provider, values = []) {
       if (key.length < 12 || /[\s,;]/.test(key)) continue;
       const exists = allKeys(provider).some(item => item.value === key);
       if (exists) continue;
-      vault[provider] ||= []; vault[provider].push(key); statsFor(key).source = 'vault'; added++;
+      vault[provider] ||= [];
+      vault[provider].push(key);
+      statsFor(key).source = 'vault';
+      added++;
     }
     if (added) await persistVault();
     return { action, provider, added, total: allKeys(provider).length };
@@ -327,12 +577,20 @@ export async function manageApiKeys(action, provider, values = []) {
     vault[provider] = (vault[provider] || []).filter(key => !wanted.has(key) && !wanted.has(fingerprint(key)));
     const removed = before - vault[provider].length;
     if (removed) await persistVault();
-    return { action, provider, removed, note: 'Kunci dari .env tidak dapat dihapus melalui command; hapus dari file .env.' };
+    return {
+      action,
+      provider,
+      removed,
+      note: 'Kunci dari .env tidak dapat dihapus melalui command; hapus dari file .env.',
+    };
   }
-  if (action === 'list') return { action, provider, keys: allKeys(provider).map(item => publicKeyInfo(provider, item)) };
+  if (action === 'list')
+    return { action, provider, keys: allKeys(provider).map(item => publicKeyInfo(provider, item)) };
   if (action === 'get') {
     const needle = String(keys[0] || '').trim();
-    const found = allKeys(provider).find(item => item.value === needle || fingerprint(item.value) === needle || mask(item.value) === needle);
+    const found = allKeys(provider).find(
+      item => item.value === needle || fingerprint(item.value) === needle || mask(item.value) === needle,
+    );
     if (!found) throw new Error('Kunci tidak ditemukan. Gunakan fingerprint dari .apikey list.');
     return { action, provider, key: publicKeyInfo(provider, found) };
   }
@@ -341,37 +599,93 @@ export async function manageApiKeys(action, provider, values = []) {
 
 function providerError(name, status, message, retryAfter) {
   const error = new Error(`${name} HTTP ${status}: ${message}`);
-  error.provider = name; error.status = status; error.retryable = transientStatus.has(status); error.retryAfter = retryAfter;
+  error.provider = name;
+  error.status = status;
+  error.retryable = transientStatus.has(status);
+  error.retryAfter = retryAfter;
   throw error;
 }
 async function postJSON(url, headers, body, timeoutMs, provider) {
-  const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal: controller.signal });
-    const raw = await response.text(); let data;
-    try { data = raw ? JSON.parse(raw) : {}; } catch { data = { raw: raw.slice(0, 1200) }; }
-    if (!response.ok) providerError(provider, response.status, String(data.error?.message || data.message || data.raw || response.statusText).slice(0, 900), response.headers.get('retry-after'));
+    const response = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    const raw = await response.text();
+    let data;
+    try {
+      data = raw ? JSON.parse(raw) : {};
+    } catch {
+      data = { raw: raw.slice(0, 1200) };
+    }
+    if (!response.ok)
+      providerError(
+        provider,
+        response.status,
+        String(data.error?.message || data.message || data.raw || response.statusText).slice(0, 900),
+        response.headers.get('retry-after'),
+      );
     return data;
   } catch (error) {
-    if (error.name === 'AbortError' || controller.signal.aborted) throw errorWithMetadata(error, { provider, retryable: true, code: 'ETIMEDOUT' });
-    if (error instanceof TypeError) throw errorWithMetadata(error, { provider, retryable: true, code: 'NETWORK_ERROR' });
+    if (error.name === 'AbortError' || controller.signal.aborted)
+      throw errorWithMetadata(error, { provider, retryable: true, code: 'ETIMEDOUT' });
+    if (error instanceof TypeError)
+      throw errorWithMetadata(error, { provider, retryable: true, code: 'NETWORK_ERROR' });
     throw error;
-  } finally { clearTimeout(timer); }
+  } finally {
+    clearTimeout(timer);
+  }
 }
 async function requestWithKey(name, key, model, messages, options) {
   const spec = PROVIDERS[name];
   if (name === 'gemini') {
     const system = messages.find(m => m.role === 'system')?.content || '';
-    const contents = messages.filter(m => m.role !== 'system').map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: String(m.content) }] }));
+    const contents = messages
+      .filter(m => m.role !== 'system')
+      .map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: String(m.content) }] }));
     const url = `${spec.baseURL}/${encodeURIComponent(model)}:generateContent`;
-    const data = await postJSON(url, { 'content-type': 'application/json', 'x-goog-api-key': key }, { systemInstruction: system ? { parts: [{ text: system }] } : undefined, contents, generationConfig: { temperature: options.temperature ?? 0.6, maxOutputTokens: options.maxOutputTokens ?? 500 } }, options.timeoutMs, name);
-    const text = (data.candidates?.[0]?.content?.parts || []).map(part => part.text || '').join('').trim();
-    if (!text) throw Object.assign(new Error(data.promptFeedback?.blockReason || 'Gemini returned empty response'), { provider: name, retryable: true });
+    const data = await postJSON(
+      url,
+      { 'content-type': 'application/json', 'x-goog-api-key': key },
+      {
+        systemInstruction: system ? { parts: [{ text: system }] } : undefined,
+        contents,
+        generationConfig: { temperature: options.temperature ?? 0.6, maxOutputTokens: options.maxOutputTokens ?? 500 },
+      },
+      options.timeoutMs,
+      name,
+    );
+    const text = (data.candidates?.[0]?.content?.parts || [])
+      .map(part => part.text || '')
+      .join('')
+      .trim();
+    if (!text)
+      throw Object.assign(new Error(data.promptFeedback?.blockReason || 'Gemini returned empty response'), {
+        provider: name,
+        retryable: true,
+      });
     return { text, usage: data.usageMetadata || null, finishReason: data.candidates?.[0]?.finishReason || '' };
   }
-  const data = await postJSON(spec.baseURL, { authorization: `Bearer ${key}`, 'content-type': 'application/json' }, { model, messages, temperature: options.temperature ?? 0.6, max_tokens: options.maxOutputTokens ?? 500, stream: false }, options.timeoutMs, name);
+  const data = await postJSON(
+    spec.baseURL,
+    { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
+    {
+      model,
+      messages,
+      temperature: options.temperature ?? 0.6,
+      max_tokens: options.maxOutputTokens ?? 500,
+      stream: false,
+    },
+    options.timeoutMs,
+    name,
+  );
   const text = data.choices?.[0]?.message?.content;
-  if (typeof text !== 'string' || !text.trim()) throw Object.assign(new Error(`${name} returned empty response`), { provider: name, retryable: true });
+  if (typeof text !== 'string' || !text.trim())
+    throw Object.assign(new Error(`${name} returned empty response`), { provider: name, retryable: true });
   return { text: text.trim(), usage: data.usage || null, finishReason: data.choices?.[0]?.finish_reason || '' };
 }
 export async function generateWithProvider(name, messages, options = {}) {
@@ -381,51 +695,113 @@ export async function generateWithProvider(name, messages, options = {}) {
   const eligibleAll = items.filter(item => isEligible(statsFor(item.value)));
   const cursor = eligibleAll.length ? (keyRotationCursor.get(name) || 0) % eligibleAll.length : 0;
   const rotated = eligibleAll.length ? [...eligibleAll.slice(cursor), ...eligibleAll.slice(0, cursor)] : [];
-  const attemptLimit = Number.isInteger(options.maxKeyAttempts) && options.maxKeyAttempts > 0 ? options.maxKeyAttempts : rotated.length;
+  const attemptLimit =
+    Number.isInteger(options.maxKeyAttempts) && options.maxKeyAttempts > 0 ? options.maxKeyAttempts : rotated.length;
   const eligible = rotated.slice(0, attemptLimit);
-  if (!eligible.length) throw Object.assign(new Error(`All keys for ${name} are cooling down or exhausted`), { provider: name, code: 'ALL_KEYS_UNAVAILABLE', retryable: true });
+  if (!eligible.length)
+    throw Object.assign(new Error(`All keys for ${name} are cooling down or exhausted`), {
+      provider: name,
+      code: 'ALL_KEYS_UNAVAILABLE',
+      retryable: true,
+    });
   let lastError;
   let attemptsMade = 0;
   for (const item of eligible) {
     attemptsMade++;
-    const stat = statsFor(item.value); stat.source = item.source;
-    stat.hits++; stat.lastHitAt = new Date().toISOString();
+    const stat = statsFor(item.value);
+    stat.source = item.source;
+    stat.hits++;
+    stat.lastHitAt = new Date().toISOString();
     const recordEvent = (event, details) => {
       const write = persistKeyEvent(name, item.value, event, details);
-      if (options.deferTelemetry) write.catch(error => logger.warn({ err: error, provider: name, event }, 'Deferred AI telemetry write failed'));
+      if (options.deferTelemetry)
+        write.catch(error => logger.warn({ err: error, provider: name, event }, 'Deferred AI telemetry write failed'));
       return options.deferTelemetry ? undefined : write;
     };
     await recordEvent('hit', { hit: stat.hits });
     const started = Date.now();
     try {
-      const result = await requestWithKey(name, item.value, options.models?.[name] || PROVIDERS[name].model, messages, options);
-      const elapsed = Date.now() - started; stat.successes++; stat.status = 'active'; stat.reason = null; stat.retryAt = 0; stat.lastSuccessAt = new Date().toISOString();
+      const result = await requestWithKey(
+        name,
+        item.value,
+        options.models?.[name] || PROVIDERS[name].model,
+        messages,
+        options,
+      );
+      const elapsed = Date.now() - started;
+      stat.successes++;
+      stat.status = 'active';
+      stat.reason = null;
+      stat.retryAt = 0;
+      stat.lastSuccessAt = new Date().toISOString();
       stat.tokens += Number(result.usage?.total_tokens || result.usage?.totalTokenCount || 0);
       const pm = providerMetrics.get(name) || { successes: 0, failures: 0, averageLatencyMs: null };
-      pm.successes++; pm.lastLatencyMs = elapsed; pm.averageLatencyMs = pm.averageLatencyMs == null ? elapsed : Math.round(pm.averageLatencyMs * .75 + elapsed * .25); pm.lastStatus = 'ok'; providerMetrics.set(name, pm);
-      await recordEvent('success', { latencyMs: elapsed, tokens: Number(result.usage?.total_tokens || result.usage?.totalTokenCount || 0) });
+      pm.successes++;
+      pm.lastLatencyMs = elapsed;
+      pm.averageLatencyMs =
+        pm.averageLatencyMs == null ? elapsed : Math.round(pm.averageLatencyMs * 0.75 + elapsed * 0.25);
+      pm.lastStatus = 'ok';
+      providerMetrics.set(name, pm);
+      await recordEvent('success', {
+        latencyMs: elapsed,
+        tokens: Number(result.usage?.total_tokens || result.usage?.totalTokenCount || 0),
+      });
       providerCircuit.set(name, { failures: 0, openUntil: 0 });
       if (eligibleAll.length) keyRotationCursor.set(name, (cursor + attemptsMade) % eligibleAll.length);
-      return { ...result, provider: name, model: options.publicModel || 'Nexora-2.0-Flash', keyFingerprint: stat.fingerprint, latencyMs: elapsed };
+      return {
+        ...result,
+        provider: name,
+        model: options.publicModel || 'Nexora-2.0-Flash',
+        keyFingerprint: stat.fingerprint,
+        latencyMs: elapsed,
+      };
     } catch (error) {
-      lastError = error; const classified = classifyProviderFailure(error);
-      stat.failures++; stat.status = classified.status; stat.reason = classified.reason; stat.retryAt = classified.retryAt; stat.lastErrorAt = new Date().toISOString(); stat.lastHttpStatus = error.status || null;
+      lastError = error;
+      const classified = classifyProviderFailure(error);
+      stat.failures++;
+      stat.status = classified.status;
+      stat.reason = classified.reason;
+      stat.retryAt = classified.retryAt;
+      stat.lastErrorAt = new Date().toISOString();
+      stat.lastHttpStatus = error.status || null;
       const pm = providerMetrics.get(name) || { successes: 0, failures: 0, averageLatencyMs: null };
-      pm.failures++; pm.lastLatencyMs = Date.now() - started; pm.lastStatus = classified.status; providerMetrics.set(name, pm);
-      await recordEvent('failure', { status: classified.status, httpStatus: error.status || null, reason: classified.reason, retryAt: new Date(classified.retryAt).toISOString() });
-      logger.warn({ provider: name, fingerprint: stat.fingerprint, status: classified.status, httpStatus: error.status, reason: classified.reason }, 'API key/provider attempt failed');
+      pm.failures++;
+      pm.lastLatencyMs = Date.now() - started;
+      pm.lastStatus = classified.status;
+      providerMetrics.set(name, pm);
+      await recordEvent('failure', {
+        status: classified.status,
+        httpStatus: error.status || null,
+        reason: classified.reason,
+        retryAt: new Date(classified.retryAt).toISOString(),
+      });
+      logger.warn(
+        {
+          provider: name,
+          fingerprint: stat.fingerprint,
+          status: classified.status,
+          httpStatus: error.status,
+          reason: classified.reason,
+        },
+        'API key/provider attempt failed',
+      );
       // Model/request errors and provider-wide outages do not become better
       // by replaying the same payload against every key. Quota/401/403 failures
       // remain key-specific candidates. Daily/account quota, model rejection,
       // network outages and server errors stop key fan-out and move to the next provider.
       const networkCode = String(error?.code || error?.cause?.code || '').toUpperCase();
       const networkMessage = String(error?.message || error?.cause?.message || '').toLowerCase();
-      const providerWideFailure = Number(error?.status) === 408 || Number(error?.status) === 429
-        || Number(error?.status) >= 500
-        || /NETWORK|TIMEOUT|ETIMEDOUT|ECONN|ENOTFOUND|EAI_AGAIN|UND_ERR|SOCKET/.test(networkCode)
-        || /fetch failed|network.*unavailable|connection reset|could not resolve host|socket hang up/.test(networkMessage);
-      if (['request_or_model_error', 'daily_limit', 'rate_limited', 'insufficient_balance'].includes(classified.status)
-        || (classified.status === 'provider_error' && providerWideFailure)) break;
+      const providerWideFailure =
+        Number(error?.status) === 408 ||
+        Number(error?.status) === 429 ||
+        Number(error?.status) >= 500 ||
+        /NETWORK|TIMEOUT|ETIMEDOUT|ECONN|ENOTFOUND|EAI_AGAIN|UND_ERR|SOCKET/.test(networkCode) ||
+        /fetch failed|network.*unavailable|connection reset|could not resolve host|socket hang up/.test(networkMessage);
+      if (
+        ['request_or_model_error', 'daily_limit', 'rate_limited', 'insufficient_balance'].includes(classified.status) ||
+        (classified.status === 'provider_error' && providerWideFailure)
+      )
+        break;
     }
   }
   if (eligibleAll.length && attemptsMade) keyRotationCursor.set(name, (cursor + attemptsMade) % eligibleAll.length);
@@ -461,9 +837,7 @@ export function fitMessagesToProviderBudget(provider, messages, { maxChars } = {
     const content = String(row.content ?? '');
     const remaining = budget - used;
     if (remaining <= 0) return;
-    const fitted = content.length > remaining
-      ? { ...row, content: content.slice(-remaining) }
-      : row;
+    const fitted = content.length > remaining ? { ...row, content: content.slice(-remaining) } : row;
     selected.push(fitted);
     used += String(fitted.content ?? '').length;
   };
@@ -476,13 +850,9 @@ export function fitMessagesToProviderBudget(provider, messages, { maxChars } = {
 
 export async function generateWithFallback(providerOrder, messages, options = {}) {
   await initializeProviderKeys();
-  const order = [...new Set((Array.isArray(providerOrder) ? providerOrder : [])
-    .map(normalizeProvider).filter(isProvider))];
-  if (!order.length) {
-    throw Object.assign(new Error('Rantai provider AI kosong atau tidak valid.'), {
-      code: 'NO_PROVIDER_CONFIGURED', provider: null, providerErrors: [], retryable: false
-    });
-  }
+  const order = [
+    ...new Set((Array.isArray(providerOrder) ? providerOrder : []).map(normalizeProvider).filter(isProvider)),
+  ];
 
   const errors = [];
   const attempted = [];
@@ -490,9 +860,13 @@ export async function generateWithFallback(providerOrder, messages, options = {}
   const inventory = getProviderInventory({ models: options.models || {} });
   const emitCheckpoint = async event => {
     if (typeof options.onProviderCheckpoint !== 'function') return;
-    try { await options.onProviderCheckpoint({ ...event, at: new Date().toISOString() }); }
-    catch (error) {
-      logger.warn({ err: error, provider: event.provider, phase: event.phase }, 'AI provider checkpoint callback failed');
+    try {
+      await options.onProviderCheckpoint({ ...event, at: new Date().toISOString() });
+    } catch (error) {
+      logger.warn(
+        { err: error, provider: event.provider, phase: event.phase },
+        'AI provider checkpoint callback failed',
+      );
     }
   };
 
@@ -500,8 +874,11 @@ export async function generateWithFallback(providerOrder, messages, options = {}
     const provider = order[index];
     const state = inventory.find(item => item.name === provider);
     const baseEvent = {
-      provider, position: index + 1, providerCount: order.length,
-      totalKeys: state?.keys || 0, usableKeys: state?.usableKeys || 0
+      provider,
+      position: index + 1,
+      providerCount: order.length,
+      totalKeys: state?.keys || 0,
+      usableKeys: state?.usableKeys || 0,
     };
     attempted.push(provider);
     await emitCheckpoint({ phase: 'provider_attempt', ...baseEvent });
@@ -509,8 +886,12 @@ export async function generateWithFallback(providerOrder, messages, options = {}
     if (!state?.configured || state.usableKeys < 1) {
       const reason = !state?.configured ? 'no_api_keys_configured' : 'all_api_keys_cooling_down_or_exhausted';
       const skipped = {
-        provider, code: !state?.configured ? 'NO_API_KEY' : 'ALL_KEYS_UNAVAILABLE',
-        status: null, retryable: true, message: reason, skipped: true
+        provider,
+        code: !state?.configured ? 'NO_API_KEY' : 'ALL_KEYS_UNAVAILABLE',
+        status: null,
+        retryable: true,
+        message: reason,
+        skipped: true,
       };
       errors.push(skipped);
       await emitCheckpoint({ phase: 'provider_skipped', ...baseEvent, error: skipped });
@@ -518,34 +899,63 @@ export async function generateWithFallback(providerOrder, messages, options = {}
       continue;
     }
 
-    const deadlineAt = Number(options.deadlineAt) || (Number(options.totalBudgetMs) > 0 ? startedAt + Number(options.totalBudgetMs) : 0);
+    const deadlineAt =
+      Number(options.deadlineAt) || (Number(options.totalBudgetMs) > 0 ? startedAt + Number(options.totalBudgetMs) : 0);
     const remainingBudget = deadlineAt ? deadlineAt - Date.now() : Infinity;
     if (remainingBudget < 1000) {
-      errors.push({ provider, code: 'AI_BUDGET_EXHAUSTED', status: null, retryable: true, message: 'Total AI generation budget exhausted', skipped: true });
+      errors.push({
+        provider,
+        code: 'AI_BUDGET_EXHAUSTED',
+        status: null,
+        retryable: true,
+        message: 'Total AI generation budget exhausted',
+        skipped: true,
+      });
       break;
     }
     try {
-      const requestMessages = fitMessagesToProviderBudget(provider, messages, { maxChars: options.providerInputCharLimits?.[provider] });
+      const requestMessages = fitMessagesToProviderBudget(provider, messages, {
+        maxChars: options.providerInputCharLimits?.[provider],
+      });
       const requestOptions = {
         ...options,
         maxKeyAttempts: undefined,
-        maxOutputTokens: provider === 'groq'
-          ? Math.min(Number(options.maxOutputTokens) || 2048, Number(options.groqMaxOutputTokens) || 2048)
-          : options.maxOutputTokens
+        maxOutputTokens:
+          provider === 'groq'
+            ? Math.min(Number(options.maxOutputTokens) || 2048, Number(options.groqMaxOutputTokens) || 2048)
+            : options.maxOutputTokens,
       };
       delete requestOptions.onProviderCheckpoint;
       delete requestOptions.deadlineAt;
       delete requestOptions.totalBudgetMs;
-      requestOptions.timeoutMs = Math.max(1000, Math.min(Number(options.timeoutMs) || remainingBudget, remainingBudget));
+      requestOptions.timeoutMs = Math.max(
+        1000,
+        Math.min(Number(options.timeoutMs) || remainingBudget, remainingBudget),
+      );
       const result = await generateWithProvider(provider, requestMessages, requestOptions);
       const fallback = {
-        order, attemptedProviders: attempted,
+        order,
+        attemptedProviders: attempted,
         fallbackUsed: index > 0,
         fallbackFrom: attempted.length > 1 ? attempted.slice(0, -1) : [],
-        failedProviders: errors
+        failedProviders: errors,
       };
-      await emitCheckpoint({ phase: 'provider_succeeded', ...baseEvent, fallbackUsed: fallback.fallbackUsed, latencyMs: Date.now() - startedAt });
-      logger.info({ provider, position: index + 1, providerCount: order.length, fallbackUsed: fallback.fallbackUsed, latencyMs: Date.now() - startedAt }, 'AI provider chain completed successfully');
+      await emitCheckpoint({
+        phase: 'provider_succeeded',
+        ...baseEvent,
+        fallbackUsed: fallback.fallbackUsed,
+        latencyMs: Date.now() - startedAt,
+      });
+      logger.info(
+        {
+          provider,
+          position: index + 1,
+          providerCount: order.length,
+          fallbackUsed: fallback.fallbackUsed,
+          latencyMs: Date.now() - startedAt,
+        },
+        'AI provider chain completed successfully',
+      );
       return { ...result, providerFallback: fallback };
     } catch (error) {
       const failure = {
@@ -554,32 +964,198 @@ export async function generateWithFallback(providerOrder, messages, options = {}
         status: Number.isFinite(Number(error?.status)) ? Number(error.status) : null,
         retryable: Boolean(error?.retryable),
         message: String(error?.message || 'Provider request failed').slice(0, 700),
-        skipped: false
+        skipped: false,
       };
       errors.push(failure);
       await emitCheckpoint({ phase: 'provider_failed', ...baseEvent, error: failure });
-      logger.warn({ provider, position: index + 1, providerCount: order.length, code: failure.code, status: failure.status, retryable: failure.retryable }, 'AI provider failed after eligible API keys were attempted; switching to next provider');
+      logger.warn(
+        {
+          provider,
+          position: index + 1,
+          providerCount: order.length,
+          code: failure.code,
+          status: failure.status,
+          retryable: failure.retryable,
+        },
+        'AI provider failed after eligible API keys were attempted; switching to next provider',
+      );
+    }
+  }
+
+  const chatNivoStatus = getChatNivoInferenceStatus();
+  const chatNivoConfig = getRuntimeSettings().chatnivo;
+  const deadlineAt =
+    Number(options.deadlineAt) || (Number(options.totalBudgetMs) > 0 ? startedAt + Number(options.totalBudgetMs) : 0);
+  const remainingBudget = deadlineAt ? deadlineAt - Date.now() : Infinity;
+  if (chatNivoStatus.enabled && chatNivoStatus.credentialsConfigured && remainingBudget >= 1000) {
+    const provider = 'chatnivo';
+    const baseEvent = {
+      provider,
+      position: order.length + 1,
+      providerCount: order.length + 1,
+      totalKeys: 1,
+      usableKeys: 1,
+    };
+    attempted.push(provider);
+    await emitCheckpoint({ phase: 'provider_attempt', ...baseEvent });
+    const chatStartedAt = Date.now();
+    try {
+      const result = await generateWithChatNivo(messages, {
+        modelId: chatNivoConfig.modelId,
+        timeoutMs: Math.max(1000, Math.min(Number(options.timeoutMs) || 30_000, remainingBudget)),
+        temperature: options.temperature,
+        maxOutputTokens: options.maxOutputTokens,
+      });
+      const elapsed = Date.now() - chatStartedAt;
+      const metrics = providerMetrics.get(provider) || {
+        successes: 0,
+        failures: 0,
+        averageLatencyMs: null,
+        tokens: 0,
+        hits: 0,
+      };
+      metrics.successes += 1;
+      metrics.hits += 1;
+      metrics.lastLatencyMs = elapsed;
+      metrics.averageLatencyMs =
+        metrics.averageLatencyMs == null ? elapsed : Math.round(metrics.averageLatencyMs * 0.75 + elapsed * 0.25);
+      metrics.lastStatus = 'ok';
+      metrics.tokens += Number(result.usage?.total_tokens || 0);
+      providerMetrics.set(provider, metrics);
+      const fallback = {
+        order: [...order, 'chatnivo'],
+        attemptedProviders: attempted,
+        fallbackUsed: true,
+        fallbackFrom: errors.map(item => item.provider),
+        failedProviders: errors,
+        fallbackReason: 'all_primary_providers_exhausted',
+      };
+      await emitCheckpoint({ phase: 'provider_succeeded', ...baseEvent, fallbackUsed: true, latencyMs: elapsed });
+      logger.info(
+        { provider, position: order.length + 1, providerCount: order.length + 1, latencyMs: elapsed },
+        'ChatNivo completed the final AI fallback',
+      );
+      return { ...result, latencyMs: elapsed, providerFallback: fallback };
+    } catch (error) {
+      const elapsed = Date.now() - chatStartedAt;
+      const metrics = providerMetrics.get(provider) || {
+        successes: 0,
+        failures: 0,
+        averageLatencyMs: null,
+        tokens: 0,
+        hits: 0,
+      };
+      metrics.failures += 1;
+      metrics.hits += 1;
+      metrics.lastLatencyMs = elapsed;
+      metrics.averageLatencyMs =
+        metrics.averageLatencyMs == null ? elapsed : Math.round(metrics.averageLatencyMs * 0.75 + elapsed * 0.25);
+      metrics.lastStatus = String(error?.code || 'failed');
+      providerMetrics.set(provider, metrics);
+      const failure = {
+        provider,
+        code: String(error?.code || 'CHATNIVO_FAILED').slice(0, 100),
+        status: Number.isFinite(Number(error?.status)) ? Number(error.status) : null,
+        retryable: Boolean(error?.retryable),
+        message: String(error?.message || 'ChatNivo fallback failed').slice(0, 300),
+        skipped: false,
+      };
+      errors.push(failure);
+      await emitCheckpoint({ phase: 'provider_failed', ...baseEvent, error: failure });
+      logger.warn(
+        { provider, code: failure.code, status: failure.status, retryable: failure.retryable },
+        'ChatNivo final AI fallback failed',
+      );
+    }
+  }
+
+  const llamaConfig = getRuntimeSettings().llama;
+  const llamaStatus = getLlamaRuntimeStatus();
+  const llamaDeadline =
+    Number(options.deadlineAt) || (Number(options.totalBudgetMs) > 0 ? startedAt + Number(options.totalBudgetMs) : 0);
+  const llamaRemaining = llamaDeadline ? llamaDeadline - Date.now() : Infinity;
+  if (llamaConfig.enabled !== false && llamaConfig.fallbackEnabled !== false && llamaRemaining >= 1000) {
+    const provider = 'llama-local';
+    const baseEvent = {
+      provider,
+      position: order.length + 2,
+      providerCount: order.length + 2,
+      totalKeys: 0,
+      usableKeys: 0,
+    };
+    attempted.push(provider);
+    await emitCheckpoint({ phase: 'provider_attempt', ...baseEvent });
+    const llamaStartedAt = Date.now();
+    try {
+      const result = await generateWithLlama(messages, {
+        temperature: options.temperature,
+        maxOutputTokens: options.maxOutputTokens,
+        timeoutMs: Math.max(5000, Math.min(Number(options.timeoutMs) || 120_000, llamaRemaining)),
+      });
+      const elapsed = Date.now() - llamaStartedAt;
+      const fallback = {
+        order: [...order, 'chatnivo', 'llama-local'],
+        attemptedProviders: attempted,
+        fallbackUsed: true,
+        fallbackFrom: errors.map(item => item.provider),
+        failedProviders: errors,
+        fallbackReason: 'all_remote_providers_exhausted',
+      };
+      await emitCheckpoint({ phase: 'provider_succeeded', ...baseEvent, fallbackUsed: true, latencyMs: elapsed });
+      logger.info(
+        { provider, position: baseEvent.position, latencyMs: elapsed, previouslyInstalled: llamaStatus.installed },
+        'Ocha local Llama completed the final AI fallback',
+      );
+      return { ...result, latencyMs: elapsed, providerFallback: fallback };
+    } catch (error) {
+      const failure = {
+        provider,
+        code: String(error?.code || 'LLAMA_FAILED').slice(0, 100),
+        status: Number.isFinite(Number(error?.status)) ? Number(error.status) : null,
+        retryable: Boolean(error?.retryable),
+        message: String(error?.message || 'Local Llama fallback failed').slice(0, 300),
+        skipped: false,
+      };
+      errors.push(failure);
+      await emitCheckpoint({ phase: 'provider_failed', ...baseEvent, error: failure });
+      logger.warn({ provider, code: failure.code, status: failure.status }, 'Ocha local Llama final fallback failed');
     }
   }
 
   const last = errors.at(-1);
-  const finalError = new Error(`Seluruh provider AI pada rantai prioritas gagal atau tidak memiliki API key aktif (${order.join(' → ')}).`);
+  const finalError = new Error(
+    `Seluruh provider AI pada rantai prioritas gagal atau tidak memiliki API key aktif (${order.join(' → ') || 'no primary provider'}), ChatNivo dan Llama lokal juga tidak berhasil.`,
+  );
   finalError.name = 'AIProviderChainError';
   finalError.code = 'ALL_PROVIDERS_EXHAUSTED';
   finalError.provider = last?.provider || order[0];
   finalError.providerErrors = errors;
   finalError.retryable = errors.some(item => item.retryable);
   finalError.attemptedProviders = attempted;
+  finalError.providerChain = [...order, 'chatnivo', 'llama-local'];
   throw finalError;
 }
 
 export async function getKeyManagerStatus() {
   const records = await getRecords({ type: 'ai.key.event' });
-  return { providers: getProviderInventory(), maintenance, recentEvents: records.slice(-30).map(r => ({ ts: r.ts, ...r.payload })) };
+  return {
+    providers: getProviderInventory(),
+    maintenance,
+    recentEvents: records.slice(-30).map(r => ({ ts: r.ts, ...r.payload })),
+  };
 }
 export async function setAIMaintenance(active, details = {}) {
-  maintenance = active ? { active: true, since: maintenance.since || new Date().toISOString(), notifiedAt: details.notifiedAt || maintenance.notifiedAt, reason: details.reason || 'all provider keys unavailable' } : { active: false, since: null, notifiedAt: null, reason: null };
+  maintenance = active
+    ? {
+        active: true,
+        since: maintenance.since || new Date().toISOString(),
+        notifiedAt: details.notifiedAt || maintenance.notifiedAt,
+        reason: details.reason || 'all provider keys unavailable',
+      }
+    : { active: false, since: null, notifiedAt: null, reason: null };
   await appendRecord('ai.maintenance', { ...maintenance }, { source: 'provider-key-manager' });
   return maintenance;
 }
-export function getAIMaintenance() { return { ...maintenance }; }
+export function getAIMaintenance() {
+  return { ...maintenance };
+}
