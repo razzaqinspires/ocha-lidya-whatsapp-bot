@@ -173,6 +173,23 @@ const ochaBundleMeta = {
     pythonSourceIncludedOnlyInOperatorBundle: true,
     independentGitRoot: true,
   },
+  menuDesign: {
+    version: '1.0',
+    settings: 'src/config.js:config.menu',
+    renderer: 'src/core/menu-renderer.js',
+    commands: ['.menu', '.setmenu'],
+    features: [
+      '16 visual templates',
+      '12 supported Unicode font presets',
+      'category/A-Z/Z-A ordering',
+      'description visibility',
+      'line spacing',
+      'top/bottom borders',
+      'text fallback pagination',
+    ],
+    setmenuAccess: 'verified-owner-private-chat-only',
+    storage: 'Ocha config.replace event store',
+  },
   excluded: [
     '.env and credentials',
     'sessions',

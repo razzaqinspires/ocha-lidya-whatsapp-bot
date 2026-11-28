@@ -1,6 +1,6 @@
 # Environment Variable Inventory
 
-Generated from the entire first-party Ocha tree using Acorn AST analysis. JavaScript files scanned: **326**; shell files scanned: **3**; distinct statically identified names: **59**.
+Generated from the entire first-party Ocha tree using Acorn AST analysis. JavaScript files scanned: **325**; shell files scanned: **3**; distinct statically identified names: **59**.
 
 > This is a source inventory, not a statement that every variable must be placed in `.env`. Internal markers and host-provided variables are identified separately. Secret values are never read by this scanner.
 

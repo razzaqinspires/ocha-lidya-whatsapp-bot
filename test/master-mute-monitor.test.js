@@ -9,8 +9,12 @@ async function withTempProject(run) {
   const original = process.cwd();
   const temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'ocha-v162-'));
   process.chdir(temporary);
-  try { await run(original, temporary); }
-  finally { process.chdir(original); await fs.rm(temporary, { recursive: true, force: true }); }
+  try {
+    await run(original, temporary);
+  } finally {
+    process.chdir(original);
+    await fs.rm(temporary, { recursive: true, force: true });
+  }
 }
 
 test('master CLI is independent and legacy exec is only a CLI alias', async () => {
@@ -46,7 +50,11 @@ test('master CLI is independent and legacy exec is only a CLI alias', async () =
     assert.equal(mutePlugin.ownerOnly, true);
     assert.equal(mutePlugin.privateOnly, undefined);
     await mutePlugin.execute({ m, args: ['off', 'all'] });
-    assert.equal(config.getConfig().features.groupsMuted, true, 'bulk activation is disabled by the safe per-group policy');
+    assert.equal(
+      config.getConfig().features.groupsMuted,
+      true,
+      'bulk activation is disabled by the safe per-group policy',
+    );
     assert.match(replies.at(-1), /harus mengirim/i);
     await mutePlugin.execute({ m, args: ['on', 'all'] });
     assert.equal(config.getConfig().features.groupsMuted, true);
@@ -71,12 +79,15 @@ test('schema v11 defaults all group interaction to muted and removes the global 
       console.log('MIGRATED:' + JSON.stringify({ schemaVersion: config.getConfig().schemaVersion, groupsMuted: config.getConfig().features.groupsMuted, masterExecEnabled: config.getConfig().security.masterExecEnabled, masterCliEnabled: config.getConfig().security.masterCliEnabled }));
     `;
     const { spawnSync } = await import('node:child_process');
-    const result = spawnSync(process.execPath, ['--input-type=module', '-e', source], { cwd: temporary, encoding: 'utf8' });
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', source], {
+      cwd: temporary,
+      encoding: 'utf8',
+    });
     assert.equal(result.status, 0, result.stderr || result.stdout);
     const line = result.stdout.split(/\r?\n/).find(value => value.startsWith('MIGRATED:'));
     assert.ok(line, result.stdout);
     const migrated = JSON.parse(line.slice('MIGRATED:'.length));
-    assert.deepEqual(migrated, { schemaVersion: 37, groupsMuted: true, masterCliEnabled: true });
+    assert.deepEqual(migrated, { schemaVersion: 38, groupsMuted: true, masterCliEnabled: true });
     assert.equal(migrated.masterExecEnabled, undefined);
   });
 });
@@ -88,44 +99,80 @@ test('global group mute suppresses interaction while verified owner mute control
   assert.equal(policy.shouldSuppressGroupInteraction({ isGroup: false }, { features: { groupsMuted: true } }), false);
   assert.equal(policy.shouldSuppressGroupInteraction({ isGroup: true }, { features: { groupsMuted: false } }), false);
   assert.equal(policy.isOwnerMuteControlMessage({ isGroup: true, body: '.mute off' }, true), true);
-  assert.equal(policy.isOwnerMuteControlMessage({ isGroup: true, body: '.mute off' }, false), false, 'non-owner mute command cannot bypass the muted-group gate');
-  assert.equal(policy.isOwnerMuteControlMessage({ isGroup: true, body: '.menu' }, true), false, 'owner cannot bypass mute gate with unrelated commands');
-  assert.equal(policy.isOwnerMuteControlMessage({ isGroup: false, body: '.mute off' }, true), false, 'private command does not use group exception');
+  assert.equal(
+    policy.isOwnerMuteControlMessage({ isGroup: true, body: '.mute off' }, false),
+    false,
+    'non-owner mute command cannot bypass the muted-group gate',
+  );
+  assert.equal(
+    policy.isOwnerMuteControlMessage({ isGroup: true, body: '.menu' }, true),
+    false,
+    'owner cannot bypass mute gate with unrelated commands',
+  );
+  assert.equal(
+    policy.isOwnerMuteControlMessage({ isGroup: false, body: '.mute off' }, true),
+    false,
+    'private command does not use group exception',
+  );
 });
 
 test('message monitor aggregates private/group reply and receipt states', async () => {
-    const monitorUrl = pathToFileURL(path.resolve(process.cwd(), 'src/core/message-monitor.js')).href;
-    const monitor = await import(`${monitorUrl}?test=${Date.now()}`);
-    const dmKey = { remoteJid: '6281111111111@s.whatsapp.net', id: 'incoming-dm-0001', fromMe: false };
-    const originalWrite = process.stdout.write;
-    let inboundLog = '';
-    process.stdout.write = function (chunk, ...args) { inboundLog += String(chunk); return true; };
-    try {
-      monitor.observeIncomingMessage({ key: dmKey, sender: '6281111111111@s.whatsapp.net', pushName: 'Tester', chat: dmKey.remoteJid });
-    } finally { process.stdout.write = originalWrite; }
-    assert.equal(inboundLog, '', 'incoming user messages must not be printed to terminal');
-    const sentDm = { remoteJid: dmKey.remoteJid, id: 'outgoing-dm-0001', fromMe: true };
-    monitor.observeOutgoingMessage(sentDm, dmKey);
-    monitor.observeMessageUpdates([{ key: sentDm, update: { status: 2 } }]);
-    monitor.observeMessageUpdates([{ key: sentDm, update: { status: 3 } }]);
+  const monitorUrl = pathToFileURL(path.resolve(process.cwd(), 'src/core/message-monitor.js')).href;
+  const monitor = await import(`${monitorUrl}?test=${Date.now()}`);
+  const dmKey = { remoteJid: '6281111111111@s.whatsapp.net', id: 'incoming-dm-0001', fromMe: false };
+  const originalWrite = process.stdout.write;
+  let inboundLog = '';
+  process.stdout.write = function (chunk, ...args) {
+    inboundLog += String(chunk);
+    return true;
+  };
+  try {
+    monitor.observeIncomingMessage({
+      key: dmKey,
+      sender: '6281111111111@s.whatsapp.net',
+      pushName: 'Tester',
+      chat: dmKey.remoteJid,
+    });
+  } finally {
+    process.stdout.write = originalWrite;
+  }
+  assert.equal(inboundLog, '', 'incoming user messages must not be printed to terminal');
+  const sentDm = { remoteJid: dmKey.remoteJid, id: 'outgoing-dm-0001', fromMe: true };
+  monitor.observeOutgoingMessage(sentDm, dmKey);
+  monitor.observeMessageUpdates([{ key: sentDm, update: { status: 2 } }]);
+  monitor.observeMessageUpdates([{ key: sentDm, update: { status: 3 } }]);
 
-    const groupIncoming = { remoteJid: '12345-678@g.us', id: 'incoming-group-0001', participant: '6282222222222@s.whatsapp.net', fromMe: false };
-    monitor.observeIncomingMessage({ key: groupIncoming, sender: groupIncoming.participant, pushName: 'Group member', chat: groupIncoming.remoteJid });
-    const groupSent = { remoteJid: groupIncoming.remoteJid, id: 'outgoing-group-0001', fromMe: true };
-    monitor.observeOutgoingMessage(groupSent, groupIncoming);
-    monitor.observeGroupReceipts([{ key: groupSent, receipt: { userJid: '6282222222222@s.whatsapp.net', receiptTimestamp: 1 } }]);
-    monitor.observeGroupReceipts([{ key: groupSent, receipt: { userJid: '6282222222222@s.whatsapp.net', readTimestamp: 2 } }]);
+  const groupIncoming = {
+    remoteJid: '12345-678@g.us',
+    id: 'incoming-group-0001',
+    participant: '6282222222222@s.whatsapp.net',
+    fromMe: false,
+  };
+  monitor.observeIncomingMessage({
+    key: groupIncoming,
+    sender: groupIncoming.participant,
+    pushName: 'Group member',
+    chat: groupIncoming.remoteJid,
+  });
+  const groupSent = { remoteJid: groupIncoming.remoteJid, id: 'outgoing-group-0001', fromMe: true };
+  monitor.observeOutgoingMessage(groupSent, groupIncoming);
+  monitor.observeGroupReceipts([
+    { key: groupSent, receipt: { userJid: '6282222222222@s.whatsapp.net', receiptTimestamp: 1 } },
+  ]);
+  monitor.observeGroupReceipts([
+    { key: groupSent, receipt: { userJid: '6282222222222@s.whatsapp.net', readTimestamp: 2 } },
+  ]);
 
-    const stats = monitor.getMessageMonitorStats();
-    assert.equal(stats.trackedOutgoing, 2);
-    assert.equal(stats.trackedIncoming, 2);
-    const dmState = monitor.getMessageFlowState(sentDm);
-    assert.equal(dmState.status, 3);
-    assert.equal(dmState.botReply, true);
-    assert.equal(dmState.isGroup, false);
-    const groupState = monitor.getMessageFlowState(groupSent);
-    assert.equal(groupState.deliveredCount, 1);
-    assert.equal(groupState.readCount, 1);
-    assert.equal(groupState.botReply, true);
-    assert.equal(groupState.isGroup, true);
+  const stats = monitor.getMessageMonitorStats();
+  assert.equal(stats.trackedOutgoing, 2);
+  assert.equal(stats.trackedIncoming, 2);
+  const dmState = monitor.getMessageFlowState(sentDm);
+  assert.equal(dmState.status, 3);
+  assert.equal(dmState.botReply, true);
+  assert.equal(dmState.isGroup, false);
+  const groupState = monitor.getMessageFlowState(groupSent);
+  assert.equal(groupState.deliveredCount, 1);
+  assert.equal(groupState.readCount, 1);
+  assert.equal(groupState.botReply, true);
+  assert.equal(groupState.isGroup, true);
 });

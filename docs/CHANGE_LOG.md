@@ -1,3 +1,20 @@
+## Menu design and owner setmenu — v1.10.58 (2026-11-28)
+
+- Add 16 display templates and 12 Unicode font presets in `src/core/menu-renderer.js`; retain plain ASCII command names for copying and command dispatch.
+- Add `category`, `az`, and `za` ordering; configurable command spacing, display descriptions, and independent top/bottom borders.
+- Upgrade `src/plugins/owner/setmenu.js` into an interactive settings directory with direct text-command controls and a text fallback when native-flow delivery is unavailable.
+- Keep `.setmenu` / `.menuset` / `.menuconfig` owner-only and private-chat-only, with a second owner identity verification before configuration mutation.
+- Extend `config.menu` defaults and validation in `src/config.js`; migrate to schema v38 while retaining previous menu description and pagination values.
+- Adapt only menu design/setmenu concepts from the supplied Whiskay archive. No Whiskay runtime dependency, data store, widgets, canvas, upload or quote features were integrated.
+- AC v2.1.1 subsystems were reviewed for relevance; no algorithms, memory, heartbeat, NADI API or runtime source changed. Only `OCHA_COMPONENT_RELEASE.json` paired compatibility metadata advanced to Ocha v1.10.58.
+
+### Validation
+
+- Menu, renderer, settings, button, and live-plugin inventory tests: 17/17 passed.
+- Changed-source syntax checks: passed.
+- Regression excluding the external Quick Tunnel gateway test: 422 passed, 0 failed, 1 skipped across 107 files; syntax 306 files; docs 87; publication audit passed; AC selftest 6/6 and extended 10/10. Full limits are in `docs/RELEASE_REPORT_1.10.58.md`.
+- No live WhatsApp session or remote Git commit/push was available in the extracted source workspace.
+
 ## Environment inventory hardening — v1.10.55
 
 - Advance the Ocha-only package to 1.10.55; no Artificial Consciousness Component package or source is included in this update.

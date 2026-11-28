@@ -4,7 +4,7 @@
 
 ## Repository map and verified snapshot status
 
-The inspected Ocha source archive baseline was **v1.10.56**. This paired local maintenance snapshot advances Ocha to **v1.10.57** and maintains the independent Artificial Consciousness Component at **v2.1.1**. Neither extracted workspace contains `.git` metadata, so no new commit SHA or remote push is claimed. A separate connector inspection during this maintenance cycle read the public Ocha `main` package at version `1.10.53` (package blob SHA `c2f311550a7c4ec535981950a4880912172b2583`). The local v1.10.57 archive is not a Git checkout, and the AC repository metadata could not be fetched through the connector; reconcile both local trees through a reviewed Git diff and authenticated clone before any upstream push.
+The current local operator source snapshot is **v1.10.58**, based on the previous v1.10.57 local package. The independent Artificial Consciousness Component remains **v2.1.1** and was not modified by the menu-design update. Neither extracted workspace contains `.git` metadata, so no new commit SHA or remote push is claimed. The previously observed public Ocha `main` version is historical context only; the local package is not a Git checkout and must be reconciled through a reviewed Git diff and authenticated clone before any upstream push.
 
 ```mermaid
 flowchart TD
@@ -37,13 +37,17 @@ The private package manifest retains the four SHA-256 values and `original-sourc
 
 ## Two independent base projects and one release command
 
-Paired releases produce two independent source bases: `ocha-lidya-bot` (Node.js) and `artificial-consciousness-component` (Python), connected through NADI HTTP API v1. On an operator host, the AC source is co-located at `.private/artificial-consciousness-component` and has its own nested Git root; the parent Ocha Git repository must never track `.private/`. The Ocha operator ZIP includes this private source for deployment convenience, while the public Ocha Git repository excludes it. Set `OCHA_NADI_SOURCE_DIR=.private/artificial-consciousness-component` to use AC v2.1.1. The standalone AC ZIP remains a separate deliverable. See [`docs/TWO_BASE_RELEASE.md`](docs/TWO_BASE_RELEASE.md), [`docs/SOURCE_COMPONENT_INDEX_1.10.57.md`](docs/SOURCE_COMPONENT_INDEX_1.10.57.md), and [`docs/RELEASE_REPORT_1.10.57.md`](docs/RELEASE_REPORT_1.10.57.md).
+Paired releases produce two independent source bases: `ocha-lidya-bot` (Node.js) and `artificial-consciousness-component` (Python), connected through NADI HTTP API v1. On an operator host, the AC source is co-located at `.private/artificial-consciousness-component` and has its own nested Git root; the parent Ocha Git repository must never track `.private/`. The Ocha operator ZIP includes this private source for deployment convenience, while the public Ocha Git repository excludes it. Set `OCHA_NADI_SOURCE_DIR=.private/artificial-consciousness-component` to use AC v2.1.1. The standalone AC ZIP remains a separate deliverable. See [`docs/TWO_BASE_RELEASE.md`](docs/TWO_BASE_RELEASE.md), [`docs/SOURCE_COMPONENT_INDEX_1.10.58.md`](docs/SOURCE_COMPONENT_INDEX_1.10.58.md), and [`docs/RELEASE_REPORT_1.10.58.md`](docs/RELEASE_REPORT_1.10.58.md).
 
 From the Ocha root, run `npm run maintain:two-bases -- --ac-root .private/artificial-consciousness-component --out ../two-base-release` to verify both bases and create separate archives. Automatic Git publication also has two isolated lanes: Ocha → `razzaqinspires/ocha-lidya-whatsapp-bot` using `GITHUB_PAT`; AC → `razzaqinspires/artificial-consciousness-component` using `AC_GITHUB_PAT`. Both watchers start with `npm start` when their local Git checkout is valid. `.private/` is excluded from Ocha Git staging. Owner-only private controls are documented in [`docs/AUTO_PUSH_TWO_REPOSITORIES.md`](docs/AUTO_PUSH_TWO_REPOSITORIES.md). The Ocha operator ZIP is confidential and must not be published; the AC package remains separate.
 
 ## Two-repository automatic Git publication (v1.10.57)
 
 Ocha retains its existing `npm run git:setup` and `npm run git:watch` scripts. The new dual-lane runtime watches the Ocha root and the independent nested AC checkout separately. Ocha uses `GITHUB_PAT`; AC uses `AC_GITHUB_PAT`. Configure the nested AC repository once with `npm run ac:git:setup`, then restart Ocha. The owner-only command `.autopush status|on|off|push|setup` is hidden from `.menu` and is accepted only in the owner's private chat. Detailed security boundaries, setup and troubleshooting are in [`docs/AUTO_PUSH_TWO_REPOSITORIES.md`](docs/AUTO_PUSH_TWO_REPOSITORIES.md).
+
+## Menu design and owner settings (v1.10.58)
+
+The live `.menu` directory now supports 16 visual themes, 12 typography presets, category/A–Z/Z–A ordering, optional command descriptions, adjustable spacing, and independent top/bottom borders. `.setmenu` opens an interactive owner-only settings directory and also accepts direct commands such as `.setmenu template sakura`, `.setmenu font mono`, `.setmenu order az`, `.setmenu descriptions on`, `.setmenu spacing 1`, and `.setmenu border top off`. Settings are persisted in Ocha's existing config event store; the command list itself continues to come from the live plugin registry. See [`docs/MENU_AND_COMMAND_REGISTRY.md`](docs/MENU_AND_COMMAND_REGISTRY.md), [`docs/SOURCE_COMPONENT_INDEX_1.10.58.md`](docs/SOURCE_COMPONENT_INDEX_1.10.58.md), and [`docs/RELEASE_REPORT_1.10.58.md`](docs/RELEASE_REPORT_1.10.58.md).
 
 ## ACIE operational audit
 
@@ -60,7 +64,7 @@ flowchart LR
   CHECK --> REGISTRY[Existing plugin registry and dispatcher]
 ```
 
-**Release and verification:** [Paired release report](docs/RELEASE_REPORT_1.10.52.md) · **Audit and registries:** [Repository audit](docs/REPOSITORY_AUDIT_1.10.51.md) · [Source/function index](docs/SOURCE_COMPONENT_INDEX_1.10.52.md) · [Command registry audit](docs/COMMAND_REGISTRY_AUDIT_1.10.51.md) · [Provider registry audit](docs/PROVIDER_REGISTRY_AUDIT_1.10.51.md) · [NADI maintenance report](docs/NADI_MAINTENANCE_REPORT_2.1.1.md) · [Canonical changelog](docs/CHANGE_LOG.md).
+**Release and verification:** [v1.10.58 release report](docs/RELEASE_REPORT_1.10.58.md) · [Source/function index](docs/SOURCE_COMPONENT_INDEX_1.10.58.md) · [Paired release details](docs/TWO_BASE_RELEASE.md) · **Audit and registries:** [Repository audit](docs/REPOSITORY_AUDIT_1.10.51.md) · [Command registry audit](docs/COMMAND_REGISTRY_AUDIT_1.10.58.md) · [Provider registry audit](docs/PROVIDER_REGISTRY_AUDIT_1.10.51.md) · [NADI maintenance report](docs/NADI_MAINTENANCE_REPORT_2.1.1.md) · [Canonical changelog](docs/CHANGE_LOG.md).
 
 ## Contribution preservation update (v1.10.49)
 
@@ -114,7 +118,7 @@ Owner-only `.buttons full all` enables adaptive buttons for all eligible command
 
 ## Global command governance and AI command authoring (v1.10.17)
 
-Global menu preferences are owner-controlled with `.setmenu descriptions on|off`, `.setmenu pages on|off`, `.setmenu limit <10-200>`, and `.setmenu status`. All users see the same menu. Pagination is off by default; when enabled, users reply to the menu message with a page number. Adaptive command cooldown and anti-spam are independent global controls: `.guard cooldown on|off`, `.guard antispam on|off`, and `.guard status`. Cooldowns are calculated per sender/chat/command from workload metadata; anti-spam uses an initial notice, five counted daily strikes, and escalating temporary suspensions. `.createcmd <instruction>` uses the configured AI provider chain and active plugin inventory to draft a plugin in an existing plugin folder. Reply to code or use `.createcmd => <source>` to wrap existing code without rewriting it. Review with `.createcmd show <id>` and install with `.createcmd apply <id>`.
+Global menu preferences are owner-controlled with `.setmenu descriptions on|off`, `.setmenu pages on|off`, `.setmenu limit <10-200>`, and `.setmenu status`. All users see the same menu. The `pages` and `limit` controls govern the text fallback renderer; native WhatsApp Flow keeps bounded category pagination because of its row limit. Adaptive command cooldown and anti-spam are independent global controls: `.guard cooldown on|off`, `.guard antispam on|off`, and `.guard status`. Cooldowns are calculated per sender/chat/command from workload metadata; anti-spam uses an initial notice, five counted daily strikes, and escalating temporary suspensions. `.createcmd <instruction>` uses the configured AI provider chain and active plugin inventory to draft a plugin in an existing plugin folder. Reply to code or use `.createcmd => <source>` to wrap existing code without rewriting it. Review with `.createcmd show <id>` and install with `.createcmd apply <id>`.
 
 ## Live command directory and expanded profiles (v1.10.16)
 
@@ -748,8 +752,8 @@ See `docs/MENU_AND_COMMAND_REGISTRY.md` and `docs/USER_PROFILES.md` for plugin m
 ### Global menu settings
 
 - `.setmenu descriptions on|off` controls command descriptions for every user.
-- `.setmenu pages on|off` enables/disables global menu pagination.
-- `.setmenu limit 10-200` sets the maximum number of entries per page.
+- `.setmenu pages on|off` enables/disables pagination in the text fallback; native Flow remains paginated when required by WhatsApp's row limit.
+- `.setmenu limit 10-200` sets the number of entries per page in the text fallback renderer.
 - `.setmenu status` displays the shared settings.
 - When pagination is enabled, reply to a menu message with a page number. The reply session is bound to the original sender and expires after 15 minutes.
 

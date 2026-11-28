@@ -12,7 +12,7 @@ import {
 } from './core/database.js';
 
 const DEFAULTS = Object.freeze({
-  schemaVersion: 37,
+  schemaVersion: 38,
   bot: {
     name: 'Ocha Lidya',
     aliases: ['Ocha', 'Lidya'],
@@ -40,7 +40,16 @@ const DEFAULTS = Object.freeze({
     fullButton: { enabled: false, strategy: 'adaptive', maxBodyChars: 1800, excludedCommands: [] },
     autoReactions: { enabled: false, commandEmoji: '⏳', thinkingEmoji: '💭', successEmoji: '✅', failureEmoji: '❌' },
   },
-  menu: { showDescriptions: false, pagination: { enabled: false, pageSize: 50 } },
+  menu: {
+    showDescriptions: false,
+    template: 'corporate',
+    font: 'normal',
+    order: 'category',
+    spacing: 0,
+    topBorder: true,
+    bottomBorder: true,
+    pagination: { enabled: false, pageSize: 50 },
+  },
   commandGuard: { cooldown: { enabled: false }, antiSpam: { enabled: false, dailyWarnings: 5 } },
   groupMetadata: { initialSync: true, fetchCooldownMs: 600000 },
   prefix: { mode: 'multi', single: '.', list: ['.', '!', '/', '#'] },
@@ -647,6 +656,17 @@ export async function loadConfig() {
       reason: 'v1.10.38 add owner-controlled automatic command and AI reactions',
     });
   }
+  // v1.10.58 schema v38: add validated menu design settings while preserving
+  // the existing global description/pagination preferences.
+  if (activeConfig.schemaVersion < 38) {
+    activeConfig.schemaVersion = 38;
+    activeConfig.menu = merge(DEFAULTS.menu, activeConfig.menu || {});
+    await appendRecord('config.replace', {
+      config: activeConfig,
+      changedBy: 'system:migration',
+      reason: 'v1.10.58 add owner-controlled menu themes, fonts, ordering, spacing and borders',
+    });
+  }
   activeConfig.menu = merge(DEFAULTS.menu, activeConfig.menu || {});
   activeConfig.commandGuard = merge(DEFAULTS.commandGuard, activeConfig.commandGuard || {});
   activeConfig.security = { ...DEFAULTS.security, ...(activeConfig.security || {}) };
@@ -730,6 +750,49 @@ function validateConfig(c) {
       throw new Error(`ui.autoReactions.${key} harus emoji teks 1-8 karakter`);
   }
   if (typeof c.menu?.showDescriptions !== 'boolean') throw new Error('menu.showDescriptions harus boolean');
+  if (
+    ![
+      'corporate',
+      'minimal',
+      'terminal',
+      'elegant',
+      'aurora',
+      'classic',
+      'compact',
+      'minimalist',
+      'cyberpunk',
+      'fantasy',
+      'ocean',
+      'sunset',
+      'emerald',
+      'sakura',
+      'monochrome',
+      'royal',
+    ].includes(c.menu?.template)
+  )
+    throw new Error('menu.template tidak dikenal');
+  if (
+    ![
+      'normal',
+      'bolditalic',
+      'bold',
+      'sans',
+      'mono',
+      'superscript',
+      'double',
+      'smallcaps',
+      'fraktur',
+      'italic',
+      'script',
+      'circled',
+    ].includes(c.menu?.font)
+  )
+    throw new Error('menu.font tidak dikenal');
+  if (!['category', 'az', 'za'].includes(c.menu?.order)) throw new Error('menu.order harus category, az, atau za');
+  if (!Number.isInteger(c.menu?.spacing) || c.menu.spacing < 0 || c.menu.spacing > 3)
+    throw new Error('menu.spacing harus 0-3');
+  if (typeof c.menu?.topBorder !== 'boolean' || typeof c.menu?.bottomBorder !== 'boolean')
+    throw new Error('menu borders harus boolean');
   if (typeof c.menu?.pagination?.enabled !== 'boolean') throw new Error('menu.pagination.enabled harus boolean');
   if (
     !Number.isInteger(c.menu?.pagination?.pageSize) ||

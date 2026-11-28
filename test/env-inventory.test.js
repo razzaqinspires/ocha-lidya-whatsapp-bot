@@ -88,7 +88,7 @@ test('shell tooling overrides distinguish external environment inputs from scrip
 
 test('dotenv load points are inventoried separately from process.env accesses', async () => {
   const inventory = await collectEnvironmentInventory(root);
-  assert.equal(inventory.dotenvLoadSites.length, 4);
+  assert.equal(inventory.dotenvLoadSites.length, 7);
   assert.ok(
     inventory.dotenvLoadSites.some(item => item.file === 'src/index.js' && item.kind === 'dotenv/config import'),
   );
@@ -171,7 +171,7 @@ test('.env.example and the environment inventory report stay synchronized', asyn
   ]);
   assert.match(example, /# OCHA_HOST_PREFLIGHT_COMPLETED=1/);
   assert.match(example, /GROQ_API_KEY=\s*$/m);
-  assert.match(example, /Source coverage: 30 application\/secret names, 4 internal markers, 23 host\/OS names\./);
+  assert.match(example, /Source coverage: 31 application\/secret names, 4 internal markers, 23 host\/OS names\./);
   const documentedKeys = new Set(
     example
       .split(/\r?\n/)
@@ -187,7 +187,7 @@ test('.env.example and the environment inventory report stay synchronized', asyn
   assert.match(report, /Internal runtime marker/);
   assert.match(report, /src\/index\.js:69/);
   assert.match(report, /Application configuration \| 23/);
-  assert.match(report, /Named JavaScript environment access sites: \*\*260\*\*/);
+  assert.match(report, /Named JavaScript environment access sites: \*\*272\*\*/);
   assert.match(report, /Shell environment expansion sites: \*\*9\*\*/);
-  assert.match(report, /Dotenv load\/reload sites: \*\*4\*\*/);
+  assert.match(report, /Dotenv load\/reload sites: \*\*7\*\*/);
 });
